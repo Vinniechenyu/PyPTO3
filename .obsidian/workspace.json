@@ -1,24 +1,24 @@
 {
   "main": {
-    "id": "c49d91f8729c77be",
+    "id": "f1dd1abddc2937a9",
     "type": "split",
     "children": [
       {
-        "id": "b9dc6fb832ebb13b",
+        "id": "295f91c096866de4",
         "type": "tabs",
         "children": [
           {
-            "id": "098041c240996ce3",
+            "id": "9a07ca88f7d157a9",
             "type": "leaf",
             "state": {
               "type": "markdown",
               "state": {
-                "file": "README.md",
+                "file": "Insight/pypto_ux_insights_zh.md",
                 "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "README"
+              "title": "pypto_ux_insights_zh"
             }
           }
         ]
@@ -27,15 +27,15 @@
     "direction": "vertical"
   },
   "left": {
-    "id": "b09059d9608a1e3f",
+    "id": "e27f92b5a8822643",
     "type": "split",
     "children": [
       {
-        "id": "72a7161b5e0a4a11",
+        "id": "748da19c2dbb738a",
         "type": "tabs",
         "children": [
           {
-            "id": "738be045d35b1738",
+            "id": "a7a392af21ff54fe",
             "type": "leaf",
             "state": {
               "type": "file-explorer",
@@ -48,7 +48,7 @@
             }
           },
           {
-            "id": "cd4664837dc8f3b4",
+            "id": "c17bf2067b0988c3",
             "type": "leaf",
             "state": {
               "type": "search",
@@ -65,7 +65,7 @@
             }
           },
           {
-            "id": "1ad5c6196d58adfd",
+            "id": "2ef5024f22ecfdb2",
             "type": "leaf",
             "state": {
               "type": "bookmarks",
@@ -81,20 +81,20 @@
     "width": 300
   },
   "right": {
-    "id": "76ab78491df43720",
+    "id": "e01c6a579cd8f699",
     "type": "split",
     "children": [
       {
-        "id": "9c0942e3b5f82863",
+        "id": "74b892693bc90a94",
         "type": "tabs",
         "children": [
           {
-            "id": "8247edb25a1a2850",
+            "id": "24d4ce9479ac4c2b",
             "type": "leaf",
             "state": {
               "type": "backlink",
               "state": {
-                "file": "README.md",
+                "file": "Insight/pypto_ux_insights_zh.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,25 +104,25 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "README 的反向链接列表"
+              "title": "pypto_ux_insights_zh 的反向链接列表"
             }
           },
           {
-            "id": "bb2eccee4e8acd6e",
+            "id": "a785887070f02928",
             "type": "leaf",
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "README.md",
+                "file": "Insight/pypto_ux_insights_zh.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "README 的出链列表"
+              "title": "pypto_ux_insights_zh 的出链列表"
             }
           },
           {
-            "id": "a3fefbadea34889d",
+            "id": "35871cad8f910c79",
             "type": "leaf",
             "state": {
               "type": "tag",
@@ -137,7 +137,7 @@
             }
           },
           {
-            "id": "10fc4a6545d748b1",
+            "id": "237d82334c896a8a",
             "type": "leaf",
             "state": {
               "type": "all-properties",
@@ -151,18 +151,18 @@
             }
           },
           {
-            "id": "9db8f833e49fd922",
+            "id": "7d2e3c796602fb17",
             "type": "leaf",
             "state": {
               "type": "outline",
               "state": {
-                "file": "README.md",
+                "file": "Insight/pypto_ux_insights_zh.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "README 的大纲"
+              "title": "pypto_ux_insights_zh 的大纲"
             }
           }
         ]
@@ -183,10 +183,6 @@
       "bases:新建数据库": false
     }
   },
-  "active": "098041c240996ce3",
-  "lastOpenFiles": [
-    "UX_Insight_Report.md",
-    "README.md",
-    "欢迎.md"
-  ]
+  "active": "9a07ca88f7d157a9",
+  "lastOpenFiles": []
 }
