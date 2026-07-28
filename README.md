@@ -26,8 +26,19 @@ PyPTO3/
 ├── tools/                         # 仓库维护工具（包含 GitHub CLI）
 ├── vendor/
 │   └── pto-design-system/      # PTO 设计系统、组件模式与设计令牌
+├── launch.html                    # Design Demo 统一启动台
 └── README.md
 ```
+
+## 启动设计 Demo
+
+在仓库根目录启动任意静态 HTTP 服务器，然后访问 `launch.html`：
+
+```bash
+python -m http.server 8000
+```
+
+打开 `http://localhost:8000/launch.html` 即可浏览、搜索并启动 `Design/` 下的交互 Demo。
 
 ## 主要内容
 
