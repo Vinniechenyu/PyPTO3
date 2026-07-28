@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PTO Pattern - Memory Reuse Viewer</title>
+  <link rel="stylesheet" href="../../tokens/foundation.css">
+  <link rel="stylesheet" href="../../tokens/semantic.css">
+  <link rel="stylesheet" href="../../tokens/components.css">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="stylesheet" href="./pattern.css">
+  <style>
+    body {
+      min-height: 100vh;
+      margin: 0;
+      background: var(--background);
+      color: var(--foreground);
+    }
+
+    .preview-shell {
+      height: 100vh;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+
+    #memoryReusePreview {
+      height: 100%;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      background: var(--background-elevated);
+    }
+  </style>
+</head>
+<body>
+  <main class="preview-shell">
+    <div id="memoryReusePreview"></div>
+  </main>
+  <script src="./pattern.js"></script>
+  <script>
+    window.PtoMemoryReuseViewer?.render(
+      document.getElementById('memoryReusePreview'),
+      window.PtoMemoryReuseViewer.createDemoData({ coreTitle: 'AIV 1 UB' }),
+      { initialBuffer: 'UB' }
+    );
+  </script>
+</body>
+</html>

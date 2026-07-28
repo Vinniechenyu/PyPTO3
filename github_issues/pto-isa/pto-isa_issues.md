@@ -1,0 +1,5656 @@
+﻿# Issues for hw-native-sys/pto-isa
+
+Downloaded: 2026-07-16T16:43:43.4232799+08:00
+Total issues: 66
+
+## #6 Stride Symbol Ambiguity Causes Compilation Failure on A5 Platform (CANN 9.0.0)
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/6
+- Created: 2026-03-09T11:45:50Z
+- Updated: 2026-03-09T12:46:39Z
+- Closed: 2026-03-09T12:46:39Z
+
+### Body
+
+## Stride Symbol Ambiguity Causes Compilation Failure on A5 Platform (CANN 9.0.0)
+
+### Description
+
+Compiling PTO kernels on the A5 platform with the CANN 9.0.0 bisheng compiler fails due to a `Stride` name conflict between PTO and a newly introduced CANN built-in type.
+
+### Error
+```bash
+error: reference to 'Stride' is ambiguous
+using DynStridDim5 = Stride<1, 1, 1, kTCols_, 1>;
+^
+/usr/local/Ascend/cann-9.0.0/tools/bisheng_compiler/lib/clang/15.0.5/include/__clang_cce_vector_intrinsics.h:114:12: note: candidate found by name lookup is 'Stride'
+enum class Stride {
+^
+/path/to/pto-isa/include/pto/common/pto_tile.hpp:138:8: note: candidate found by name lookup is 'pto::Stride'
+struct Stride {
+^
+```
+
+
+### Root Cause
+
+CANN 9.0.0 introduced `enum class Stride` in global scope via `__clang_cce_vector_intrinsics.h`. This conflicts with `pto::Stride` (`pto/common/pto_tile.hpp:138`) during unqualified name lookup, even when `using namespace pto;` is in effect.
+
+### Impact
+
+| | Affected |
+|---|---|
+| **Platform** | A5 (DAV-3510) with bisheng ccec compiler |
+| **Not affected** | A2A3 (older ccec, no conflicting built-in) |
+| **Scope** | All PTO kernels using `Stride<...>` unqualified |
+
+### Current Workaround
+
+Manually qualify every `Stride` usage with `pto::`:
+
+```cpp
+// Before
+using DynStridDim5 = Stride<1, 1, 1, kTCols_, 1>;
+
+// After
+using DynStridDim5 = pto::Stride<1, 1, 1, kTCols_, 1>;
+```
+This is not a sustainable solution — it requires touching all existing kernel code and must be repeated for every future CANN compiler symbol addition.
+
+### Environment
+
+| Field | Value |
+|---|---|
+| CANN version | 9.0.0 |
+| Compiler | bisheng ccec (clang 15.0.5) |
+| Compiler path | `/usr/local/Ascend/cann-9.0.0/tools/bisheng_compiler/bin/ccec` |
+| Conflicting header | `__clang_cce_vector_intrinsics.h:114` |
+| Platform | A5 (DAV-3510) |
+
+### Steps to Reproduce
+
+1. Target the A5 platform with `--cce-aicore-arch=dav-c310-vec`
+2. Compile a PTO kernel that uses `using namespace pto;` and references `Stride<...>` without explicit namespace qualification
+3. Observe: `error: reference to 'Stride' is ambiguous`
+
+> **Note:** Using `pto::Stride<...>` explicitly avoids the error. The conflict only surfaces with unqualified lookup via `using namespace pto;`.
+
+
+---
+
+## #7 TASSIGN No-Op Under CPU Simulation Breaks Buffer Sharing, Causing `paged_attention` Accuracy Failure
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/7
+- Created: 2026-03-11T01:46:55Z
+- Updated: 2026-03-17T00:57:22Z
+- Closed: 2026-03-17T00:57:22Z
+
+### Body
+
+# TASSIGN No-Op Under CPU Simulation Breaks Buffer Sharing, Causing `paged_attention` Accuracy Failure
+
+## Problem
+
+`TASSIGN` is a no-op under CPU simulation (`-p a2a3sim`), so buffer sharing
+across tiles does not actually occur. When multiple tiles are assigned to the
+same UB address via `TASSIGN`, each tile retains its own independent `data_`
+array in simulation instead of pointing to shared storage. Consequently, writes
+performed through one tile (e.g., `TFILLPAD_INPLACE` padding via `sijPadTile`)
+are invisible to reads through another tile (e.g., subsequent arithmetic via
+`sijTile`), even though both tiles were assigned to UB offset `0x0`.
+
+The root cause is the CPU-side data model: under `__CPU_SIM`, `Tile::data_` is
+a C array (`DType[Rows * Cols]`) that cannot be reassigned, so `TASSIGN`
+degrades to a no-op (see `pto-isa/include/pto/cpu/TAssign.hpp`). On hardware,
+`data_` is a pointer redirected by `assignData()` to the specified UB address.
+
+## Impact
+
+Any kernel that relies on `TASSIGN` buffer sharing — assigning multiple tiles
+to the same UB address so that writes through one tile are visible through
+another — will produce incorrect results under CPU simulation while working
+correctly on hardware.
+
+The immediate impact is on the `paged_attention` example
+(`examples/tensormap_and_ringbuffer/paged_attention`), where the softmax
+preparation kernel uses this pattern for partial-block masking. In this kernel,
+three tiles share UB address `0x0`:
+
+```cpp
+TASSIGN(sijTile,    0x0);   // data tile: loaded from GM, consumed by arithmetic
+TASSIGN(sijDynTile, 0x0);   // dynamic-cols boundary marker
+TASSIGN(sijPadTile, 0x0);   // padded tile: TFILLPAD_INPLACE fills [valid_len, N) with -inf
+```
+
+On hardware, `TFILLPAD_INPLACE(sijPadTile, sijDynTile)` pads the shared buffer
+in-place, and subsequent operations on `sijTile` see the padded values. Under
+simulation, the padding is written to `sijPadTile.data_` (a separate buffer),
+so `sijTile` retains the original unpadded data. This causes:
+
+- `TROWMAX` computes an incorrect row maximum (includes garbage values instead
+  of `-inf`)
+- `TEXP` produces non-zero weights for invalid positions (should be
+  `exp(-inf) = 0`)
+- Attention weights are incorrectly distributed, corrupting the final output
+
+The error propagates through the entire online softmax accumulation pipeline,
+affecting 190 out of 256 output elements.
+
+## Steps to Reproduce
+
+**Environment**: Linux with `g++-15`, simulation platform (`a2a3sim`)
+
+**Reproduction PR**: https://github.com/ChaoWao/simpler/pull/247
+
+Run the `paged_attention` example under simulation:
+
+```bash
+python examples/scripts/run_example.py \
+    -k examples/tensormap_and_ringbuffer/paged_attention/kernels \
+    -g examples/tensormap_and_ringbuffer/paged_attention/golden.py \
+    -p a2a3sim
+```
+
+The same command with `-p a2a3` (on-device) passes.
+
+## Error Output
+
+```
+[INFO] Comparing out: shape=torch.Size([256]), dtype=torch.float32
+[ERROR] TEST FAILED: Output 'out' does not match golden.
+Mismatched elements: 190/256
+rtol=0.01, atol=0.01
+```
+
+## Expected Behavior
+
+Simulation (`-p a2a3sim`) should produce results matching the golden reference
+within the specified tolerance (`rtol=0.01, atol=0.01`), consistent with the
+on-device (`-p a2a3`) result.
+
+## Root Cause Analysis
+
+The failure originates in `aiv_softmax_prepare.cpp` (the softmax preparation
+kernel) and is caused by the `TASSIGN` simulation limitation described above.
+Below is the detailed data-flow analysis:
+
+### On Hardware (`-p a2a3`) — Correct Behavior
+
+1. `TASSIGN(sijTile, 0x0)`, `TASSIGN(sijDynTile, 0x0)`,
+   `TASSIGN(sijPadTile, 0x0)` — all three tiles point to the same physical UB
+   buffer at offset `0x0`.
+2. `TLOAD(sijTile, sijGlobal)` — loads `sij` data (including garbage in
+   `[valid_len, N)` columns for partial blocks) into UB `0x0`.
+3. `TFILLPAD_INPLACE(sijPadTile, sijDynTile)` — pads columns `[valid_len, N)`
+   with `-inf` **in the shared UB buffer**.
+4. `TMULS(sijTile, sijTile, scale)` — operates on the padded data (garbage
+   columns are now `-inf`).
+5. `TROWMAX` → `TEXP` → `TROWSUM` — softmax correctly produces zero weight for
+   invalid positions (`exp(-inf) = 0`).
+
+### Under Simulation (`-p a2a3sim`) — Incorrect Behavior
+
+1. `TASSIGN` is a **no-op** — each tile retains its own independent `data_`
+   array.
+2. `TLOAD(sijTile, sijGlobal)` — loads data into `sijTile.data_`.
+3. `TFILLPAD_INPLACE(sijPadTile, sijDynTile)` — writes `-inf` into
+   `sijPadTile.data_` (a **separate buffer**, not `sijTile.data_`).
+4. `TMULS(sijTile, sijTile, scale)` — operates on the **unpadded**
+   `sijTile.data_`; garbage values in `[valid_len, N)` are not masked.
+5. `TROWMAX` picks up garbage → `TEXP(garbage) ≠ 0` → `TROWSUM` is wrong →
+   attention weights are corrupted → output diverges from golden.
+
+
+---
+
+## #9 A2/A3 TSCATTER behavior appears flattened while docs describe row-index scatter
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/9
+- Created: 2026-03-12T15:10:49Z
+- Updated: 2026-03-23T11:50:17Z
+- Closed: 2026-03-23T11:50:17Z
+
+### Body
+
+## Summary
+During PTO-DSL bring-up for `moe_distribute_combine`, the current A2/A3 `TSCATTER` behavior appears to scatter against flattened destination indices, while `docs/isa/TSCATTER.md` currently describes row-index semantics (`dst[idx[i,j], j] = src[i,j]`).
+
+## Repro
+Minimal local smoke on 910B / CANN 9.0.0-beta.1:
+- destination tile shape: `2 x 16` fp16
+- source tile shape: `1 x 16` fp16
+- index tile shape: `1 x 16` int16
+- all index values set to `1`
+
+Expected from the current doc text:
+- entire destination row `1` should receive the source row
+
+Observed:
+- only flattened destination position `1` is updated (last-writer-wins behavior), not the full destination row.
+
+## Why this matters
+PTODSL kernel design depends on the semantic contract here. We initially modeled `moe_distribute_combine` with row-local scatter indices and got incorrect results. Switching to chunk-local flattened indices made the local PTO smoke correctness-green.
+
+## Request
+Please clarify one of these:
+1. The implementation is correct and the docs need to describe flattened destination indexing.
+2. The docs are correct and the A2/A3 implementation needs to be fixed.
+
+Either way, the semantic contract should be unambiguous because PTOAS and PTODSL frontends need to generate the right index shapes.
+
+
+---
+
+## #13 A2/A3 lacks native vec quantized-store path for rope-cache kernels
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/13
+- Created: 2026-03-13T08:18:10Z
+- Updated: 2026-03-23T11:50:41Z
+- Closed: 2026-03-23T11:50:19Z
+
+### Body
+
+## Summary
+A2/A3 currently has no native vec-tile quantized store path exposed through PTO-ISA for the rope cache style contract (`vec f16 -> GM i8`).
+
+## Evidence
+- `TSTORE_IMPL(GlobalData&, TileData&)` for `TileType::Vec` in `include/pto/npu/a2a3/TStore.hpp` hard-checks same source/destination element size and uses the plain vec `TStore` path.
+- The quantized overloads in the same file are ACC-only:
+  - `TSTORE_IMPL(dst, src, uint64_t preQuantScalar)`
+  - `TSTORE_IMPL(dst, src, FpTileData &fp)`
+- The current static assertion hit from the rope-cache rewrite is:
+  - `Source dtype must be same with dst dtype!`
+
+## Impact
+PTODSL rope cache kernels cannot use a fused store-side quantization op for vec tiles. The legal implementation is currently:
+1. `TCVT(f16 -> i8)` in vec
+2. `TSTORE(i8 -> i8 GM)`
+
+## Request
+Either:
+- confirm that A2/A3 hardware does not support a vec quantized-store contract and keep `tcvt + tstore` as the intended implementation, or
+- add a native vec quantized-store backend contract with matching PTO-ISA intrinsic coverage and legality rules.
+
+## Affected kernels
+- `rope_quant_kvcache`
+- `dequant_rope_quant_kvcache`
+- `qkv_rms_norm_rope_cache`
+
+
+---
+
+## #14 cpu_sim: TRESHAPE copies data instead of aliasing, causing stale reads after source mutation
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/14
+- Created: 2026-03-20T09:09:26Z
+- Updated: 2026-03-23T11:50:19Z
+- Closed: 2026-03-23T11:50:19Z
+
+### Body
+
+## Summary
+
+`TRESHAPE_IMPL` in `include/pto/cpu/TReshape.hpp` performs a **byte-by-byte copy** from source to destination tile. On real hardware, reshape is a zero-cost reinterpretation of the same physical memory (alias). The sim copy semantics diverge: when the source tile is later mutated (e.g. by `TROWSUM`), the reshaped destination tile still holds **stale** pre-mutation data.
+
+## Root Cause
+
+```cpp
+// TReshape.hpp:51-56
+const std::byte *src_bytes = reinterpret_cast<const std::byte *>(src.data());
+std::byte *dst_bytes = reinterpret_cast<std::byte *>(dst.data());
+for (size_t i = 0; i < N; ++i) {
+    dst_bytes[i] = src_bytes[i];   // ← copy, not alias
+}
+```
+
+After the TASSIGN aliasing work in 978846f7, `TASSIGN` correctly points `data_` to shared NPU memory via `NPUMemoryModel::GetPointer`. But `TRESHAPE` copies into `dst`'s own buffer (either `internalStorage_` or a separately-assigned region), breaking the alias chain.
+
+## Reproduction
+
+LayerNorm kernel — two `TRESHAPE` calls on the same source tile, separated by a mutation:
+
+```cpp
+TROWSUM(v32, v28, v31);      // 1st write to v32: sum(x)
+TRESHAPE(v47, v32);           // v47 = copy of v32 → OK for now
+TMULS(v33, v47, v13);         // mean = sum(x)/N  ✓
+
+// ... compute centred² ...
+
+TROWSUM(v32, v34, v35);      // 2nd write to v32: sum(centred²)
+                               // v47 still holds stale sum(x) — NOT updated
+TMULS(v33, v47, v13);         // WRONG: reads sum(x)/N instead of sum(centred²)/N
+```
+
+Same pattern with `v48`/`v33` after `TRSQRT`.
+
+### Test Results
+
+| Platform | Without workaround TRESHAPE | With redundant TRESHAPE after each mutation |
+|---|---|---|
+| **a2a3** (hardware) | PASS ✓ | PASS ✓ |
+| **a2a3sim** (cpu_sim) | **FAIL** (123772/131072 mismatch) | PASS ✓ |
+
+Tested on latest `main` (66228909).
+
+## Expected Behavior
+
+`TRESHAPE(dst, src)` should make `dst` a **view/alias** of `src`'s underlying memory, consistent with hardware semantics. Subsequent writes to `src` should be visible through `dst`.
+
+## Suggested Fix
+
+In `__CPU_SIM` mode, `TRESHAPE_IMPL` should redirect `dst.data()` to point at `src.data()` (reinterpret-cast to the destination type) instead of copying, similar to how `TASSIGN_IMPL` works:
+
+```cpp
+#ifdef __CPU_SIM
+    // Alias: dst points to src's memory (zero-cost reshape, matching hardware)
+    dst.data() = reinterpret_cast<typename TileDataOut::DType *>(
+        const_cast<std::byte *>(reinterpret_cast<const std::byte *>(src.data())));
+#else
+    // Hardware: no-op
+#endif
+```
+
+The existing copy path can be retained as a fallback for non-sim builds.
+
+---
+
+## #15 Support TPUSH/TPOP instructions in CPU simulation (a5sim)
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/15
+- Created: 2026-03-20T09:54:44Z
+- Updated: 2026-05-28T03:11:26Z
+- Closed: 2026-03-23T11:50:18Z
+- Labels: enhancement
+
+### Body
+
+### Description
+
+Currently, when running simulations with a5sim, only `TLOAD` and `TSTORE` instructions can be used to ensure correctness. The `TPUSH` and `TPOP` instructions are not yet implemented in the CPU simulation model, which limits the ability to test and verify code that relies on these operations.
+
+### Expected Behavior
+
+The CPU simulation (a5im) should fully support `TPUSH` and `TPOP` instructions, allowing them to be used interchangeably with `TLOAD`/`TSTORE` for buffer-ring-based memory operations.
+
+### Impact
+
+Without this support, developers working with the PTO ISA cannot properly simulate code that uses buffer-ring-based push/pop semantics. This creates a gap between the intended ISA behavior and the simulation environment, potentially leading to verification issues or workarounds that don't reflect actual hardware usage.
+
+### Additional Context
+
+- The missing instructions affect the ability to run certain test cases or benchmarks that rely on `TPUSH`/`TPOP`.
+
+- Implementing these would bring the simulator closer to full ISA compliance and improve the development experience.
+
+---
+
+## #24 CPU simulation (a5sim) missing TPipe/TPUSH/TPOP/TFREE support — API mismatch with hardware backend
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/24
+- Created: 2026-03-27T03:11:54Z
+- Updated: 2026-05-28T03:10:47Z
+- Closed: 2026-03-27T08:29:32Z
+- Labels: bug
+
+### Body
+
+## Summary
+
+A working BGEMM example using the TPUSH/TPOP pipe mechanism runs correctly on A5 hardware, but **cannot be simulated on a5sim** (CPU-based simulation on an a2a3 host) because the CPU simulation backend in pto-isa exposes a completely different API from the hardware backend.
+
+**Working example**: The [`a5` branch of lwDavid/simpler](https://github.com/lwDavid/simpler/tree/a5/examples/a5/tensormap_and_ringbuffer/bgemm) contains a BGEMM kernel that uses `TPipe`, `TPUSH`, `TPOP`, `TFREE`, and `get_subblockid()`. It compiles and runs correctly on A5 hardware via CCEC, but fails to compile under `__CPU_SIM`.
+
+## Root Cause: API mismatch between backends
+
+The include chain in `pto_instr_impl.hpp` dispatches by three mutually exclusive guards:
+
+```cpp
+#ifdef PTO_NPU_ARCH_A5    →  pto/npu/a5/TPush.hpp     // TPipe, VEC_FIFO support
+#ifdef PTO_NPU_ARCH_A2A3  →  pto/npu/a2a3/TPush.hpp   // TPipe, GM_FIFO only
+#ifdef __CPU_SIM           →  pto/cpu/TPush.hpp         // TFIFOSync, mutex-based
+```
+
+When compiling for a5sim, the compiler defines `__CPU_SIM` but **not** `PTO_NPU_ARCH_A5` (that macro is set by the CCEC hardware compiler only). So the CPU path is taken.
+
+### Hardware path (`PTO_NPU_ARCH_A5`)
+
+`pto/npu/a5/TPush.hpp` provides:
+
+```cpp
+TPipe<FlagID, FIFOType, Depth, Period, TileDataProd, TileDataCons>
+```
+
+Kernel usage:
+```cpp
+using PipeT = TPipe<PP_FLAG_ID, FIFOType::VEC_FIFO, PP_FIFO_DEPTH, PP_FIFO_PERIOD,
+                    AccTileT, VecFifoTileT>;
+TPUSH(tile, pipe);
+TPOP(tile, pipe);
+TFREE(pipe);
+get_subblockid();
+```
+
+### CPU simulation path (`__CPU_SIM`)
+
+`pto/cpu/TPush.hpp` provides a **completely different** type:
+
+```cpp
+TFIFOSync<FlagID, DataFIFO, ProducerOp, ConsumerOp>
+```
+
+- Different name (`TFIFOSync` vs `TPipe`)
+- Different template parameters
+- Different semantics
+- No `TPipe` alias
+- No `TPUSH`/`TPOP`/`TFREE` macros that work with it
+- No `get_subblockid()` stub
+
+## Suggested Fix
+
+A unified abstraction layer that maps the same API (`TPipe`, `TPUSH`, `TPOP`, `TFREE`) to both hardware intrinsics and CPU simulation primitives. Specifically:
+
+1. **Add a `TPipe` template alias** in `pto/cpu/TPush.hpp` that wraps `TFIFOSync` with matching template parameters
+2. **Add `TPUSH`/`TPOP`/`TFREE` implementations** for the CPU backend that work with `VEC_FIFO` type (currently only `GM_FIFO` has a CPU `TPUSH_IMPL`)
+3. **Add a `get_subblockid()` stub** returning `0` for single-threaded simulation
+
+This would allow A5 kernels using the pipe mechanism to compile and run under CPU simulation without any source-level `#ifdef` workarounds.
+
+## Current Workaround
+
+In userland code, we use `#ifdef __CPU_SIM` to fall back to GM-based separate tasks — functionally correct, but without the pipe optimization, and requiring duplicated code paths.
+
+---
+
+## #26 a5sim: TPUSH/TPOP simulation produces incorrect results for BGEMM (precision errors)
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/26
+- Created: 2026-03-30T02:06:58Z
+- Updated: 2026-05-28T03:10:15Z
+- Closed: 2026-03-30T04:15:46Z
+- Labels: bug
+
+### Body
+
+## Summary
+
+After PR #25 resolved the API mismatch for `TPipe`/`TPUSH`/`TPOP`/`TFREE` in CPU simulation (closing #24), a5sim can now **compile and run** kernels that use these instructions. However, the BGEMM example produces **incorrect computation results** (precision errors) under a5sim, while the same kernel computes correctly on real A5 hardware.
+
+## Reproduction
+
+```bash
+git clone git@github.com:hw-native-sys/simpler.git
+cd simpler
+git checkout main
+python examples/scripts/run_example.py \
+    -k tests/st/a5/tensormap_and_ringbuffer/bgemm/kernels \
+    -g tests/st/a5/tensormap_and_ringbuffer/bgemm/golden.py \
+    -p a5sim
+```
+
+The test will complete but report precision/correctness errors when comparing the a5sim output against the golden reference.
+
+## Expected Behavior
+
+a5sim results should match the golden reference (and match real hardware results), within acceptable tolerance.
+
+## Actual Behavior
+
+a5sim produces results with precision errors. The same BGEMM kernel runs correctly on actual A5 hardware with no precision issues.
+
+## Context
+
+- Issue #24 reported that TPUSH/TPOP were unsupported in a5sim (API mismatch)
+- PR #25 added CPU simulation support for the A5-style pipe API
+- The API now works (compilation and execution succeed), but the underlying simulation logic appears to produce numerically incorrect results for the pipe-based data movement in BGEMM
+
+---
+
+## #27 Bug: TCOLARGMIN_IMPL / TCOLARGMAX_IMPL duplicate definitions cause ODR violation (a2a3)
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/27
+- Created: 2026-03-30T02:36:56Z
+- Updated: 2026-03-31T03:31:14Z
+- Closed: 2026-03-31T03:31:14Z
+
+### Body
+
+## Description
+
+`pto_instr_impl.hpp` includes both the standalone headers (`TColArgMin.hpp`, `TColArgMax.hpp`) and the unified header (`TColReduceIdx.hpp`) for the a2a3 target. Both sets define `TCOLARGMIN_IMPL` and `TCOLARGMAX_IMPL` with **different implementations**, causing a C++ One Definition Rule (ODR) violation.
+
+When any kernel `#include`s `pto/pto-inst.hpp`, the compiler sees two definitions of each function template and emits a hard error:
+
+```
+error: redefinition of 'TCOLARGMIN_IMPL'
+error: redefinition of 'TCOLARGMAX_IMPL'
+```
+
+## Reproduction
+
+Include `pto/pto-inst.hpp` (which pulls in `pto/common/pto_instr_impl.hpp`) in any a2a3 kernel and compile with ccec.
+
+## Root Cause
+
+In `include/pto/common/pto_instr_impl.hpp`, the a2a3 section includes:
+
+- **Line 57**: `#include "pto/npu/a2a3/TColArgMax.hpp"` — defines `TCOLARGMAX_IMPL` (line 184)
+- **Line 96**: `#include "pto/npu/a2a3/TColArgMin.hpp"` — defines `TCOLARGMIN_IMPL` (line 184)
+- **Line 97**: `#include "pto/npu/a2a3/TColReduceIdx.hpp"` — **re-defines** both `TCOLARGMIN_IMPL` (line 240) and `TCOLARGMAX_IMPL` (line 245)
+
+The two implementations are also semantically different:
+- `TColArgMin.hpp` / `TColArgMax.hpp`: Perform validity checks and dispatch to dtype-specific routines (`TColArgMin16`, `TColArgMax32`, etc.)
+- `TColReduceIdx.hpp`: Dispatches through a unified `TCOLARG_DISPATCH` template with an `IsArgMax` bool parameter — no validity checks
+
+
+## Environment
+
+- Commit: `64cedf5` (sync: merge cann/master into main, 2026-03-29)
+- Target: a2a3
+- Compiler: ccec (BiSheng)
+
+---
+
+## #30 CPU sim TMatmul rejects PTOAS-emitted Left tile layout
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/30
+- Created: 2026-03-30T11:48:36Z
+- Updated: 2026-04-01T03:20:51Z
+- Closed: 2026-04-01T03:20:51Z
+
+### Body
+
+## Summary
+
+CPU simulation matmul validation is stricter than the PTOAS-emitted Left tile representation used by current matmul kernels. The CPU TMatmul checker treats !TileLeft::isRowMajor as a required condition even though the generated Left tile remains valid for CPU offset computation.
+
+## Reproduction
+
+1. Export PTO_ISA_ROOT to a pto-isa checkout containing the current CPU sim implementation.
+2. In the pypto workspace, run:
+   pytest -sv tests/st/runtime/test_matmul.py --save-kernels --dump-passes --platform a2a3sim --forked -k matmulacc_pto_64x64x64
+3. Inspect the PTOAS-emitted kernel and note the explicit Left tile form:
+   Tile<TileType::Left, ..., BLayout::RowMajor, ..., SLayout::RowMajor, ...>
+4. Compare that with the CPU-side TMatmul validation in include/pto/cpu/TMatmul.hpp.
+
+## Expected Behavior
+
+CPU simulation should validate Left tiles based on the constraints that actually affect matmul semantics and offset calculation, so PTOAS-emitted Left tiles that are valid for CPU addressing should be accepted.
+
+## Actual Behavior
+
+The CPU-side CheckMadValid() requires !TileLeft::isRowMajor in addition to TileType::Left and SLayout::RowMajor. That rejects the PTOAS-emitted explicit Left tile form even though CPU GetTileElementOffset() can address it correctly.
+
+## Proposed Fix
+
+Relax the Left tile validation in include/pto/cpu/TMatmul.hpp by removing the !TileLeft::isRowMajor restriction while keeping the remaining role, fractal, dtype, and shape checks intact.
+
+## Environment
+
+- Commit: 7ba5a0ed04b9d35635ac537209c7fe4fc3533d46
+- Host platform: Linux (x86_64)
+- Related failing system test: pypto tests/st/runtime/test_matmul.py::TestMatmulOperations::test_matmulacc_pto_64x64x64 on a2a3sim
+
+## Notes
+
+The local fix keeps the existing CPU sim address-binding behavior in TAssign.hpp unchanged and only relaxes the overly strict Left tile validation in TMatmul.hpp.
+
+---
+
+## #34 sim: TMATMUL static assertion fails for FP32 matmul on a2a3sim (non-conforming matrix fractal)
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/34
+- Created: 2026-04-02T03:16:02Z
+- Updated: 2026-04-02T04:02:45Z
+- Closed: 2026-04-02T04:02:45Z
+
+### Body
+
+## Summary
+
+Running `examples/beginner/matmul.py` with `-p a2a3sim` fails to compile the kernel with a static assertion in the CPU simulator:
+
+```
+/data/pto-isa/include/pto/cpu/TMatmul.hpp:56:59: error: static assertion failed: Non-conforming matrix fractal
+    ((TileLeft::Loc == TileType::Left) && (!TileLeft::isRowMajor) && (TileLeft::SFractal == SLayout::RowMajor)) &&
+```
+
+## Root Cause
+
+`CheckMadValid` in `include/pto/cpu/TMatmul.hpp:56` requires `!TileLeft::isRowMajor` (i.e. L0A must be stored in column-major block layout). However, pypto's codegen for FP32 matmul emits a `TileLeft` with `BLayout::RowMajor`, which causes `isRowMajor = true` and trips the assertion:
+
+```
+note: '!(bool)pto::Tile<pto::TileType::Left, float, 64, 256, pto::BLayout::RowMajor, 64, 256,
+      pto::SLayout::RowMajor, 512, pto::PadValue::Null>::isRowMajor' evaluates to false
+```
+
+The same code compiles and runs correctly on real a2a3 hardware, so either:
+- the sim's layout constraint is stricter than the hardware ISA, or
+- `BLayout::RowMajor` on the Left tile should be accepted by the sim.
+
+## Reproduction
+
+```bash
+# In pypto-lib
+python examples/beginner/matmul.py -p a2a3sim
+```
+
+## Environment
+
+- Platform: a2a3sim (CPU simulator)
+- Dtype: FP32
+- Tile shape: Left[64×256] RowMajor, Right[256×64] ColMajor, Acc[64×64]
+- File: `include/pto/cpu/TMatmul.hpp`, line 56
+
+---
+
+## #35 sim: Add BF16 (bfloat16) support to CPU simulator
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/35
+- Created: 2026-04-02T03:16:07Z
+- Updated: 2026-04-02T12:50:24Z
+- Closed: 2026-04-02T12:50:24Z
+
+### Body
+
+## Summary
+
+The CPU simulator (`include/pto/cpu/`) does not support `bfloat16` (BF16). This blocks simulation of any model that uses BF16 tensors, such as Qwen3-32B and DeepSeek V3.
+
+## Root Cause
+
+`CheckMadValid` in `include/pto/cpu/TMatmul.hpp` only whitelists three dtype combinations:
+
+```cpp
+static_assert(
+    (std::is_same_v<AType, int8_t> && std::is_same_v<BType, int8_t> && std::is_same_v<CType, int32_t>) || // s8
+    (std::is_same_v<AType, half>   && std::is_same_v<BType, half>   && std::is_same_v<CType, float>)   || // f16→f32
+    (std::is_same_v<AType, float>  && std::is_same_v<BType, float>  && std::is_same_v<CType, float>)      // f32→f32
+    , "Not supported data type");
+```
+
+`bfloat16` is absent. A search of `include/pto/cpu/` confirms only `TLoad.hpp` mentions BF16; none of the compute kernels (matmul, elementwise, reductions) handle it.
+
+## Expected Behavior
+
+BF16 matmul and elementwise operations should be simulatable on the CPU sim, at minimum as `bf16→fp32` accumulation (matching hardware semantics).
+
+## Impact
+
+- Cannot simulate any BF16-only model kernel on a2a3sim/a5sim
+- Blocks developer iteration for production LLM workloads (Qwen3, DeepSeek, etc.)
+
+---
+
+## #37 [Bug] BF16 run_cpu.py with macOS GNU toolchain still links against incompatible GTest ABI
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/37
+- Created: 2026-04-02T06:51:36Z
+- Updated: 2026-04-02T07:17:27Z
+- Closed: 2026-04-02T07:17:27Z
+- Labels: bug
+
+### Body
+
+## Summary
+
+On macOS arm64, `tests/run_cpu.py --enable-bf16 --cxx g++-15 --cc gcc-15` still fails to link CPU ST binaries against GTest because the resulting `gtest` archive resolves to `std::__1` symbols while the test objects use GNU `std::__cxx11` symbols.
+
+## Reproducer
+
+```bash
+cd tests
+python3 run_cpu.py --testcase tcvt --gtest_filter 'TCVTTest.case10:TCVTTest.case11' \
+  --build-dir "$PWD/cpu/st/build-bf16" --enable-bf16 --cxx g++-15 --cc gcc-15 --clean
+```
+
+Observed failure on April 2, 2026:
+
+- linker errors against `testing::internal::*`
+- mixed `std::__1` and `std::__cxx11` symbol families in the same link
+
+## Notes
+
+PR #36 now prefers installed GTest by default and only falls back to `FetchContent` for an Apple+GNU compatibility path, but that is still insufficient on this host: even the fetched `googletest` build produced `std::__1` symbols and did not link against the BF16 GCC test objects.
+
+## Impact
+
+- BF16 `run_cpu.py` validation remains broken on macOS GNU toolchains
+- local BF16 verification on Apple Silicon still requires a workaround or a different toolchain path
+
+## Expected Fix Direction
+
+Investigate how the fetched `googletest` build is picking up `libc++` on macOS GNU builds, and ensure the CPU ST build uses a GTest binary compiled with the same C++ runtime/ABI as the selected BF16 compiler.
+
+
+---
+
+## #40 docs: track repository-wide Markdown lint backlog
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/40
+- Created: 2026-04-02T07:51:03Z
+- Updated: 2026-04-14T02:33:12Z
+- Closed: 2026-04-14T02:33:12Z
+
+### Body
+
+## Background
+
+After landing unified CI in PR #39 on April 2, 2026, the repository now checks Markdown changes through `pre-commit`, but the existing documentation corpus still has a large historical backlog.
+
+Current baseline from a full run of:
+
+```bash
+pre-commit run markdownlint-cli2 --all-files
+```
+
+Observed backlog:
+- about 6534 Markdown lint errors
+- about 388 Markdown files with errors
+- most errors are concentrated under `docs/`
+
+Top rules by count:
+- `MD007`: 2090
+- `MD060`: 1446
+- `MD031`: 1246
+- `MD012`: 574
+- `MD032`: 377
+- `MD022`: 228
+- `MD040`: 158
+- `MD036`: 136
+
+Top hotspots by file count:
+- `kernels/manual/a5/engram_simt/README.md`: 334
+- `docs/HL_ptoisa_newfeature20260306_TPUSH_TPOP.md`: 131
+- `docs/menu_apis.md`: 120
+- `docs/coding/version-compatibility_zh.md`: 119
+- `kernels/manual/common/flash_atten/README.md`: 110
+- `tests/npu/a2a3/src/st/testcase/tfa/TFA_kernel.md`: 110
+- `docs/assembly/scalar-arith-ops.md`: 105
+- `docs/assembly/scalar-arith-ops_zh.md`: 100
+
+Top hotspots by top-level area:
+- `docs/`: 5235
+- `kernels/`: 727
+- `tests/`: 333
+- `demos/`: 73
+- `include/`: 44
+
+## Why this issue exists
+
+We intentionally scoped the new CI to changed files so PR validation is immediately usable. This issue tracks the remaining repository-wide Markdown debt so it can be burned down in planned batches instead of blocking unrelated work.
+
+## Proposed cleanup plan
+
+1. Batch 1: `docs/assembly/`, `docs/coding/`, and other highest-volume files under `docs/`
+2. Batch 2: `kernels/**` Markdown docs and related READMEs
+3. Batch 3: `tests/**`, `demos/**`, and root-level Markdown files
+4. Batch 4: tighten config only if needed after backlog is materially reduced
+
+## Suggested acceptance target
+
+- reduce the full-repo `markdownlint-cli2` backlog to zero, or to a consciously documented residual allowlist
+- keep CI on changed files throughout the cleanup so new debt does not accumulate
+- avoid mixing semantic doc rewrites with mechanical lint cleanup unless necessary
+
+## Notes
+
+This should likely be handled as multiple PRs, each scoped to one directory family or one hotspot cluster, to keep reviews manageable.
+
+
+---
+
+## #50 [BUG] Regression: a5sim BGEMM segmentation fault after CPU_SIM memory manager refactor in `d940c05b`
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/50
+- Created: 2026-04-03T06:39:20Z
+- Updated: 2026-04-10T01:51:51Z
+- Closed: 2026-04-09T12:56:26Z
+
+### Body
+
+
+## Summary
+
+We identified a regression in `pto-isa` that causes the BGEMM test in `simpler-a5` to fail on `a5sim` with a segmentation fault.
+
+A `git bisect` on `examples/scripts/_deps/pto-isa` shows:
+
+- First bad commit: `d940c05b` (`Memory manager and tests refactoring`)
+- Author: `fzhar <zharinov.fedor@huawei.com>`
+- Date: `2026-03-31`
+- Merge request: `cann/pto-isa!615`
+
+The last known good commit is:
+
+- `882c4db95570dfeaf04e0ee2c0ab32477ed372fc`
+
+This makes `d940c05b` the first confirmed commit that introduces the regression.
+
+## Impact
+
+- Consumer project: `simpler-a5`
+- Affected platform: `a5sim`
+- Affected workload: BGEMM using TPUSH/TPOP
+- User-visible symptom: simulation terminates with `Segmentation fault (core dumped)`
+
+## Reproduction
+
+In `simpler-a5`, set the `pto-isa` dependency under `examples/scripts/_deps/pto-isa` to commit `d940c05b`, then run:
+
+```bash
+python examples/scripts/run_example.py \
+  -k tests/st/a5/tensormap_and_ringbuffer/bgemm/kernels/ \
+  -g tests/st/a5/tensormap_and_ringbuffer/bgemm/golden.py \
+  -p a5sim \
+  -c 482131249bd2dfc54f8ccf9949ddbd9ad69f6280 \
+  --build
+```
+
+With `pto-isa` pinned to `882c4db9`, the same test passes.
+
+## Actual Behavior
+
+The orchestration stage completes and reports successful task submission, but the process crashes when the scheduled AICore work begins to execute in CPU_SIM.
+
+Representative log pattern:
+
+```text
+[INFO] aicpu_orchestration_entry: [bgemm_orch] Submitted tasks for 2 batches, 4x4 output tiles, 4 K steps each
+[ALWAYS] run: PTO2 total submitted tasks = 128, already executed 0 tasks
+[INFO] run: Thread 3: Orchestrator completed (orch_idx=0)
+[INFO] run: Thread 3: Completed
+[INFO] aicpu_execute: aicpu_execute: Kernel execution completed successfully
+Segmentation fault (core dumped)
+```
+
+From the consumer perspective, this appears as an `a5sim` crash during BGEMM execution rather than a numerical mismatch.
+
+## Expected Behavior
+
+The BGEMM test should complete successfully on `a5sim`, as it does when `pto-isa` is pinned to `882c4db9`.
+
+## Regression Scope
+
+The failing commit is part of MR `cann/pto-isa!615`, which refactors the NPU memory model and CPU_SIM tile handling, and also adds `TASSIGN` support for CPU_SIM tests.
+
+The main files touched by that change include:
+
+- `include/pto/common/pto_tile.hpp`
+- `include/pto/cpu/NPUMemoryModel.hpp`
+- `include/pto/cpu/TAssign.hpp`
+
+Based on the bisection result and observed runtime behavior, the regression appears to be associated with the CPU_SIM memory-model / tile-management refactor introduced in this change set.
+
+## Root Cause Analysis
+
+The affected BGEMM path uses TPUSH/TPOP and depends on correct CPU_SIM tile allocation and default tile backing storage semantics.
+
+Before `d940c05b`, CPU_SIM `Tile` objects had internal fallback storage, so a tile declared without an explicit `TASSIGN` still had valid backing memory.
+
+After `d940c05b`, this behavior changed in `include/pto/common/pto_tile.hpp`:
+
+- the CPU_SIM internal fallback storage path was removed
+- CPU_SIM tile lazy allocation became conditional on `__PTO_AUTO__`
+- when `__CPU_SIM` is defined but `__PTO_AUTO__` is not defined, a tile may keep an uninitialized backing pointer unless it is explicitly `TASSIGN`'d
+
+In our integration, simulation kernels are compiled with `__CPU_SIM`, but not with `__PTO_AUTO__`.
+
+This becomes observable in the BGEMM kernel because it declares a TPUSH/TPOP consumer tile without explicitly assigning storage:
+
+```cpp
+VecFifoTileT vecFifoTile;
+```
+
+That tile is later used as the destination of split `TPOP`. In the CPU_SIM split path, `TPOP` eventually writes into `dst.data()[...]`. With the old behavior this was safe because `vecFifoTile` had internal backing storage. After `d940c05b`, `dst.data()` can be invalid in the non-`__PTO_AUTO__` CPU_SIM configuration, which leads to the observed segmentation fault.
+
+In other words, this looks like a regression in CPU_SIM `Tile` default-storage semantics rather than a problem in the BGEMM algorithm itself.
+
+## Temporary Consumer Workaround
+
+As a local consumer-side workaround, explicitly assigning storage to the BGEMM FIFO consumer tile appears to avoid the crash, for example by adding `TASSIGN` for `vecFifoTile` before `TPOP`.
+
+However, we do not believe that should be considered the root fix in `pto-isa`, because:
+
+- the previous CPU_SIM behavior allowed such tiles to work without explicit `TASSIGN`
+- other kernels may rely on the same implicit-storage behavior
+- the regression was introduced by the CPU_SIM memory / tile refactor, not by a change in the BGEMM kernel itself
+
+
+---
+
+## #51 A2A3 TRSQRT on FP32 vector path shows large accuracy loss compared with sqrt+div
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/51
+- Created: 2026-04-08T03:26:20Z
+- Updated: 2026-04-14T02:30:19Z
+- Closed: 2026-04-14T02:30:19Z
+
+### Body
+
+## Summary
+
+On A2A3, the vector `rsqrt` path appears to have significantly worse accuracy than the equivalent `sqrt + div` path.
+
+A minimal rsqrt-only kernel reproduces the issue. The same setup with `sqrt + div` passes accuracy checks, which suggests the problem is specifically in the lowering/runtime behavior of `TRSQRT`.
+
+## Reproduction
+
+Environment:
+
+- repo used for reproduction: `high-cloud/pto_workspace`
+- target platform: `a2a3`
+- device: `15`
+- conda env: `pypto-lib`
+
+### 1. rsqrt-only test
+
+Script:
+
+- `modules/pypto-lib/examples/models/qwen3/qwen3_32b_rsqrt_only_accuracy.py`
+
+Command:
+
+```bash
+source /data/miniconda3/etc/profile.d/conda.sh
+conda activate pypto-lib
+cd /data/yangyaodong/code/pto_workspace
+source scripts/env.sh
+cd modules/pypto-lib
+python examples/models/qwen3/qwen3_32b_rsqrt_only_accuracy.py -p a2a3 -d 15
+```
+
+Result directory:
+
+- `build_output/RsqrtOnlyAccuracyProgram_20260407_202402`
+
+Observed failure:
+
+```text
+AssertionError: Output 'inv_rms_out' does not match golden.
+Mismatched elements: 16/16
+```
+
+Mismatch dump:
+
+- `build_output/RsqrtOnlyAccuracyProgram_20260407_202402/mismatch_dump/inv_rms_out.pt`
+
+Measured from dump:
+
+- mismatch: `16 / 16`
+- max abs diff: `0.01098489761352539`
+- mean abs diff: `0.004985183477401733`
+- max rel diff: `0.0021205416414886713`
+
+Example values:
+
+- actual:
+  `[4.59375, 4.0625, 5.125, 3.6796875, 3.7890625, 4.09375, 4.703125, 4.953125, 4.78125, 5.28125, 4.203125, 4.890625, 4.921875, 4.9375, 3.7265625, 5.578125]`
+- expected:
+  `[4.5922627449035645, 4.066621780395508, 5.127498149871826, 3.674419641494751, 3.7861320972442627, 4.099695682525635, 4.693172931671143, 4.962160587310791, 4.772738933563232, 5.292234897613525, 4.197691440582275, 4.889339923858643, 4.922595024108887, 4.942502021789551, 3.7241029739379883, 5.5822529792785645]`
+
+## Lowering Path
+
+The generated code lowers `pl.rsqrt(...)` directly to `TRSQRT`.
+
+Frontend / pass dump:
+
+- `build_output/RsqrtOnlyAccuracyProgram_20260407_202402/passes_dump/00_frontend.py`
+- `build_output/RsqrtOnlyAccuracyProgram_20260407_202402/passes_dump/23_after_AllocateMemoryAddr.py`
+
+PTO IR:
+
+- `build_output/RsqrtOnlyAccuracyProgram_20260407_202402/ptoas/compute_rsqrt_incore_0.pto`
+
+Relevant line:
+
+```mlir
+pto.trsqrt ins(%variance_row__tile ...) outs(%inv_rms_row__tile ...)
+```
+
+Generated kernel:
+
+- `build_output/RsqrtOnlyAccuracyProgram_20260407_202402/kernels/aiv/compute_rsqrt_incore_0.cpp`
+
+Relevant line:
+
+```cpp
+TRSQRT(v14, v13);
+```
+
+## Control Experiment
+
+A control kernel that replaces:
+
+```python
+inv_rms = pl.rsqrt(variance)
+```
+
+with:
+
+```python
+rms = pl.sqrt(variance)
+one = pl.full([1, BATCH_TILE], dtype=pl.FP32, value=1.0)
+inv_rms = pl.div(one, rms)
+```
+
+passes accuracy checks under the same setup.
+
+Script:
+
+- `modules/pypto-lib/examples/models/qwen3/qwen3_32b_sqrt_div_accuracy.py`
+
+This suggests the accuracy issue is specific to the `TRSQRT` path, not the surrounding FP32 load/store or tensor reshape path.
+
+## Impact
+
+This affects RMSNorm-related kernels, including Qwen3 scope1 experiments. In larger kernels, the rsqrt error propagates and amplifies downstream projection mismatch.
+
+## Expected
+
+`pl.rsqrt` on FP32 vector input should have accuracy comparable to `1.0 / sqrt(x)` for this use case, or the backend/docs should clearly state that `TRSQRT` is an approximate instruction with materially lower precision.
+
+
+---
+
+## #52 TPARTADD/MAX/MIN/MUL 的文档定义不准确，请更正
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/52
+- Created: 2026-04-08T06:54:49Z
+- Updated: 2026-04-14T02:29:09Z
+- Closed: 2026-04-14T02:29:09Z
+
+### Body
+
+https://github.com/hw-native-sys/pto-isa/blob/main/docs/isa/TPARTADD_zh.md
+
+<img width="1050" height="1080" alt="Image" src="https://github.com/user-attachments/assets/a41027a2-e633-4b07-8b56-4fe3e8289ebf" />
+
+**如上图所示：**
+1. **指令示意图**：src0.shape=(3,3), src1.shape=(2,4), dst.shape=(3,3), 与**②指令示意图左下角的伪码**对不上。另据文档约束，这种src0，src1互相不掩盖的情况，是不支持的，请更正；
+2. **指令示意图左下角的伪码**：最后一个else中的：implementation-defined，据了解，当前未实现；请确认：如有实现，请刷新**④数学语义**，否则请删除；
+3. **简介**：中文晦涩难懂，请更新。
+4. **数学语义**：这里跟**②指令示意图左下角的伪码**不一致，请确认。
+
+另：TPARTMAX/MIN/MUL有相同问题。
+
+---
+
+## #58 [A5][TMOV] Potential UB unaligned access on col_major 16x1 vec->vec path
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/58
+- Created: 2026-04-08T11:19:22Z
+- Updated: 2026-04-14T01:30:51Z
+- Closed: 2026-04-14T01:30:51Z
+
+### Body
+
+## Background
+
+During A5 board validation for PTOAS Sync cases, we observed intermittent but reproducible runtime failures:
+
+- `error code = 340`
+- `The instruction access UB address is not aligned`
+
+After excluding sync-order effects (including forcing `PIPE_ALL` barriers), the strongest signal points to A5 `TMOV` Vec->Vec behavior in a specific layout/shape combination.
+
+## Suspected risky scenario
+
+- Target: A5
+- Op path: `TMOV` Vec->Vec
+- Tile shape/layout: `rows=16, cols=1, blayout=col_major`
+- DType: `f32`
+
+In this case, `RowStride=1` and address progression in `TMovVecToVec` can reach `base + 4B` at `i=1`, which may violate vector load alignment requirements (32B), then trigger error 340.
+
+## Relevant code snippets
+
+### A5 TMOV Vec->Vec address formula
+
+```cpp
+for (uint16_t i = 0; i < (uint16_t)validRow; ++i) {
+    sreg = (uint32_t)validCol;
+    for (uint16_t j = 0; j < (uint16_t)repeatTimes; ++j) {
+        preg = CreatePredicate<T>(sreg);
+        vlds(vreg0, src, i * SrcTileData::RowStride + j * nRepeatElem, NORM);
+        vsts(vreg0, dst, i * DstTileData::RowStride + j * nRepeatElem, distValue, preg);
+    }
+}
+```
+
+Source: `include/pto/npu/a5/TMov.hpp`
+
+### RowStride definition for col-major
+
+```cpp
+static constexpr int RowStride = BFractal_ == BLayout::RowMajor ? Cols : 1;
+```
+
+Source: `include/pto/common/pto_tile.hpp`
+
+## Repro notes
+
+We prepared an observable PTO case in PTOAS (GM->UB `tload` -> `tmov` -> UB->GM `tstore`) to ensure TMOV path is actually executed:
+
+- [PTOAS PR #440](https://github.com/hw-native-sys/PTOAS/pull/440)
+- Related PTOAS tracking issues: [#421](https://github.com/hw-native-sys/PTOAS/issues/421), [#441](https://github.com/hw-native-sys/PTOAS/issues/441)
+
+## What we need help confirming in PTO-ISA
+
+1. Whether A5 `TMOV_V2V` should enforce stronger alignment preconditions for `col_major + small RowStride`.
+2. Whether this case should use a guarded fallback/specialized path instead of direct `vlds/vsts` stepping.
+3. Whether we should add a dedicated ISA regression case for `16x1 col_major f32` to prevent future regressions.
+
+Thanks a lot. We can provide additional logs / CA-sim artifacts if needed.
+
+
+---
+
+## #62 demo: baseline auto_mode add test needs op_extension side-effect import
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/62
+- Created: 2026-04-09T07:24:19Z
+- Updated: 2026-04-09T07:27:09Z
+- Closed: 2026-04-09T07:26:20Z
+
+### Body
+
+## Summary
+
+The baseline auto-mode add demo test depends on `import op_extension` for side-effect operator registration. Without that import, `torch.ops.npu.my_add(...)` is not registered and the documented demo flow fails before exercising the custom operator.
+
+## Expected
+
+Running `demos/auto_mode/baseline/add/test/test.py` should register `libop_extension.so` and execute the example successfully in a configured environment.
+
+## Proposed fix
+
+Restore the intentional side-effect import and keep it marked so cleanup tools do not remove it again.
+
+## Validation
+
+- `python3 -m py_compile demos/auto_mode/baseline/add/test/test.py`
+- `ruff check demos/auto_mode/baseline/add/test/test.py`
+
+---
+
+## #63 demo: torch-jit add entrypoint requires torch_npu initialization import
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/63
+- Created: 2026-04-09T07:24:40Z
+- Updated: 2026-04-09T07:27:11Z
+- Closed: 2026-04-09T07:26:25Z
+
+### Body
+
+## Summary
+
+The torch-jit add demo entrypoint uses `device="npu"` tensors and `torch.npu.synchronize()`, but that runtime surface is registered by `import torch_npu`. Without the import, the demo fails before kernel execution.
+
+## Expected
+
+Running `demos/auto_mode/torch_jit/add/add_compile_and_run.py` in a configured environment should initialize the NPU runtime and execute the demo successfully.
+
+## Proposed fix
+
+Restore the explicit `import torch_npu` side-effect import and mark it as intentional so cleanup tools do not remove it again.
+
+## Validation
+
+- `python3 -m py_compile demos/auto_mode/torch_jit/add/add_compile_and_run.py`
+- `ruff check demos/auto_mode/torch_jit/add/add_compile_and_run.py`
+
+---
+
+## #64 tests: all_cpu_tests should not reuse a shared gen_data.py filename
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/64
+- Created: 2026-04-09T07:24:55Z
+- Updated: 2026-04-09T07:27:13Z
+- Closed: 2026-04-09T07:26:31Z
+
+### Body
+
+## Summary
+
+`tests/script/all_cpu_tests.py` copies testcase generators into the build directory before execution. Reusing a single destination filename (`gen_data.py`) creates an unnecessary collision point and makes the runner fragile to future parallelism or generator assumptions.
+
+## Expected
+
+Each testcase generator should execute from an isolated temporary script path while preserving the existing build-directory output layout expected by the CPU ST binaries.
+
+## Proposed fix
+
+Copy each generator to a unique filename derived from its testcase directory before running it.
+
+## Validation
+
+- `python3 -m py_compile tests/script/all_cpu_tests.py`
+- `ruff check tests/script/all_cpu_tests.py`
+- `python3 tests/script/all_cpu_tests.py -g Ninja -b build/cpu_pr_all_cpu_tests`
+
+---
+
+## #66 [BUG] pypto fails to generate alloc_tile for tpop_from_aic/tpop_from_aiv return tiles, causing missing TASSIGN and runtime Segfault
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/66
+- Created: 2026-04-10T03:57:22Z
+- Updated: 2026-04-14T10:10:30Z
+- Closed: 2026-04-14T10:10:30Z
+- Labels: bug
+
+### Body
+
+### Summary
+
+During Qwen3Scope3 model compilation, we identified that pypto does not generate `pto.alloc_tile` for the return tiles of `pto.tpop_from_aic` / `pto.tpop_from_aiv` in the .pto IR. As a result, ptoas compiles TPOP without a corresponding `TASSIGN`, and the tile has no valid backing physical memory address at runtime, leading to a Segmentation fault.
+
+This is confirmed to be a **pypto memory allocation pass issue**, not a ptoas compilation issue. ptoas behaves correctly — it faithfully compiles `pto.alloc_tile` into `TASSIGN`, and without `alloc_tile`, no `TASSIGN` is generated.
+
+### Impact
+
+- **Affected model:** Qwen3Scope3
+- **Affected component:** pypto memory allocation passes
+- **User-visible symptom:** Segmentation fault (core dumped) at runtime
+
+### Reproduction
+
+File: `pypto-lib/examples/models/qwen3/qwen3_32b_decode_scope3.py`
+
+### Actual Behavior
+
+**.pto IR (scope3_incore_1.pto:76-78):**
+
+```mlir
+%t__tile_Vec = pto.tpop_from_aic {split = 1} -> !pto.tile_buf<loc=vec, ...>
+%0 = pto.alloc_tile addr = %c36864 : !pto.tile_buf<loc=vec, ...>
+pto.tadd ins(%o_acc__tile, %t__tile_Vec : ...) outs(%0 : ...)
+```
+
+`%t__tile_Vec` is returned directly by `pto.tpop_from_aic` with **no corresponding `pto.alloc_tile`**.
+
+**Generated C++ code (scope3_incore_1.cpp:140-147):**
+
+```cpp
+Tile<...> v30;
+wait_flag(PIPE_V, PIPE_S, EVENT_ID0);
+TPOP<...>(v25, v30);  // v30 has no TASSIGN — segfault!
+```
+
+By contrast, all other tile operations (TLOAD, TEXPANDS, TADD, etc.) have a complete `alloc_tile` -> `TASSIGN` chain:
+
+```mlir
+%o_acc__tile = pto.alloc_tile addr = %c32768 : !pto.tile_buf<...>
+pto.texpands ins(%cst : f32) outs(%o_acc__tile : ...)
+```
+
+```cpp
+Tile<...> v28;
+TASSIGN(v28, v20);  // v20 = 32768, from pto.alloc_tile
+TEXPANDS(v28, v12);
+```
+
+### Expected Behavior
+
+pypto should generate `pto.alloc_tile addr = X` for the return tiles of `pto.tpop_from_aic` / `pto.tpop_from_aiv`, so that ptoas can correctly emit `TASSIGN` and the tile is bound to a valid physical memory address at runtime.
+
+| Step | Normal tile operations | TPOP (current behavior) |
+|------|----------------------|------------------------|
+| pypto generates .pto | `pto.alloc_tile addr = X` + operation | Only `pto.tpop_from_aic`, **missing alloc_tile** |
+| ptoas compiles to C++ | `TASSIGN(tile, X)` + operation | Only `TPOP(pipe, tile)`, **no TASSIGN** |
+| Runtime | Executes normally | **Segfault** (tile has no backing memory) |
+
+### Root Cause Analysis
+
+pypto's memory allocation pipeline (`InitMemRef` -> `MemoryReuse` -> `AllocateMemoryAddr`) generates `pto.alloc_tile addr = X` for most tile operations (TLOAD, TEXPANDS, TADD, etc.), but **misses the return tiles of `pto.tpop_from_aic` / `pto.tpop_from_aiv`**.
+
+Specifically, `MakeTpopFromAicCodegenPTO` (`src/backend/common/pto_ops_common.cpp:1015-1037`) generates `pto.tpop_from_aic`, but its return value is not picked up by the subsequent memory allocation passes, resulting in the missing `pto.alloc_tile` in the final .pto IR.
+
+ptoas is not at fault — it has no responsibility to auto-insert `TASSIGN` for tiles that lack `alloc_tile` in the IR.
+
+---
+
+## #67 A2A3 TPipe template is incompatible with ptoas 0.24 old-style LocalSlotNum emission
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/67
+- Created: 2026-04-12T03:41:59Z
+- Updated: 2026-04-15T02:27:24Z
+- Closed: 2026-04-15T02:27:24Z
+
+### Body
+
+## Summary
+
+`include/pto/npu/a2a3/TPush.hpp` on `main` still declares `TPipe` with the 5th template parameter as `bool IsNoSplit`, which is incompatible with the current `ptoas v0.24` release output when it emits the old-style form:
+
+```cpp
+TPipe<FlagID, DirType, SlotSize, SlotNum, LocalSlotNum>
+```
+
+This causes valid generated code to fail to compile when the 5th template argument is a value like `8`.
+
+## Current A2A3 signature
+
+From `include/pto/npu/a2a3/TPush.hpp` on `main`:
+
+```cpp
+template <uint8_t FlagID, uint8_t DirType, uint32_t SlotSize, uint32_t SlotNum, bool IsNoSplit = false,
+          uint32_t LocalSlotNum = 2, bool EN_UNIT_FLAG = false>
+struct TPipe
+```
+
+## Failing generated form
+
+`ptoas v0.24` may emit instantiations like:
+
+```cpp
+TPipe<0, Direction::DIR_C2V, 4096, 8, 8>
+```
+
+With the current signature, the `5th` argument is parsed as `bool IsNoSplit`, so compilation fails with a narrowing / invalid non-type template argument error.
+
+## Expected behavior
+
+A2A3 `TPipe` should remain compatible with both forms:
+
+- old style: `TPipe<..., SlotNum, LocalSlotNum>`
+- new style: `TPipe<..., SlotNum, IsNoSplit, LocalSlotNum>`
+
+## Suggested fix
+
+Adopt the same compatibility approach used in local downstream workarounds:
+
+- make the 5th template parameter a compatibility slot that can represent either `IsNoSplit` (`0/1`) or `LocalSlotNum` (`>1`)
+- derive `IsNoSplit` and the effective local-slot count from that value
+- keep behavior unchanged for current call sites while allowing current `ptoas v0.24` generated code to compile
+
+## Notes
+
+`include/pto/cpu/TPush.hpp` already uses a `LocalSlotNum`-style 5th parameter, so the A2A3 variant is the outlier here.
+
+## Impact
+
+This blocks users compiling code generated by the latest `ptoas v0.24` release against current `pto-isa` A2A3 headers, even though the generated `TPipe<..., 8, 8>` form is otherwise semantically valid.
+
+---
+
+## #79 [Bug] A2A3 pto.textract rejects row extraction from loc=vec after LEFT_RIGHT split
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/79
+- Created: 2026-04-14T09:13:05Z
+- Updated: 2026-05-08T01:48:37Z
+- Closed: 2026-05-08T01:48:37Z
+- Labels: bug
+
+### Body
+
+### Diagnosis
+
+**ptoas / pto-isa** — the generated `.pto` reaches ptoas, but ptoas rejects `pto.textract` because the source tile is `loc=vec`. The failure happens during PTO assembly, after PyPTO has generated PTO IR for an A2/A3 target.
+
+### Description
+
+A `LEFT_RIGHT` split pattern that sends a matmul result from AIC to AIV, casts it to BF16, then extracts rows from the cast tile fails during ptoas compilation on A2/A3:
+
+```text
+ptoas compilation failed:
+error: 'pto.textract' op expects A2/A3 textract src to use loc=mat
+```
+
+The problematic shape is:
+
+1. `chunked_loop_optimizer(split=pl.SplitMode.LEFT_RIGHT)`
+2. `matmul` + `matmul_acc` produces an FP32 tile on the AIC side
+3. the result is transferred to the AIV side as a `loc=vec` tile
+4. the AIV side casts the full tile to BF16
+5. a row is sliced from that BF16 tile, lowering to `pto.textract` from `loc=vec`
+6. ptoas rejects it because A2/A3 `pto.textract` expects a `loc=mat` source
+
+### Minimal Reproducer
+
+```python
+import pypto.language as pl
+
+BATCH = 16
+HIDDEN = 256
+OUT_COLS = 256
+K_CHUNK = 128
+OUT_CHUNK = 128
+HIDDEN_BLOCKS = HIDDEN // K_CHUNK
+OUT_BLOCKS = OUT_COLS // OUT_CHUNK
+
+
+def build_program():
+    @pl.program
+    class ReproTextractVecSource:
+        @pl.function(type=pl.FunctionType.Opaque)
+        def repro(
+            self,
+            x: pl.Tensor[[BATCH, HIDDEN], pl.BF16],
+            w: pl.Tensor[[HIDDEN, OUT_COLS], pl.BF16],
+            out: pl.Out[pl.Tensor[[BATCH, OUT_COLS], pl.BF16]],
+        ) -> pl.Tensor[[BATCH, OUT_COLS], pl.BF16]:
+            with pl.at(
+                level=pl.Level.CORE_GROUP,
+                optimization=pl.chunked_loop_optimizer(split=pl.SplitMode.LEFT_RIGHT),
+            ):
+                for ob in pl.parallel(OUT_BLOCKS, chunk=2):
+                    col0 = ob * OUT_CHUNK
+                    tile_a = pl.slice(x, [BATCH, K_CHUNK], [0, 0])
+                    tile_w = pl.slice(w, [K_CHUNK, OUT_CHUNK], [0, col0])
+                    acc = pl.matmul(tile_a, tile_w, out_dtype=pl.FP32)
+                    for kb in pl.range(1, HIDDEN_BLOCKS):
+                        k0 = kb * K_CHUNK
+                        tile_a_i = pl.slice(x, [BATCH, K_CHUNK], [0, k0])
+                        tile_w_i = pl.slice(w, [K_CHUNK, OUT_CHUNK], [k0, col0])
+                        acc = pl.matmul_acc(acc, tile_a_i, tile_w_i)
+
+                    acc_bf16 = pl.cast(acc, target_type=pl.BF16)
+                    for bi in pl.range(BATCH):
+                        row = pl.slice(acc_bf16, [1, OUT_CHUNK], [bi, 0])
+                        out = pl.assemble(out, row, [bi, col0])
+            return out
+
+    return ReproTextractVecSource
+
+
+def build_tensor_specs():
+    import torch
+    from pypto.runtime import TensorSpec
+
+    return [
+        TensorSpec("x", [BATCH, HIDDEN], torch.bfloat16, init_value=lambda: torch.randn(BATCH, HIDDEN)),
+        TensorSpec("w", [HIDDEN, OUT_COLS], torch.bfloat16, init_value=lambda: torch.randn(HIDDEN, OUT_COLS)),
+        TensorSpec("out", [BATCH, OUT_COLS], torch.bfloat16, is_output=True),
+    ]
+
+
+def golden(tensors, params):
+    tensors["out"][:] = (tensors["x"].float() @ tensors["w"].float()).bfloat16()
+
+
+def compile_and_run(platform: str = "a2a3", device_id: int = 0):
+    from pypto.backend import BackendType
+    from pypto.ir.pass_manager import OptimizationStrategy
+    from pypto.runtime import RunConfig, run
+
+    backend = BackendType.Ascend950 if platform.startswith("a5") else BackendType.Ascend910B
+    return run(
+        program=build_program(),
+        tensor_specs=build_tensor_specs(),
+        golden=golden,
+        config=RunConfig(
+            platform=platform,
+            device_id=device_id,
+            rtol=3e-3,
+            atol=3e-3,
+            strategy=OptimizationStrategy.Default,
+            dump_passes=True,
+            backend_type=backend,
+            skip_golden=True,
+        ),
+    )
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-p", "--platform", type=str, default="a2a3", choices=["a2a3", "a2a3sim", "a5", "a5sim"])
+    parser.add_argument("-d", "--device", type=int, default=0)
+    args = parser.parse_args()
+
+    result = compile_and_run(platform=args.platform, device_id=args.device)
+    if not result.passed:
+        if result.error:
+            print(f"Result: {result.error}")
+        raise SystemExit(1)
+    print("PASSED")
+```
+
+Run:
+
+```bash
+python repro_textract_vec_source.py -p a2a3 -d <device_id>
+```
+
+### Observed Error
+
+```text
+Failed to compile group 'repro_incore_0' [repro_incore_0_aic, repro_incore_0_aiv]:
+ptoas compilation failed: loc(".../ptoas/repro_incore_0.pto":93:9): error:
+'pto.textract' op expects A2/A3 textract src to use loc=mat
+Error: Failed to parse MLIR.
+```
+
+### Lowered PTO Around the Failure
+
+```mlir
+%acc__rv_v2_Vec = pto.tpop_from_aic {split = 2}
+  -> !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, ...>
+
+%acc_bf16__tile = pto.alloc_tile
+  : !pto.tile_buf<loc=vec, dtype=bf16, rows=16, cols=64, ...>
+
+pto.tcvt ins(%acc__rv_v2_Vec) outs(%acc_bf16__tile)
+
+pto.textract ins(%acc_bf16__tile, %bi__idx_v0, %c0_index
+  : !pto.tile_buf<loc=vec, dtype=bf16, rows=16, cols=64, ...>, index, index)
+  outs(%row__tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, ...>)
+```
+
+ptoas rejects the `pto.textract` because the source is `loc=vec`.
+
+### Expected Behavior
+
+One of the following should happen:
+
+1. `pto.textract` should support this A2/A3 row-extraction pattern from `loc=vec`, if that is semantically valid; or
+2. the lowering/codegen should insert the required move/conversion so that `pto.textract` receives a `loc=mat` source; or
+3. the compiler should reject this earlier with a clearer diagnostic explaining the required source location.
+
+### Actual Behavior
+
+The compiler emits PTO IR containing:
+
+```mlir
+pto.textract ins(%acc_bf16__tile ... !pto.tile_buf<loc=vec, ...>)
+```
+
+and ptoas fails with:
+
+```text
+'pto.textract' op expects A2/A3 textract src to use loc=mat
+```
+
+### Environment
+
+| Component | Version |
+|---|---|
+| pypto | `2e498406` (branch: `main`) |
+| simpler | `c83754f` (branch: `stable`) |
+| ptoas | `ptoas 0.24` |
+| CANN | `[CANN:8.5.0.alpha001]` |
+
+### Host Platform
+
+Linux aarch64
+
+### Related Issues
+
+Related but different: hw-native-sys/pto-isa#66
+
+
+---
+
+## #82 TPUSH_IMPL: missing pipe_barrier(PIPE_MTE3) between Acc→GM TSTORE and record() causes data race
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/82
+- Created: 2026-04-15T07:06:16Z
+- Updated: 2026-04-15T08:32:14Z
+- Closed: 2026-04-15T08:32:14Z
+
+### Body
+
+## Summary
+
+In the C2V (Cube-to-Vector) path where an `AccTile` is pushed to a GM FIFO, `TPUSH_IMPL` calls `TSTORE_IMPL` (which issues a DMA on **PIPE_MTE3**) followed immediately by `record()` (which signals the consumer on **PIPE_FIX**). Because PIPE_MTE3 and PIPE_FIX are independent pipelines with no ordering guarantee, the cross-core signal can reach the consumer **before** the GM write completes, causing the consumer to read stale or partially-written data.
+
+## Affected Code
+
+### A5 — `TPipe::TPUSH_IMPL` (`include/pto/npu/a5/TPush.hpp` ~L602-619)
+
+```cpp
+template <typename Pipe, typename TileProd, TileSplitAxis Split>
+PTO_INTERNAL void TPUSH_IMPL(Pipe &pipe, TileProd &tile)
+{
+    // 1. allocate
+    ...
+    // 2. push — TSTORE Acc→GM goes through PIPE_MTE3
+    pipe.prod.template push<TileProd, Split>(pipe.fifo, tile);
+    pipe.prod.tileIndex++;
+
+    // 3. record — signals consumer on PIPE_FIX  ← no barrier before this!
+    if (isRecord) {
+        pipe.prod.template record<Split>();
+    }
+}
+```
+
+`record()` for C2V uses `set_intra_block(PIPE_FIX, FlagID)`, which is on a **different pipeline** than the preceding TSTORE (PIPE_MTE3).
+
+### A5 — `TMPipe::TPUSH_IMPL` (`include/pto/npu/a5/TPush.hpp` ~L1183-1201)
+
+Same pattern — `push()` then `record()` with no MTE3 barrier in between.
+
+### A2A3 — `TPipe::TPUSH_IMPL` (`include/pto/npu/a2a3/TPush.hpp` ~L413-431)
+
+```cpp
+pipe.prod.template push<TileProd, Split>(pipe.fifo, tile);  // TSTORE → PIPE_MTE3
+pipe.prod.tileIndex++;
+pipe.prod.record();  // ffts_cross_core_sync(PIPE_FIX, ...) ← different pipeline
+```
+
+### A2A3 — `TMPipe::TPUSH_IMPL` (`include/pto/npu/a2a3/TPush.hpp` ~L789-805)
+
+Same issue.
+
+## Root Cause
+
+- `TSTORE_IMPL` from AccTile to GM dispatches work on **PIPE_MTE3**.
+- `record()` in C2V mode signals on **PIPE_FIX** (A5: `set_intra_block`; A2A3: `ffts_cross_core_sync`).
+- These two pipelines have **no implicit ordering** — the signal can be issued and delivered to the consumer before MTE3 finishes the GM write.
+
+## Why V2C Is Unaffected
+
+In V2C mode (Vec→GM), `record()` signals on **PIPE_MTE3** — the same pipeline as `TSTORE`. Same-pipeline instructions are naturally ordered, so no barrier is needed.
+
+## Suggested Fix
+
+Insert `pipe_barrier(PIPE_MTE3)` between `push()` and `record()` when the producer tile is an AccTile on a GM FIFO path. For example:
+
+```cpp
+// 2. push
+pipe.prod.template push<TileProd, Split>(pipe.fifo, tile);
+pipe.prod.tileIndex++;
+
+// 2.5 ensure GM write completes before signaling consumer
+if constexpr (TileProd::Loc == TileType::Acc && /* GM FIFO path */) {
+    pipe_barrier(PIPE_MTE3);
+}
+
+// 3. record
+if (isRecord) {
+    pipe.prod.template record<Split>();
+}
+```
+
+This needs to be applied in four locations:
+1. `include/pto/npu/a5/TPush.hpp` — `TPipe::TPUSH_IMPL` (~L602)
+2. `include/pto/npu/a5/TPush.hpp` — `TMPipe::TPUSH_IMPL` (~L1183)
+3. `include/pto/npu/a2a3/TPush.hpp` — `TPipe::TPUSH_IMPL` (~L413)
+4. `include/pto/npu/a2a3/TPush.hpp` — `TMPipe::TPUSH_IMPL` (~L789)
+
+## Impact
+
+- **Severity:** High — data race on GM memory; consumer may read incomplete data.
+- **Trigger condition:** C2V GM FIFO path with AccTile producer, under timing where MTE3 DMA is slower than PIPE_FIX signal dispatch.
+- **Platforms affected:** A2A3 and A5 NPU backends.
+
+---
+
+## #83 Clarify/support true single-Vec TILE_NO_SPLIT semantics on A2A3 mixed C/V kernels
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/83
+- Created: 2026-04-15T10:31:25Z
+- Updated: 2026-05-28T03:09:49Z
+- Closed: 2026-04-29T08:15:17Z
+- Labels: enhancement
+
+### Body
+
+  ### Summary
+
+  We are trying to use `TILE_NO_SPLIT` for mixed C/V kernels on A2A3 with the same semantics as A5: a logical 1C1V case where only one Vec sub-core actively participates in the `tpush/tpop` path.
+
+  After reading the current implementation, A2A3 does not seem to support that model in the same way as A5.
+
+  On A5, `TILE_NO_SPLIT` appears to be a true single-Vec-subcore path:
+  - the sync path is split-aware
+  - the second Vec-side sync is suppressed for `TILE_NO_SPLIT`
+  - the no-split tests gate execution to `AIV0` only
+
+  On A2A3, however:
+  - the producer/consumer sync path still uses `wait_flag_dev(...)` / `ffts_cross_core_sync(... CV_CORES_SYNC ...)` without a `TILE_NO_SPLIT`-specific sync branch
+  - the `tpushpop_vc_nosplit` test explicitly states that both `AIV0` and `AIV1` participate in the CV handshake, and that hardware collects both signals before unblocking Cube
+  - the `tpushpop_cv_nosplit` test comments describe a single-`AIV0` flow, but the Vec-side code is not gated by `get_subblockid() == 0`, so both Vec sub-cores still appear to execute the path
+
+  From the upstream integration perspective, this is also why PyPTO currently treats `SplitMode.NONE` as unsupported for mixed kernels.
+
+  ### Why this matters
+
+  For a logical 1C1V no-split case on A2A3, the current behavior appears to still require 1C2V-style participation:
+  - one Vec sub-core does the real work
+  - the other Vec sub-core may still need to participate in the sync protocol, even if it does no useful computation
+
+  Otherwise, the Cube-side wait condition may not be satisfied/released correctly, which looks like a deadlock/hang risk.
+
+  This is different from A5, where `TILE_NO_SPLIT` seems to provide true single-Vec-subcore semantics.
+
+  ### Questions
+
+  1. Is this understanding correct?
+  2. On A2A3, is `TILE_NO_SPLIT` intentionally only a "no data split" mode, while the CV sync protocol still fundamentally requires both Vec sub-cores to participate?
+  3. If yes, is this a hardware / low-level FFTS constraint that should be documented explicitly?
+  4. If not, could A2A3 support an A5-like `TILE_NO_SPLIT` path where only one Vec sub-core participates and the sync condition is still correctly satisfied/released?
+
+  ### Relevant code references
+
+  - A5 split-aware no-split sync:
+    - `include/pto/npu/a5/TPush.hpp`
+  - A5 no-split tests with single-Vec-subcore behavior:
+    - `tests/npu/a5/src/st/testcase/tpushpop_vc_nosplit/tpushpop_vc_nosplit_kernel.cpp`
+    - `tests/npu/a5/src/st/testcase/tpushpop_cv_nosplit/tpushpop_cv_nosplit_kernel.cpp`
+  - A2A3 sync path using `CV_CORES_SYNC`:
+    - `include/pto/npu/a2a3/TPush.hpp`
+  - A2A3 no-split tests showing both-Vec participation / ambiguity:
+    - `tests/npu/a2a3/src/st/testcase/tpushpop_vc_nosplit/tpushpop_vc_nosplit_kernel.cpp`
+    - `tests/npu/a2a3/src/st/testcase/tpushpop_cv_nosplit/tpushpop_cv_nosplit_kernel.cpp`
+  - Upstream impact in PyPTO:
+    - `python/pypto/language/dsl_api.py`
+    - `src/ir/transforms/expand_mixed_kernel_pass.cpp`
+
+---
+
+## #88 [Bug] A5: expand_clone(d2) has numerical mismatch between simulator and hardware for [B, M, 1]
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/88
+- Created: 2026-04-17T07:48:39Z
+- Updated: 2026-04-17T09:03:18Z
+- Closed: 2026-04-17T09:03:18Z
+- Labels: bug
+
+### Body
+
+### Summary
+
+On A5, `tensor.expand_clone` with `broadcast_dim=2` can produce inconsistent numeric results between simulator and hardware execution for the same input pattern.
+
+The problematic pattern is an input tensor with:
+
+- shape: `[B, M, 1]`
+- degenerate stride: `[M, 1, 1]`
+
+### Impact
+
+- Same kernel/pattern yields different output values between sim and real device on A5.
+- Upstream cannot rely on simulator results to validate this case.
+- PyPTO currently has to skip this A5 system-test scenario as a temporary workaround.
+
+### Reproducer (from PyPTO)
+
+PyPTO test:
+
+- `tests/st/runtime/test_broadcast.py`
+- case: `test_tensor_expand_clone`
+- parameters: `backend == a5`, `broadcast_dim == 2`
+
+Pattern details:
+
+- Input tensor shape: `[B, M, 1]`
+- Input stride: `[M, 1, 1]`
+- Expand target: `[B, M, K]`
+- Broadcast on last dim (`dim=2`)
+
+### Observed Behavior
+
+For the same test and input pattern on A5:
+
+- simulator result and hardware result are numerically inconsistent
+- mismatch is in output values (not a compile-time failure)
+
+### Expected Behavior
+
+Simulator and hardware should produce numerically consistent outputs (within normal tolerance) for the same A5 kernel and inputs.
+
+### Environment
+
+- Upstream project: PyPTO
+- Upstream commit: `43dcdd4e9c3c66ce260a2c55757b7d010178a561`
+- Host platform: `Linux x86_64`
+- NPU kind: A5 / Ascend950
+
+### Notes
+
+Please help confirm whether A5 handling of `[B, M, 1]` with degenerate stride in this broadcast path has a simulator-vs-hardware semantic gap.
+
+---
+
+## #90 Reclassify TSETFMATRIX / TSET_IMG2COL_* / TGET_SCALE_ADDR as micro instructions and remove them from tile docs
+
+- State: open
+- URL: https://github.com/hw-native-sys/pto-isa/issues/90
+- Created: 2026-04-18T06:16:11Z
+- Updated: 2026-05-08T01:36:44Z
+
+### Body
+
+## Problem
+
+The current PTO ISA documentation still presents the following `T*` APIs as part of the tile instruction surface:
+
+- `TSETFMATRIX`
+- `TSET_IMG2COL_RPT`
+- `TSET_IMG2COL_PADDING`
+- `TGET_SCALE_ADDR`
+
+That categorization is misleading at the API/semantic level.
+
+These operations do not primarily describe tile payload transformation. They program or derive control/state used by later execution:
+
+- `TSETFMATRIX` programs FMATRIX-related configuration state.
+- `TSET_IMG2COL_RPT` programs IMG2COL repeat metadata.
+- `TSET_IMG2COL_PADDING` programs IMG2COL padding metadata.
+- `TGET_SCALE_ADDR` derives/binds an address relationship rather than performing tile arithmetic.
+
+As a result, the tile-family docs overstate what the tile surface actually is, and PTO-AS / ISA taxonomy remains blurry.
+
+## Requested change
+
+Reclassify these four operations into the **micro-instruction** surface and temporarily remove them from the tile instruction documentation.
+
+This should be treated as a **semantic/API taxonomy change**, not just a wording tweak.
+
+## Scope
+
+### Reclassify
+Move the semantic classification of:
+
+- `TSETFMATRIX`
+- `TSET_IMG2COL_RPT`
+- `TSET_IMG2COL_PADDING`
+- `TGET_SCALE_ADDR`
+
+from tile-instruction docs into the micro-instruction docs.
+
+### Temporarily remove from tile docs
+Until the micro-instruction placement is complete, remove these ops from tile-instruction taxonomies and tile-family summaries so the tile docs remain semantically clean.
+
+## Affected documentation areas
+
+At minimum, review and update:
+
+- `docs/isa/instruction-surfaces/tile-instructions*.md`
+- `docs/isa/instruction-families/tile-families*.md`
+- `docs/isa/instruction-surfaces/README*.md`
+- `docs/assembly/PTO-AS*.md`
+- `docs/mkdocs/src/manual/07-instructions*.md`
+- `docs/isa/manifest.yaml`
+- generated index / matrix outputs derived from the manifest
+- the micro-instruction landing / group pages under `docs/isa/scalar/ops/micro-instruction/`
+
+## Acceptance criteria
+
+- The tile instruction docs no longer classify these four operations as tile instructions.
+- The micro-instruction docs explicitly include and explain these four operations.
+- PTO-AS docs make the semantic family clear and do not imply that a `T*` name automatically belongs to the tile surface.
+- `docs/isa/manifest.yaml` and generated family/index pages reflect the new classification.
+- English and Chinese docs remain aligned.
+- `git diff --check` passes.
+- Manifest-derived doc generation/check scripts pass.
+
+## Notes
+
+This issue is intentionally limited to these four operations. A broader semantic cleanup of the `T*` namespace may still be needed later, but that should be tracked separately.
+
+---
+
+## #94 [Bug] 0dcce451 breaks A5 cross-core TPUSH compilation with missing TInsertMode::NZ_PLUS_1
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/94
+- Created: 2026-04-21T07:02:38Z
+- Updated: 2026-05-28T03:09:35Z
+- Closed: 2026-04-22T02:20:11Z
+- Labels: bug
+
+### Body
+
+### Component
+
+A5 backend (`include/pto/npu/a5/*`), cross-core `TPUSH` / V2C path
+
+### Description
+
+A5 cross-core kernels stop compiling starting from commit `0dcce451ea95f7fd42e090c559dfaacc3b04494f`.
+
+The failure happens because `include/pto/npu/a5/TInsert.hpp` no longer defines `TInsertMode::NZ_PLUS_1`, but `include/pto/npu/a5/TPush.hpp` still references `TInsertMode::NZ_PLUS_1` in `pushVec2MatFiFo()` for the split-M vector-to-matrix FIFO path.
+
+### Steps to Reproduce
+
+1. Checkout `pto-isa` at `0dcce451ea95f7fd42e090c559dfaacc3b04494f`.
+2. Use this ISA revision with PyPTO on A5 hardware.
+3. Run:
+
+```bash
+pytest tests/st/runtime/test_cross_core.py -k test_tpush_tpop_v2c_updown -v --forked --device 0 --platform a5
+```
+
+I also reproduced this with the full cross-core suite:
+
+```bash
+pytest tests/st/runtime/test_cross_core.py -v --forked --device 0 --platform a5
+```
+
+### Expected Behavior
+
+The A5 cross-core test should compile and run successfully.
+
+This works with last known good commit `54c7c6dcfab5c21d523de6939bf8d7b305c5a804`.
+
+### Actual Behavior
+
+Compilation fails in the A5 ISA headers with:
+
+```text
+error: no member named 'NZ_PLUS_1' in 'pto::TInsertMode'
+```
+
+The failing reference is in `include/pto/npu/a5/TPush.hpp` inside `pushVec2MatFiFo()`, where the split-M path still instantiates `TINSERT_IMPL<TInsertMode::NZ_PLUS_1>(...)`.
+
+### Git Commit ID
+
+First bad commit: `0dcce451ea95f7fd42e090c559dfaacc3b04494f`
+
+Last good commit: `54c7c6dcfab5c21d523de6939bf8d7b305c5a804`
+
+### NPU Kind
+
+Ascend 950 (A5)
+
+### Host Platform
+
+Linux (aarch64)
+
+### Additional Context
+
+The regression range is:
+
+- Good: `54c7c6dcfab5c21d523de6939bf8d7b305c5a804`
+- Bad: `0dcce451ea95f7fd42e090c559dfaacc3b04494f` (`add Tinsert vec-to-vec, ub2l1 unaligned, fp4/hif8 dtype`)
+
+What changed across that boundary:
+
+- In `include/pto/npu/a5/TInsert.hpp`, `TInsertMode` was reduced to only `SPLIT2` and `SPLIT4`.
+- In `include/pto/npu/a5/TPush.hpp`, the A5 vector-to-matrix FIFO path still uses `TInsertMode::NZ_PLUS_1`.
+
+I also checked the generated A5 kernel for the failing case. It goes through a V2C path using `TPipe<..., Direction::DIR_V2C, ...>` and emits `TPUSH(...)` on the AIV side, which reaches this stale `NZ_PLUS_1` reference during compilation.
+
+
+---
+
+## #96 [Bug] SIMT kernels (MSCATTER/MGATHER) hang due to missing cce::async_invoke context in direct function pointer dispatch
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/96
+- Created: 2026-04-22T07:50:37Z
+- Updated: 2026-05-13T07:16:21Z
+- Closed: 2026-05-13T07:16:21Z
+- Labels: bug
+
+### Body
+
+### Platform
+
+a5 (Ascend 950 hardware)
+
+### Runtime Variant
+
+tensormap_and_ringbuffer
+
+### Description
+
+Kernels that internally use `cce::async_invoke` to launch SIMT sub-threads (e.g., pto-isa's `MSCATTER` and `MGATHER`) hang indefinitely when dispatched via the simpler runtime's direct function pointer call. The same kernels execute correctly when launched via the standard CANN `<<<1, nullptr, stream>>>` mechanism (confirmed by running pto-isa's own ST tests on the same device).
+
+The root cause is that `aicore_executor.cpp` dispatches kernels as plain C function calls:
+
+```cpp
+// src/a5/runtime/tensormap_and_ringbuffer/aicore/aicore_executor.cpp:34-42
+UnifiedKernelFunc kernel = (UnifiedKernelFunc)payload->function_bin_addr;
+kernel(reinterpret_cast<__gm__ int64_t *>(payload->args));
+```
+
+This is sufficient for regular SPMD kernels (TLOAD, TSTORE, TADD, etc.), but SIMT kernels require additional context that the standard kernel launch infrastructure (`rtKernelLaunchWithHandleV2`) sets up:
+- Thread ID context (`__cce_simt_get_TID_X/Y`)
+- Warp/lane configuration (e.g., 32 warps x 32 lanes = 1024 threads)
+- Vector pipe scheduling state for `cce::async_invoke`
+
+Without this context, `cce::async_invoke` inside MSCATTER has no thread dispatch target and the kernel hangs.
+
+
+### Steps to Reproduce
+
+```markdown
+A minimal AIV kernel that triggers the hang — any kernel using `cce::async_invoke` via pto-isa MSCATTER:
+
+
+#include <pto/pto-inst.hpp>
+using namespace pto;
+
+// This kernel hangs when dispatched via direct function pointer call
+static __aicore__ void mscatter_kernel(__gm__ float* src_ptr, __gm__ int32_t* idx_ptr, __gm__ float* out_ptr) {
+  #if defined(__DAV_VEC__)
+  constexpr int kRows = 8, kCols = 32, kOutSize = 256;
+
+  using TileData_src = Tile<TileType::Vec, float, kRows, kCols, BLayout::RowMajor, -1, -1>;
+  using TileData_idx = Tile<TileType::Vec, int32_t, kRows, kCols, BLayout::RowMajor, -1, -1>;
+  using GlobalData_out = GlobalTensor<float, Shape<1,1,1,1,kOutSize>, Stride<1,1,1,kOutSize,1>, Layout::ND>;
+
+  TileData_src srcTile(kRows, kCols);
+  TileData_idx idxTile(kRows, kCols);
+  TASSIGN(idxTile, 0x0);
+  TASSIGN(srcTile, kRows * kCols * sizeof(int32_t));
+
+  GlobalTensor<float, Shape<1,1,1,kRows,kCols>, Stride<1,1,1,kCols,1>> srcGlobal(src_ptr);
+  GlobalTensor<int32_t, Shape<1,1,1,kRows,kCols>, Stride<1,1,1,kCols,1>> idxGlobal(idx_ptr);
+  GlobalData_out outGlobal(out_ptr);
+
+  TLOAD(srcTile, srcGlobal);
+  TLOAD(idxTile, idxGlobal);
+  set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+  wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+
+  // This call hangs — cce::async_invoke inside MSCATTER has no SIMT context
+  MSCATTER(outGlobal, srcTile, idxTile);
+
+  pipe_barrier(PIPE_ALL);
+  set_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
+  wait_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
+  #endif
+}
+
+extern "C" __aicore__ __attribute__((always_inline)) void kernel_entry(__gm__ int64_t* args) {
+    // standard tensor unpacking ...
+    mscatter_kernel(src, idx, out);
+}
+
+
+**Control test:** The same kernel code built and launched via pto-isa's native test framework (`<<<1, nullptr, stream>>>` + `aclrtSynchronizeStream`) passes:
+
+[  PASSED  ] MSCATTERTest.case_float_8x32_512 (6349 ms)
+
+
+Additionally, commenting out just the `MSCATTER(...)` call while keeping all TLOAD and sync instructions makes the kernel complete successfully via simpler, confirming the hang is specifically inside MSCATTER's `cce::async_invoke`.
+```
+
+### Expected Behavior
+
+MSCATTER kernel completes and scatter-stores tile data to global memory, returning results within seconds (as in pto-isa's test: 6349 ms).
+
+### Actual Behavior
+
+Kernel hangs indefinitely. The runtime logs show initialization completes but never reaches task completion:
+```
+[INFO] ensure_binaries_loaded: [device_runner.cpp:271] DeviceRunner: binaries loaded
+[INFO] init_aicore_register_addresses: [host_regs.cpp:150] Successfully initialized register addresses
+[taskqueue] Task timed out (300s), automatically killed
+```
+
+
+### Git Commit ID
+
+ a9f3ea951bf9f39f9c960cf4af40db2e559fc90d
+
+### CANN Version
+
+CANN 9.0.0
+
+### Driver Version
+
+7.0.t9.0.B709
+
+### Host Platform
+
+Linux (aarch64)
+
+### Additional Context
+
+### Affected pto-isa instructions
+
+All instructions using `cce::async_invoke` for SIMT execution are affected:
+- **MSCATTER** — scatter-store via `simt_mscatter_elem_kernel` (32x32 = 1024 threads)
+- **MGATHER** — gather-load (same SIMT pattern)
+- Any future SIMT-based instructions
+
+### MSCATTER SIMT implementation (pto-isa)
+
+```cpp
+// pto-isa: include/pto/npu/a5/MScatter.hpp
+__tf__ AICORE void MScatterElemImpl(...) {
+    __ubuf__ const T *srcPtr = (__ubuf__ const T *)__cce_get_tile_ptr(src);
+    __ubuf__ const TIdx *idxPtr = (__ubuf__ const TIdx *)__cce_get_tile_ptr(indices);
+    // This launches 1024 SIMT threads — requires kernel launch context
+    cce::async_invoke<simt_mscatter_elem_kernel<...>>(
+        cce::dim3{/*WARP_SIZE=*/32, /*NUM_WARPS=*/32}, tablePtr, srcPtr, idxPtr);
+}
+```
+
+### Possible fix directions
+
+1. **Detect SIMT kernels at compile time** and use the full kernel launch pipeline (`rtKernelLaunchWithHandleV2`) instead of direct function pointer dispatch
+2. **Add SIMT context initialization** before the function pointer call in `aicore_executor.cpp` (if the hardware supports runtime SIMT context setup without full kernel launch)
+3. **Mark kernels in `PTO2DispatchPayload`** with a flag indicating whether they require SIMT context, and branch the dispatch path accordingly
+
+
+---
+
+## #97 Add valid_row/valid_col negative checking in setvalidshape's debug version
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/97
+- Created: 2026-04-23T01:59:53Z
+- Updated: 2026-04-27T01:35:09Z
+- Closed: 2026-04-27T01:35:09Z
+
+### Body
+
+When an input .pto program has a tile whose dynamic valid_row / valid_col can evaluate to a negative value at runtime (for example, minsi(A - k, C) where k > A), ptoas happily generates a kernel that issues TLOAD/TMOV/TMATMUL with that negative valid dim. On the hardware the malformed DMA lands the pipe event scoreboard in an unrecoverable state and the kernel hangs forever — no error, no fault, no log.
+
+The invariant valid_row >= 0 and valid_col >= 0 is part of the implicit contract of pto.alloc_tile / pto.tload etc., but it is nowhere enforced — neither at IR verification time, nor by a runtime guard in the generated kernel. A user who accidentally emits an overshooting driver loop (e.g. for n in range(0, 8192 + 383, 384) which produces n = 8448 > 8192) has no visible signal that anything is wrong; the only symptom is "kernel 16 never returns."
+
+Related: https://github.com/hw-native-sys/PTOAS/issues/322 (verifier should reject shape mismatches on TStore), https://github.com/hw-native-sys/PTOAS/issues/533 (missing sync when loop zero-iterates). These all fall under the broader theme of "ptoas accepts malformed tile sizes and emits code that breaks at runtime."
+
+Reproduction (minimal)
+Submit to ptoas any kernel where the allocated tile's valid dim can be negative — the pattern in real code looks like this (trimmed from a qwen3 decode kernel):
+
+%c8192_index  = arith.constant 8192 : index
+%c384_index   = arith.constant 384  : index
+
+// arg3 is the external loop's `n` — caller passes n = 8448 on the last iter
+func.func @k(..., %arg3: index) {
+  %diff  = arith.subi %c8192_index, %arg3 : index         // 8192 - 8448 = -256
+  %vcol  = arith.minsi %diff, %c384_index : index         // min(-256, 384) = -256
+  %tile  = pto.alloc_tile ... valid_col = %vcol
+          : !pto.tile_buf<loc=mat, dtype=bf16, rows=64, cols=384, v_row=64, v_col=?, ...>
+  %part  = pto.partition_view ...
+  pto.tload ins(%part) outs(%tile)
+  // ...tmov, tmatmul on the same tile
+}
+Compile:
+
+ptoas input.pto -o out.cpp
+A full reproducible case is the Qwen3Decode kernel 16 generated at pypto commit 103aaa94 — dump in build_output/Qwen3Decode_20260422_122654/ptoas/qwen3_decode_incore_16.pto, emitted kernel in the same directory's .cpp. Caller at orchestration/qwen3_decode.cpp:375 passes n = 8448 on the 23rd iteration.
+
+Expected behavior
+Either:
+
+Compile-time — ptoas does a value-range check on valid_row/valid_col operands and errors out if it can statically prove the value can be negative (e.g. minsi(sub(const_A, x), const_C) with no lower bound on x). At minimum, warn.
+Runtime — generated kernel emits a guard such as
+if ((int32_t)valid_col < 0 || (int32_t)valid_row < 0) {
+    // either: early return (treat as no-op)
+    // or:     trap / write error code + return
+}
+placed before any TLOAD/TMOV/TMATMUL that uses the tile. Silent hang is the worst possible failure mode.
+Option 2 is strictly more actionable for users since it surfaces the bug at the first bad iteration rather than requiring the user to diff against a known-good version. Option 1 is a "nice to have" that catches a subset of cases earlier.
+
+---
+
+## #99 Perf: TPUSH/TPOP ~2x slower than equivalent FFTS + GM workspace on spmd_paged_attention
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/99
+- Created: 2026-04-24T08:40:58Z
+- Updated: 2026-05-08T08:14:57Z
+- Closed: 2026-05-08T08:14:57Z
+- Labels: enhancement
+
+### Body
+
+## Summary
+
+On the `spmd_paged_attention` end-to-end benchmark, replacing `TPUSH`/`TPOP` pipe synchronization with semantically-equivalent `ffts_cross_core_sync` + manual GM workspace ping-pong yields ~**1.9x–2.0x** speedup with no algorithmic change. The two implementations produce identical numerical results and share all tile types, L1/L0/UB layouts, matmul/softmax/online-update logic, and software pipeline schedule — only the AIC↔AIV sync primitive differs.
+
+This suggests the current `TPUSH`/`TPOP` implementation in the PTO ISA carries substantial overhead (vs. the underlying FFTS + DMA it ultimately lowers to) that is worth investigating.
+
+## Benchmark numbers
+
+Measured via `sh tools/benchmark_rounds.sh` on the `simpler` repo (tensormap_and_ringbuffer runtime, onboard platform):
+
+| Example | Case | Elapsed (us) | Speedup |
+|---|---|---:|---:|
+| `spmd_paged_attention-tpush` (TPUSH/TPOP) | Case1 | 2892.6 | 1.00x |
+| `spmd_paged_attention-ffts` (FFTS)  | Case1 | 1495.0 | **1.93x** |
+| `spmd_paged_attention-tpush` (TPUSH/TPOP) | Case2 | 1458.1 | 1.00x |
+| `spmd_paged_attention-ffts` (FFTS)  | Case2 |  760.4 | **1.92x** |
+
+## Reproducer
+
+- PR: https://github.com/hw-native-sys/simpler/pull/671
+
+Two test directories in the `simpler` repo (simpler PR #671):
+
+- `tests/st/a2a3/tensormap_and_ringbuffer/spmd_paged_attention-tpush/`        — TPUSH/TPOP version (baseline)
+- `tests/st/a2a3/tensormap_and_ringbuffer/spmd_paged_attention-ffts/`   — FFTS + GM workspace version
+
+```bash
+sh tools/benchmark_rounds.sh   # runs both cases and prints the table above
+```
+
+## What is different
+
+Only the AIC↔AIV synchronization primitive:
+
+| | TPUSH/TPOP version (baseline) | FFTS version (fast) |
+|---|---|---|
+| AIC produces sij | `TPUSH<C2V>(sij_pipe, cTile)` + `prod.record()` | `copy_matrix_cc_to_gm(s_ws_dst, ...)` + `FftsCrossCoreSync<PIPE_FIX, 2>(QK_READY)` |
+| AIV consumes sij | `TPOP<C2V>(sij_pipe, sijTile)` | `WaitFlagDev(QK_READY)` + `copy_gm_to_ubuf(ub, s_ws_src, ...)` |
+| AIV produces pij | `TPUSH<V2C>(pij_pipe, pijBf16Tile)` | `copy_ubuf_to_gm(p_ws_dst, ...)` + `FftsCrossCoreSync<PIPE_MTE3, 2>(SF_READY)` |
+| AIC consumes pij | `TPOP<V2C>(pij_pipe, pijMatTile)` | `TLOAD(pijMatTile, pijGlobal)` from `p_ws` + `WaitFlagDev(SF_READY)` |
+| AIC produces oi | `TPUSH<C2V>(oi_pipe, cTile_PV)` | `copy_matrix_cc_to_gm(o_ws_dst, ...)` + `FftsCrossCoreSync<PIPE_FIX, 2>(UP_READY)` |
+| AIV consumes oi | `TPOP<C2V>(oi_pipe, oiNewTile)` | `WaitFlagDev(UP_READY)` + `copy_gm_to_ubuf(oi_ub, o_ws_src, ...)` |
+
+Both versions ultimately move the same bytes through the same GM region and synchronize via FFTS flags under the hood — but the TPUSH/TPOP path is ~2x slower.
+
+
+## Expected outcome
+
+If the TPUSH/TPOP lowering can be tuned to match the manual FFTS pattern, the pipe abstraction becomes usable for performance-critical kernels. Otherwise, users writing high-perf attention kernels will have to drop to raw FFTS + DMA, which defeats the purpose of the FIFO abstraction.
+
+---
+
+## #101 [Bug] cpu/TPush.hpp sim does not correctly model a5 cross-core pipe semantics
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/101
+- Created: 2026-04-25T01:57:11Z
+- Updated: 2026-05-15T09:04:57Z
+- Closed: 2026-05-15T09:04:57Z
+- Labels: bug
+
+### Body
+
+### Description
+
+Running pypto's cross-core test suite on `--platform a5sim` (sim runtime `runtime/src/a5/platform/sim`) produces precision mismatch on 4 of 9 tests **only when codegen uses `BackendType.Ascend950` (the architecturally-correct mapping)**:
+
+- `test_tpop_c2v_nosplit[a5sim]`
+- `test_tpop_bidirect_updown[a5sim]`
+- `test_tpop_bidirect_leftright[a5sim]`
+- `test_tpop_bidirect_nosplit[a5sim]`
+
+The error pattern is precision mismatch (`Mismatched elements: N/N` on the output tensor, values off by orders of magnitude — not numerical drift).
+
+### Key Observation: 910B-style codegen on the same a5 sim runtime passes
+
+If the same test file maps `a5sim → BackendType.Ascend910B` (i.e. emits a2a3-style TPUSH/TPOP code) and runs it on the **unchanged** a5 sim runtime, **all 9 tests pass**. Only the generated kernel changes; `runtime/src/a5/platform/sim` is identical in both runs.
+
+This isolates the bug to the SIM side of pto-isa: **the cpu sim implementation handles a2a3-flavored TPUSH/TPOP correctly, but does not correctly model the a5 cross-core pipe code that the a5 codegen path emits.**
+
+### Observed Codegen Difference (a5 vs a2a3)
+
+For `cross_core_c2v_nosplit`, the AIC kernel emitted under `--pto-arch a5` differs from `a2a3` in three places:
+
+\`\`\`cpp
+// a2a3 (passes on a5 sim)
+auto v14 = TPipe<0, Direction::DIR_C2V, 8192, 8, 8, true>(v4 /* GM buffer */, v13, v13);
+Tile<TileType::Left, float, 32, 64, BLayout::RowMajor, 32, 64, SLayout::RowMajor, 512, ...> v24;
+
+// a5 (fails on a5 sim)
+__gm__ void *v6 = nullptr;
+auto v14 = TPipe<0, Direction::DIR_C2V, 8192, 8, 2, true>(v6, v13, v13);
+//                                          ^^^ SlotNum=2 (not 8)
+Tile<TileType::Left, float, 32, 64, BLayout::ColMajor, 32, 64, SLayout::RowMajor, 512, ...> v24;
+//                                              ^^^ NZ (not ND)
+\`\`\`
+
+The a5 codegen produces:
+
+1. `nullptr` pipe pointer (a5 hardware uses on-chip cross-core pipe, not a GM buffer).
+2. `SlotNum=2` instead of `SlotNum=8`.
+3. `Left` tile in NZ layout (col_major blayout, row_major slayout) instead of ND (row_major / row_major).
+
+These are correct for real a5 NPU hardware, but the SIM path uses `pto-isa/include/pto/cpu/TPush.hpp`:
+
+\`\`\`cpp
+template <uint8_t FlagID, uint8_t DirType, uint32_t SlotSize, uint32_t SlotNum,
+          uint32_t LocalSlotNum = 2, bool EN_UNIT_FLAG = false>
+struct TPipe { ... };
+\`\`\`
+
+It is a single `dlsym`-based shared-storage simulation with no `--pto-arch a5` differentiation, no fractal-layout pipe semantics, and no special handling for `nullptr` pipe pointer. The npu-side counterparts (`pto/npu/a5/TPush.hpp` vs `pto/npu/a2a3/TPush.hpp`) differ substantially (different direction constants, slot semantics, NZ insertion via `TINSERT_IMPL<TInsertMode::NZ>`), but `cpu/TPush.hpp` only models the a2a3 GM-buffer flavor.
+
+### Reproduction
+
+\`\`\`bash
+# In pypto checkout (commit e89dc93)
+PYTHONPATH=python:\$PYTHONPATH \\
+PTO_ISA_ROOT=\$(pwd)/build_output/_deps/pto-isa \\
+python3 -m pytest --forked --platform a5sim tests/st/runtime/test_cross_core.py
+\`\`\`
+
+Expected: 9 passed (matches the 910B-style baseline on the same a5 sim runtime).
+Actual: 5 passed, 4 failed.
+
+### Suggested Direction
+
+Either:
+
+1. Add a5-aware code paths in `pto-isa/include/pto/cpu/TPush.hpp` (and `TPop.hpp`) that model the on-chip cross-core pipe — recognise `SlotNum != 8`, `nullptr` pipe pointer, and NZ-layout tile transfers — so SIM behaviour matches hardware semantics. **OR**
+2. Provide separate `pto/cpu/a5/TPush.hpp` and `pto/cpu/a2a3/TPush.hpp` parallel to the npu-side split, dispatched by `--pto-arch`.
+
+Option 2 mirrors the existing npu-side directory structure and would be the cleaner long-term fix.
+
+### Environment
+
+| Component | Version |
+|---|---|
+| pypto | `e89dc93` |
+| pto-isa | `3c1f56a` |
+| Host | Linux aarch64 |
+
+---
+
+## #103 Perf: make TPipe reverse dependency respect FIFO depth
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/103
+- Created: 2026-04-28T03:54:40Z
+- Updated: 2026-05-08T01:54:08Z
+- Closed: 2026-05-08T01:54:08Z
+
+### Body
+
+## Summary
+
+The current A2A3 `TPipe` reverse-dependency implementation appears to behave like a per-tile rendezvous rather than a depth-aware FIFO back-pressure mechanism.
+
+For a GM FIFO with `FIFO_DEPTH = 2`, a producer should be able to have up to two outstanding tiles before it must wait for the consumer to free a slot. In the current implementation, `TPUSH` calls `prod.allocate()` before every push, and `allocate()` waits on `FlagID + 1` unconditionally when reverse dependency is enabled. The matching `FlagID + 1` is emitted by `cons.free()` after `TPOP`.
+
+This means a producer may wait for the consumer to free an older tile even when the next FIFO slot is still unused.
+
+Parent issue: #99
+Related simpler fix: https://github.com/hw-native-sys/simpler/pull/676
+
+## Concrete example: C2V `sij_pipe`
+
+In `spmd_paged_attention`, `sij_pipe` is a C2V GM FIFO:
+
+```cpp
+using SijPipeT = TPipe<SIJ_FLAG_ID, Direction::DIR_C2V, SIJ_SLOT_SIZE, 2>;
+```
+
+With two slots, the desired storage-level behavior is:
+
+```text
+sij[0] -> slot 0
+sij[1] -> slot 1
+sij[2] -> slot 0  // only this write needs slot 0 to be free
+```
+
+However, with reverse dependency enabled, the control flow is effectively:
+
+```text
+AIC TPUSH(sij[i]):
+  allocate()
+    wait FlagID + 1
+  write GM FIFO slot
+  record data-ready FlagID
+
+AIV TPOP(sij[j]):
+  wait data-ready FlagID
+  read GM FIFO slot
+  free FlagID + 1
+```
+
+So after the initial free token is consumed by `TPUSH(sij[0])`, `TPUSH(sij[1])` waits for AIV to `TPOP/free(sij[0])`, even though slot 1 is still available.
+
+## Why this matters
+
+This behavior prevents kernels from using the intended two-slot lead window. In `spmd_paged_attention`, the desired software pipeline is:
+
+```text
+AIC: QK[i] -> TPUSH(sij[i]) -> TPOP(pij[i-1]) -> PV[i-1] -> TPUSH(oi[i-1])
+AIV: TPOP(sij[i-1]) -> SF[i-1] -> TPUSH(pij[i-1]) -> TPOP(oi[i-2]) -> UP[i-2]
+```
+
+The pipeline relies on a 2-deep FIFO to keep AIC and AIV offset by one iteration, so that:
+
+- `QK[i]` overlaps with `SF[i-1]`;
+- `PV[i-1]` overlaps with `UP[i-2]`.
+
+When reverse dependency is enabled, the per-push `allocate()` wait serializes the producer with the consumer's previous `free()` signal. This reduces the effective lead window from two outstanding tiles to approximately one tile and weakens the intended AIC/AIV overlap.
+
+In the `simpler` benchmark, this was the dominant reason the TPUSH/TPOP version of `spmd_paged_attention` ran around 2900 us, while the same kernel with reverse dependency disabled ran around 1500 us.
+
+## Expected behavior
+
+Reverse dependency should provide depth-aware back-pressure:
+
+- The first `SLOT_NUM` pushes should be allowed without waiting for consumer frees, assuming the slots have not wrapped.
+- The producer should wait only when the next `tileIndex % SLOT_NUM` slot may still be occupied.
+- For `SLOT_NUM = 2`, `push[0]` and `push[1]` should be allowed to fill slot 0 and slot 1; `push[2]` should wait for slot 0 to be freed.
+
+Equivalently, reverse dependency should behave like a counting semaphore or slot-specific availability protocol, not as a mandatory per-push rendezvous.
+
+## Actual behavior
+
+With reverse dependency enabled:
+
+- `TPUSH` performs `prod.allocate()` before every push.
+- For C2V on Cube, `allocate()` waits on `FlagID + 1`.
+- `FlagID + 1` is only emitted by the Vector consumer's `free()` after `TPOP`.
+- The wait does not appear to distinguish between initial empty slots and wrapped/reused slots.
+
+As a result, `FIFO_DEPTH = 2` does not fully expose two outstanding slots to the producer when reverse dependency is enabled.
+
+## Suggested investigation
+
+Please consider one of the following implementation directions:
+
+1. Make `allocate()/free()` depth-aware, so the producer only waits when it would overwrite a slot that may still be occupied.
+2. Initialize reverse-dependency state with `SLOT_NUM` available credits rather than a single initial free signal.
+3. Provide an explicit fast path/API for statically scheduled pipelines that can prove `producer_lead <= SLOT_NUM`, while documenting that reverse dependency can be disabled safely only under that proof.
+
+The third option is effectively what `simpler` PR #676 does locally, but a depth-aware default would make `TPush/TPop` safer and more performant for common double-buffered pipelines.
+
+
+---
+
+## #106 [Feature] Add TColGather / TColScatter — row-axis selection by predicate mask
+
+- State: open
+- URL: https://github.com/hw-native-sys/pto-isa/issues/106
+- Created: 2026-04-30T07:50:05Z
+- Updated: 2026-05-08T01:36:34Z
+- Labels: enhancement
+
+### Body
+
+### Summary
+
+Add two new tile ops that select / scatter **whole rows** by a 1-D predicate
+mask, keeping the inner (column) dimension intact. Naming follows the existing
+`TCol*` family (which already operates along the row-stacking axis):
+
+- `TColGather(src, mask) → dst` — keep rows where `mask[i] == 1`.
+- `TColScatter(src, mask) → dst` — write src rows back into the rows of dst
+  selected by `mask`.
+
+Concrete shape example for `TColGather`:
+
+```
+src  : [8, 256]
+mask : [1, 1, 0, 0, 1, 1, 1, 0]    # 1-D, length = src.rows
+dst  : [5, 256]                    # rows where mask==1, preserving order; inner 256 untouched
+```
+
+`TColScatter` is the dual:
+
+```
+src  : [5, 256]
+mask : [1, 1, 0, 0, 1, 1, 1, 0]    # length = dst.rows, popcount = src.rows
+dst  : [8, 256]                    # src rows are placed into mask==1 positions; mask==0 rows untouched (or zero-filled)
+```
+
+The mask is a **runtime tile**, naturally produced by `TCmp` / `TCmpS` (e.g.
+`mask = (router_id == expert_id)`), so the same op handles both compile-time
+constant and data-dependent selection.
+
+### Motivation / Use Case
+
+The existing `TGather` mask form (cce `vreducev2`, include/pto/npu/a2a3/TGather.hpp:98-115)
+only supports 7 fixed strided patterns (P0101 / P1010 / P0001..P1000 / P1111,
+include/pto/common/type.hpp:149-159) and operates **along the inner column
+axis**: `[R, C] → [R, C/2]` or `[R, C/4]`. There is no row-axis equivalent.
+
+`TColReduce` family (`TColMax / TColMin / TColSum / TColProd`,
+include/pto/npu/a2a3/TColReduceOps.hpp) operates along the row-stacking axis
+but always **reduces** to `[1, C]` — it cannot output `[x, C]` for arbitrary
+x, and it combines rows via sum/max/min/prod rather than selecting them.
+
+Use cases this gap blocks:
+
+1. **MoE / token routing.** DeepSeek-V4 / Qwen MoE flows want to take
+   `[num_tokens, hidden]` and produce `[num_selected_tokens, hidden]` based
+   on a per-token boolean predicate (this expert / top-k membership). On the
+   write-back side, the selected expert outputs need to be scattered back to
+   the original token positions — exactly `TColScatter`.
+
+2. **Variable-length sequence packing / unpacking.** Compact a `[max_seq,
+   hidden]` tile by a per-token validity mask, then run dense compute on the
+   packed `[valid_count, hidden]`.
+
+3. **Predicate-driven row filtering.** Anything of the form
+   ```
+   mask = TCmpS(src_summary, threshold, GT)
+   dst  = src[mask, :]
+   ```
+   without falling back to the 3-arg `TGather` index form (which needs an
+   INT32 index tile of shape `[x, C]` plus a `tmp` UB scratch and emits a
+   `vmuls + vgather` per row — see include/pto/npu/a2a3/TGather.hpp index
+   form for the cost profile).
+
+### Proposed API / Behavior
+
+```cpp
+// pseudo signatures, mask is 1-D over the row axis of src/dst respectively
+template <typename DstTile, typename SrcTile, typename MaskTile>
+__tf__ AICORE void TColGather(DstTile  __out__ dst,
+                              SrcTile  __in__  src,
+                              MaskTile __in__  mask);   // mask : [src.rows]
+
+template <typename DstTile, typename SrcTile, typename MaskTile>
+__tf__ AICORE void TColScatter(DstTile  __out__ dst,
+                               SrcTile  __in__  src,
+                               MaskTile __in__  mask);  // mask : [dst.rows]
+```
+
+Constraints:
+
+- `mask` is a 1-D predicate tile (one bit / one element per row). Format
+  ideally matches what `TCmp` / `TCmpS` produces (packed 1-bit-per-element)
+  so the chain `TCmpS → TColGather` requires no format conversion.
+- Inner column dim is preserved unchanged. `dst.cols == src.cols`.
+- For `TColGather`: `dst.rows == popcount(mask)` (or upper-bound + tail
+  filled with a sentinel; an explicit `validRow` out-parameter is fine).
+- For `TColScatter`: `src.rows == popcount(mask)`, `dst.rows == mask.length`.
+
+Frontend exposure (suggested):
+
+```python
+# pypto-lib
+mask = pl.cmps(scores, threshold, mode=pl.CmpMode.GT)  # [num_tokens]
+selected = pl.colgather(tokens, mask)                  # [num_selected, hidden]
+# ...compute on selected...
+pl.colscatter(out, selected, mask, output_tensor=out_tensor)
+```
+
+### Alternatives Considered
+
+- **Index form `TGather(dst, src, indices, tmp)`.** Works, but: (1) caller
+  must materialize an INT32 index tile of shape `[selected_rows, hidden]`
+  (full inner dim repeated, since the index form indexes elements not rows),
+  (2) needs a `tmp` UB scratch on the B16 path, (3) emits `vmuls + vgather`
+  per row. Heavy compared to a single row-axis selection op driven by a
+  `[src.rows]` mask.
+- **`pl.load` with computed offsets.** O(selected_rows) GM↔UB transfers,
+  defeats the point of having data already in UB.
+- **`TColReduce` family.** Wrong semantics — reduces to `[1, C]` and combines
+  rows via sum/max/min, can't preserve per-row data.
+- **`TGather` mask form (current).** Wrong axis — operates within each row
+  along the column axis, and only 7 fixed strided patterns; cannot select
+  rows.
+
+### Additional Context
+
+- pypto frontend gather entry points (for reference of where this would
+  surface): pypto python/pypto/language/op/tile_ops.py:1818-1878 (mask form),
+  pypto python/pypto/language/op/tile_ops.py:1881-1900 (mscatter).
+- pypto codegen mapping: pypto src/backend/common/pto_ops_common.cpp:1847-1849.
+- Existing `TGatherOp` IR in PTOAS: include/PTO/IR/PTOOps.td:2256-2280 — a
+  `TColGatherOp` / `TColScatterOp` would naturally live next to it.
+- The HW-side bring-up question: is there a CCE intrinsic that can drive a
+  row-stride packed copy under a 1-D predicate (e.g. `vreducev2` over the
+  outer loop, or a `pto_copy_ubuf_to_ubuf` driven by a popcount-prefix-sum)?
+  If a single-instruction implementation is not available, even a templated
+  software composition (popcount-prefix-sum + per-row `pto_copy_ubuf_to_ubuf`)
+  exposed as `TColGather` would already be a meaningful API improvement —
+  the value is in having a stable op that the compiler can pattern-match on,
+  rather than requiring every user to hand-roll the index materialization.
+
+---
+
+## #107 [Feature] TExpandS on A2/A3: explicit BF16 support and test coverage for the Vec (UB) path
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/107
+- Created: 2026-04-30T08:24:41Z
+- Updated: 2026-05-13T01:37:41Z
+- Closed: 2026-05-13T01:37:41Z
+- Labels: enhancement
+
+### Body
+
+### Summary
+
+On A2/A3, `TExpandS` (broadcast scalar into a tile, the kernel behind frontend
+`pl.full` / `pto.texpands`) supports BF16 only on the **Mat (L1)** path.
+The **Vec (UB)** path is reachable but has no explicit dtype guarantee and no
+test coverage for `bfloat16_t`. Please:
+
+1. Add `bfloat16_t` to the dtype whitelist (`static_assert`) in the A2/A3
+   `TEXPANDS_IMPL`.
+2. Add A2/A3 NPU testcases that exercise `TExpandS` Vec with BF16
+   (`tests/npu/a2a3/src/st/testcase/texpands/`).
+3. (Optional but ideal) confirm cce `vector_dup` on A2/A3 accepts a
+   `bfloat16_t` scalar / pointer with the existing call shape, or document
+   any required reinterpret.
+
+### Motivation / Use Case
+
+Frontend lowering of `pl.full(shape, pl.BF16, value)` ultimately wants to call
+`TExpandS` on a UB tile. Today on A2/A3:
+
+- `tile.full` → `pto.texpands` → `TExpandS<TileData>(...)` Vec path.
+- BF16 is **not** in the white-listed dtype set in `TEXPANDS_IMPL` for A2/A3
+  (the impl carries no dtype `static_assert` at all for A2/A3 — see comparison
+  below — so it's neither denied nor blessed).
+- No A2/A3 BF16 testcase exists for the Vec path, so we cannot rely on it.
+
+This blocks BF16 use cases that need a UB-resident initialized tile, e.g.:
+
+- Initializing accumulators / running max / running sum to a sentinel value
+  (`-inf`, `+inf`, `0`) before a flash-attention-style loop on BF16 inputs.
+- Filling a UB tile with a routing mask sentinel in MoE / DeepSeek-V4 decode
+  flows where the rest of the pipeline is BF16.
+- Writing a BF16 zero / constant into UB before a partial-update pattern that
+  then runs `TAdd` / `TMax` against streamed BF16 data.
+
+A5 already handles BF16 cleanly on both Vec and Mat:
+
+- `include/pto/npu/a5/TExpandS.hpp:144-149` — `TEXPANDS_IMPL` `static_assert`
+  explicitly lists `bfloat16_t`.
+- `include/pto/npu/a5/TExpandS.hpp:67-68` — Mat path uses
+  `create_cbuf_matrix_bf16`.
+- A5 NPU tests under `tests/npu/a5/src/st/testcase/texpands/` cover BF16.
+
+A2/A3 today:
+
+- `include/pto/npu/a2a3/TExpandS.hpp:87-92` — Mat path has the BF16 branch
+  (`create_cbuf_matrix_bf16`), and `tests/npu/a2a3/src/st/testcase/texpands_mat/`
+  exercises it.
+- `include/pto/npu/a2a3/TExpandS.hpp:140-152` — Vec path's `TEXPANDS_IMPL`
+  has no dtype `static_assert`, so `bfloat16_t` template-instantiates and
+  falls into `B82B16Trait<bfloat16_t>::TransType == bfloat16_t` (utils.hpp:90-105,
+  pass-through; the trait only converts B8 → B16) → `vector_dup(dstPtr,
+  scalar, ...)`.
+- `tests/npu/a2a3/src/st/testcase/texpands/` (the Vec testcase) has **zero**
+  matches for `bfloat16` / `bf16`.
+
+So BF16 is **silently reachable but unverified** on A2/A3 Vec. We want it
+explicitly supported and tested, in line with A5.
+
+Note that A2/A3 already supports BF16 in many other Vec / unary / binary ops
+(`TInsert`, `TImg2col`, `TMatmul`, `TExtract`, `TStore`, `TScatter`,
+`TAnd`/`TOr`, `TUnaryOp`, `TRowExpand` — all carry BF16 paths via
+`B82B16Trait`), so adding BF16 to `TExpandS` is consistent with the rest of
+the A2/A3 surface, not a one-off ask.
+
+### Proposed Change
+
+**(1) `include/pto/npu/a2a3/TExpandS.hpp`** — add BF16 to the impl-level
+`static_assert` (mirroring A5):
+
+```cpp
+template <typename TileData>
+PTO_INTERNAL void TEXPANDS_IMPL(TileData &dst, typename TileData::DType scalar)
+{
+    using T = typename TileData::DType;
+    static_assert(
+        std::is_same<T, int32_t>::value || std::is_same<T, uint32_t>::value ||
+        std::is_same<T, int16_t>::value || std::is_same<T, uint16_t>::value ||
+        std::is_same<T, int8_t>::value  || std::is_same<T, uint8_t>::value ||
+        std::is_same<T, half>::value    || std::is_same<T, float>::value ||
+        std::is_same<T, bfloat16_t>::value,                       // <-- add
+        "TEXPANDS: Invalid data type");
+    // ... rest unchanged
+}
+```
+
+**(2) `tests/npu/a2a3/src/st/testcase/texpands/`** — add BF16 cases analogous
+to the existing FP16 / FP32 ones (and to the BF16 cases already present in
+`texpands_mat/` and in A5 `texpands/`).
+
+**(3) Confirm or fix the cce intrinsic call.** If `vector_dup` on A2/A3
+rejects `bfloat16_t` directly and needs a `reinterpret_cast` to `int16_t` /
+`uint16_t` (analogous to how A5 paths handle it), patch the Vec path to do
+that conversion when `T == bfloat16_t`. Otherwise the change is purely a
+white-list + tests addition.
+
+### Additional Context
+
+- Frontend entry point: `pypto python/pypto/language/op/tile_ops.py:438`
+  (`pl.full(shape, dtype, value)`).
+- pypto codegen mapping: `pypto src/backend/common/pto_ops_common.cpp:1981-1988`
+  (`tile.full` → `pto.texpands`).
+- A2/A3 Vec impl: `include/pto/npu/a2a3/TExpandS.hpp:43-74` (uses
+  `B82B16Trait` and `vector_dup`).
+- A2/A3 Mat impl (already BF16): `include/pto/npu/a2a3/TExpandS.hpp:76-117`
+  (uses `create_cbuf_matrix_bf16` for `bfloat16_t`).
+- A5 reference: `include/pto/npu/a5/TExpandS.hpp` — full Vec + Mat BF16,
+  including `static_assert` whitelist.
+- BF16 is a first-class element type for our DSv4 / Qwen MoE work in
+  pypto-lib; missing BF16 on `pl.full` forces awkward FP16/FP32 fill +
+  cast workarounds.
+
+---
+
+## #110 Fix TPush CPU-SIM A5 support issue
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/110
+- Created: 2026-05-04T13:55:03Z
+- Updated: 2026-05-15T08:46:30Z
+- Closed: 2026-05-15T08:46:30Z
+
+### Body
+
+This pull request modifies the TPush implementation to correctly handle DIR_BOTH pipes by incorporating TileProd::Loc checks when determining the transfer direction. Feedback includes a potential bug where TileType::Mat transfers might be incorrectly recorded due to an incomplete check in the underlying IsC2VProducerTile function, along with a suggestion to improve code formatting and comment placement for better readability.
+
+---
+
+## #111 TDIV的ST高精度标识highPrecision没用到
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/111
+- Created: 2026-05-06T07:28:57Z
+- Updated: 2026-05-13T01:27:45Z
+- Closed: 2026-05-13T01:27:45Z
+
+### Body
+
+https://github.com/hw-native-sys/pto-isa/blob/0a1ce522c1c6b5fa61d941b5ec439b8671a134eb/tests/npu/a5/src/st/testcase/tdiv/tdiv_kernel.cpp#L60
+
+
+LaunchTDivHalf 有相同问题
+
+---
+
+## #113 [Bug] CPU sim TADD_IMPL rejects subview tiles: template deduction fails when src physical shape differs from dst
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/113
+- Created: 2026-05-06T09:43:33Z
+- Updated: 2026-05-07T02:34:51Z
+- Closed: 2026-05-07T02:34:51Z
+- Labels: bug
+
+### Body
+
+## Summary
+
+`TADD_IMPL` in `include/pto/cpu/TAdd.hpp` uses a single template parameter `tile_shape` for all three operands, requiring `dst`, `src0`, and `src1` to be **identical C++ types**. When `src` is a subview of a wider tile (e.g., a 32×32 window inside a 32×64 physical buffer), it retains the parent's `Cols=64` and therefore has a different C++ type from an independently-allocated 32×32 `dst` tile (`Cols=32`). Template deduction fails at compile time.
+
+The same program compiles and runs correctly on real hardware (`a2a3`/`ccec`) because the NPU `TADD_IMPL` uses **three independent template parameters** (`TileDataDst`, `TileDataSrc0`, `TileDataSrc1`).
+
+---
+
+## Affected File
+
+`include/pto/cpu/TAdd.hpp` — lines 62–68
+
+```cpp
+// Current (broken for subview operands)
+template <typename tile_shape>
+PTO_INTERNAL void TADD_IMPL(tile_shape &dst, tile_shape &src0, tile_shape &src1)
+{
+    unsigned row = dst.GetValidRow();
+    unsigned col = dst.GetValidCol();
+    TAdd_Impl<tile_shape>(dst.data(), src0.data(), src1.data(), row, col);
+}
+```
+
+---
+
+## Steps to Reproduce
+
+**Compiler requirement:** GCC ≥ 14 or Clang ≥ 15 (needed for `_Float16` and `<format>`).
+
+```cpp
+// tadd_subview_repro.cpp
+#include <pto/common/cpu_stub.hpp>
+#include <pto/common/pto_tile.hpp>
+#include <pto/cpu/TAdd.hpp>
+
+int main()
+{
+    // Parent tile: physical 32×64, RowStride = 64
+    pto::Tile<pto::TileType::Vec, float, 32, 64,
+              pto::BLayout::RowMajor, -1, -1,
+              pto::SLayout::NoneBox, 512,
+              pto::PadValue::Null, pto::CompactMode::Null> parent;
+
+    // Subview: same physical buffer (Cols=64 → RowStride=64),
+    // but valid window is 32×32
+    pto::Tile<pto::TileType::Vec, float, 32, 64,
+              pto::BLayout::RowMajor, 32, 32,
+              pto::SLayout::NoneBox, 512,
+              pto::PadValue::Null, pto::CompactMode::Null> left_view, right_view;
+
+    // Output: independent 32×32 allocation (Cols=32 → RowStride=32)
+    pto::Tile<pto::TileType::Vec, float, 32, 32,
+              pto::BLayout::RowMajor, -1, -1,
+              pto::SLayout::NoneBox, 512,
+              pto::PadValue::Null, pto::CompactMode::Null> dst;
+
+    // Equivalent to TADD(dst, left_view, right_view)
+    pto::TADD_IMPL(dst, left_view, right_view);  // ← compile error
+}
+```
+
+```bash
+g++-15 -std=c++20 -D__CPU_SIM -include cstdint \
+    -I<pto-isa-root>/include tadd_subview_repro.cpp
+```
+
+---
+
+## Expected Behavior
+
+Compilation succeeds. `TADD` on a subview operand should work in CPU sim just as it does on hardware.
+
+## Actual Behavior
+
+```
+error: no matching function for call to 'TADD_IMPL(
+  Tile<Vec, float, 32, 32, RowMajor, -1, -1, ...>&,
+  Tile<Vec, float, 32, 64, RowMajor, 32, 32, ...>&,
+  Tile<Vec, float, 32, 64, RowMajor, 32, 32, ...>&)'
+note: deduced conflicting types for parameter 'tile_shape'
+  ('Tile<...,Cols=32,...,ValidRow=-1,ValidCol=-1,...>'
+   and 'Tile<...,Cols=64,...,ValidRow=32,ValidCol=32,...>')
+```
+
+---
+
+## Root Cause
+
+`include/pto/cpu/TAdd.hpp` (line 62) uses one template parameter:
+
+```cpp
+template <typename tile_shape>   // ← single param forces dst==src0==src1 type
+TADD_IMPL(tile_shape &dst, tile_shape &src0, tile_shape &src1)
+```
+
+The NPU implementation (`include/pto/npu/a2a3/TAdd.hpp`) uses three independent parameters:
+
+```cpp
+template <typename TileDataDst, typename TileDataSrc0, typename TileDataSrc1>
+TADD_IMPL(TileDataDst &dst, TileDataSrc0 &src0, TileDataSrc1 &src1)
+// enforces only valid_shape equality at runtime via TAddCheck
+```
+
+A subview retains the parent's `Cols` (and thus `RowStride`), making it a distinct C++ type from an independently-allocated tile with the same valid shape. The CPU sim's single-parameter signature cannot accommodate this.
+
+---
+
+## Proposed Fix
+
+Align `include/pto/cpu/TAdd.hpp` with the NPU signature:
+
+```cpp
+template <typename TileDataDst, typename TileDataSrc0, typename TileDataSrc1>
+PTO_INTERNAL void TADD_IMPL(TileDataDst &dst, TileDataSrc0 &src0, TileDataSrc1 &src1)
+{
+    // Mirror TAddCheck: enforce valid shape consistency at runtime
+    assert(src0.GetValidRow() == dst.GetValidRow() &&
+           src0.GetValidCol() == dst.GetValidCol());
+    assert(src1.GetValidRow() == dst.GetValidRow() &&
+           src1.GetValidCol() == dst.GetValidCol());
+
+    unsigned validRow = dst.GetValidRow();
+    unsigned validCol = dst.GetValidCol();
+    // Use per-tile RowStride via TAdd_Impl_3 (new helper, or template each pointer type)
+    TAdd_Impl_3<TileDataDst, TileDataSrc0, TileDataSrc1>(
+        dst.data(), src0.data(), src1.data(), validRow, validCol);
+}
+```
+
+The same pattern likely applies to other elementwise binary ops in `include/pto/cpu/` (`TSub`, `TMul`, `TDiv`, etc.) that share the same single-template-parameter design.
+
+---
+
+## Impact
+
+| Scenario | a2a3sim | a2a3 hardware |
+|----------|---------|---------------|
+| `pto.alloc_tile` → `pto.subview` → `TADD` | ❌ compile error | ✅ correct |
+| Any binary elementwise op on subview in Vec | ❌ compile error | ✅ correct |
+| Unary ops, matmul, non-subview operands | ✅ unaffected | ✅ correct |
+
+---
+
+## Environment
+
+- **pto-isa commit:** `0a1ce522c1c6b5fa61d941b5ec439b8671a134eb`
+- **Host:** Linux aarch64
+- **NPU:** N/A (CPU sim — not hardware-specific)
+- **Compiler tested:** g++-15 (GCC 15.1), `-std=c++20`
+
+---
+
+## #118 [Bug] flash_atten-v2 (PR #117) emits TPipe<...,SlotNum=8,LocalSlotNum=8,...> for gm_slot_tensor pipe init, diverging from manual FA effective LocalSlotNum=2 and causing long-sequence timeout
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/118
+- Created: 2026-05-09T06:41:57Z
+- Updated: 2026-05-09T07:52:26Z
+- Closed: 2026-05-09T07:52:26Z
+
+### Body
+
+### Component
+
+PTO Dialect / ODS (`include/PTO/IR`) and `lib/PTO/Transforms/PTOLowerFrontendPipeOpsPass.cpp`.
+
+### Description
+
+The PTO-DSL FlashAttention v2 example in [PR #117 `kernels/python/flash_atten-v2/`](https://github.com/hw-native-sys/pto-isa/pull/117) is structurally aligned with the manual reference [`kernels/manual/common/flash_atten/fa_performance_kernel.cpp`](https://github.com/hw-native-sys/pto-isa/blob/main/kernels/manual/common/flash_atten/fa_performance_kernel.cpp): `TILE_S1 = 256`, `CUBE_S1 = 128`, `kTileFactor = 2`, address-based slot model on all three pipes (`pto.aic_initialize_pipe(gm_slot_tensor=...)` / `talloc_to_aiv` / `tpush_to_aiv` / `tpop_from_aic` / `tfree_from_aic`).
+
+Single-call correctness (`atol = rtol = 1e-3` against fp32 reference, fresh process per length, on A3):
+
+| S1   | NUM_TILES | status         | max_err  |
+|-----:|----------:|----------------|----------|
+| 1024 |         4 | **PASSED**     | 4.43e-05 |
+| 2048 |         8 | **PASSED**     | 2.72e-05 |
+| 4096 |        16 | aicore timeout |          |
+| 8192 |        32 | aicore timeout |          |
+
+The manual C++ reference at the same `case_float_H_128_S0_128_S1_8192` shape runs to completion. The DSL-generated kernel differs from the manual reference in the `TPipe` template parameters used for the three cross-core FIFO pipes:
+
+| Source | QK pipe | P pipe | PV pipe |
+|---|---|---|---|
+| Manual `fa_performance_kernel.cpp:790,795,799` | `TPipe<..., SlotNum=8, LocalSlotNum=2, IsNoSplit=false, EN_UNIT_FLAG=true>` | `TPipe<..., SlotNum=8>`; effective `LocalSlotNum=2` via C++ default | `TPipe<..., SlotNum=8, LocalSlotNum=2, IsNoSplit=false, EN_UNIT_FLAG=true>` |
+| DSL after ptoas lowering | `TPipe<..., SlotNum=8, LocalSlotNum=8, IsNoSplit=false>` | `TPipe<..., SlotNum=8, LocalSlotNum=8, IsNoSplit=false>` | `TPipe<..., SlotNum=8, LocalSlotNum=8, IsNoSplit=false>` |
+
+Per [`include/pto/npu/a2a3/TPush.hpp:28`](https://github.com/hw-native-sys/pto-isa/blob/main/include/pto/npu/a2a3/TPush.hpp#L28), the C++ default for `LocalSlotNum` is **2**. Therefore the manual P pipe, although it does not spell out the fifth template argument, also has effective `LocalSlotNum=2`.
+
+Note: QK/PV also differ in `EN_UNIT_FLAG` (`true` in the manual reference, default `false` in DSL-generated code). The experiment below specifically isolates `LocalSlotNum` by only rewriting `8 -> 2`; however, this issue should not claim that `LocalSlotNum` is the only template-level difference.
+
+DSL gets `LocalSlotNum=8` because three places in ptoas conspire to drop the manual/default `LocalSlotNum=2` behavior:
+
+#### Defect A — verifier rejects `local_slot_num` on globaltensor pipe init
+
+[`lib/PTO/IR/PTO.cpp` (HEAD `eeeb1f4`, lines 10680–10682)](https://github.com/hw-native-sys/PTOAS/blob/eeeb1f4/lib/PTO/IR/PTO.cpp#L10680-L10682):
+
+```cpp
+if (op.getLocalSlotNumAttr())
+  return op.emitOpError(
+      "globaltensor pipe init does not use 'local_slot_num'");
+```
+
+The DSL has no legal way to override `LocalSlotNum` on the address-based / `gm_slot_tensor` form added in PTOAS PR #606. PR #569 (legacy `local_slot_num` support) only covers `gm_slot_buffer`.
+
+#### Defect B — lowering hard-codes empty `localSlotNumAttr` for the globaltensor branch
+
+[`lib/PTO/Transforms/PTOLowerFrontendPipeOpsPass.cpp` (HEAD `eeeb1f4`, lines 123–134)](https://github.com/hw-native-sys/PTOAS/blob/eeeb1f4/lib/PTO/Transforms/PTOLowerFrontendPipeOpsPass.cpp#L123-L134):
+
+```cpp
+if (initOp.getGmSlotTensor()) {
+  ...
+  auto pipe = rewriter.create<InitializeL2G2LPipeOp>(
+      loc, pipeTy, dirAttr, slotSizeAttr, slotNumAttr,
+      IntegerAttr{},     // ← localSlotNumAttr
+      IntegerAttr{},     // ← flagBaseAttr
+      noSplitAttr, initOp.getGmSlotTensor(), Value{}, Value{});
+  ...
+}
+```
+
+Even if Defect A were lifted, this branch would still drop the user attribute. The non-globaltensor branch (lines 152–156) at least passes `getLocalSlotNumAttr()` through.
+
+#### Defect C — EmitC fallback is `getSlotNum()` (= 8), not the C++ template default 2
+
+[`lib/PTO/Transforms/PTOToEmitC.cpp` (HEAD `eeeb1f4`, lines 628–630)](https://github.com/hw-native-sys/PTOAS/blob/eeeb1f4/lib/PTO/Transforms/PTOToEmitC.cpp#L628-L630):
+
+```cpp
+int32_t localSlotNum = initOp.getLocalSlotNumAttr()
+                           ? initOp.getLocalSlotNumAttr().getInt()
+                           : initOp.getSlotNum();   // ← =8 in this kernel
+```
+
+When the attr is absent, EmitC writes `LocalSlotNum=SlotNum` explicitly. This does not match the C++ API default (`LocalSlotNum=2`) that the manual reference relies on.
+
+### What the source code proves, and the likely timeout mechanism
+
+The source-level mismatch is clear:
+
+1. A2/A3 `TPipe` defaults `LocalSlotNum` to `2`.
+2. The manual FA reference uses effective `LocalSlotNum=2` on QK/P/PV.
+3. The `gm_slot_tensor` frontend form cannot legally carry `local_slot_num`.
+4. The globaltensor lowering branch drops/omits `localSlotNumAttr`.
+5. EmitC falls back to `getSlotNum()` when the attr is absent, so `SlotNum=8` becomes `LocalSlotNum=8`.
+
+What can be directly seen in `include/pto/npu/a2a3/TPush.hpp` is that `LocalSlotNum` is used through `RingFIFO<SlotSize, SlotNum, LocalSlotNum>` and affects the local consumer-buffer address rotation:
+
+```cpp
+fifo.C2V_CONSUMER_BUF +
+    (tileIndex % RingFiFo::LOCAL_SLOT_NUM) * ConsM * ConsN * sizeof(T);
+```
+
+and similarly for `V2C_CONSUMER_BUF`.
+
+Therefore the most conservative source-backed statement is:
+
+- Manual FA rotates consumer local buffers with period 2.
+- DSL-generated FA rotates consumer local buffers with period 8.
+- Both use the same GM ring depth (`SlotNum=8`).
+- For long sequences, GM slots are reused after tile index 8, so the generated kernel exercises ring reuse with a different local-buffer rotation policy than the manual reference.
+
+This is a plausible cause of the observed AICore timeout: with `LocalSlotNum=8`, the consumer-side local buffer lifetime and the FIFO free/ready synchronization no longer match the manual kernel's intended two-slot ping-pong schedule. When the 8-slot GM ring is reused, stale data, premature reuse, or unmatched producer/consumer progress can lead to a wait that never observes the expected signal.
+
+The original explanation involving “8 × 3 = 24 event identities exceeding an 8-event pool” is a possible hypothesis, but it is not directly proven by `TPush.hpp`: the visible `TPipe` implementation uses fixed `FlagID` / `FlagID+1`-style FFTS messages, while `LocalSlotNum` is directly visible in local buffer address rotation. To prove the event-ID explanation, we would need to compare the IR/C++ emitted by `--enable-insert-sync` and show that event lifetimes or assigned event IDs become conflicting only in the `LocalSlotNum=8` version.
+
+Observed behavior is still consistent with the `LocalSlotNum` mismatch:
+
+- `NUM_TILES <= 8`: the GM ring has not been reused beyond its 8 slots, so the mismatch is less likely to surface.
+- `NUM_TILES >= 16`: the 8-slot GM ring has been reused multiple times, and the generated `LocalSlotNum=8` local-buffer rotation diverges substantially from the manual two-slot ping-pong pattern.
+
+### Reproduction
+
+Using PR #117 commit `35b35de4` (kernels/python/flash_atten-v2/) on A3 with `ptoas --pto-arch=a3 --enable-insert-sync` and bisheng built kernel:
+
+```bash
+cd kernels/python/flash_atten-v2
+bash run_fa.sh --tiles 4 --lengths 1024  # PASSED, max_err 4.43e-05
+bash run_fa.sh --tiles 8 --lengths 2048  # PASSED, max_err 2.72e-05
+bash run_fa.sh --tiles 32 --lengths 8192 # builds, runtime aicore timeout
+```
+
+Inspecting the emitted `build_artifacts/fa_32.cpp`:
+
+```cpp
+auto v40 = TPipe<0, Direction::DIR_C2V, 131072, 8, 8, false>(v39, v18, v18);
+auto v43 = TPipe<2, Direction::DIR_C2V, 65536, 8, 8, false>(v42, v18, v18);
+auto v46 = TPipe<4, Direction::DIR_V2C, 65536, 8, 8, false>(v45, v18, v18);
+```
+
+All three `LocalSlotNum=8`. Manually rewriting only the generated `LocalSlotNum` from `8` to `2` and rebuilding allows S1=8192 to run to completion in this setup. This strongly implicates the `LocalSlotNum` mismatch, although QK/PV still differ from the manual reference in `EN_UNIT_FLAG`, so a full semantic parity fix should treat `local_slot_num` as the primary bug and track `EN_UNIT_FLAG` separately if needed.
+
+### Related issues / PRs
+
+- PTOAS PR #606 ("fix global tensor half-slot split pipes", merged 2026-04-29) — introduced the `gm_slot_tensor` form; the verifier rejection in Defect A landed in this PR.
+- PTOAS PR #569 ("feat: support `local_slot_num` on legacy pipe init", merged 2026-04-25) — added the attribute on `gm_slot_buffer` form only.
+- pto-isa #629 ("FA lit regression test with S1_TILE=512 crashes at runtime") — same family, OPEN.
+- pto-isa #621 ("Expose FIFO consumer sync period (`cons_sync_period`)") — `kFaCvFifoConsSyncPeriod=4` is the *other* manual knob currently missing on globaltensor pipe init; would be natural to expose alongside (1) above.
+- pto-isa #622 ("`QK_PRELOAD=4` deadlock") — closed without code fix; the same `LocalSlotNum` chain likely contributed.
+
+### Additional context
+
+- ptoas binary in use: `/usr/local/bin/ptoas-bin/bin/ptoas` (mtime 2026-04-30 15:01, includes PTOAS PR #606's `pto.talloc_to_aiv`/`pto.talloc_to_aic`).
+- mlir_combined Python bindings rebuilt locally from `hw-native-sys/PTOAS@c3a2395` to expose the talloc op classes.
+- v2 kernel reproduces the manual's row_slice loop (`Vec_S0=32` × `kTileFactor=2`) so VEC UB stays under 192 KiB at `S1_TILE=256`; that part is independent of this issue.
+
+
+---
+
+## #119 [Bug] TROWSUM hangs on a2a3 hardware for INT32 tiles (FP32 path works with same shape/layout)
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/119
+- Created: 2026-05-10T15:39:39Z
+- Updated: 2026-05-28T09:37:02Z
+- Closed: 2026-05-28T09:37:02Z
+- Labels: bug
+
+### Body
+
+### Platform
+
+a2a3 (Ascend 910 hardware)
+
+### Runtime Variant
+
+tensormap_and_ringbuffer
+
+### Description
+
+`TROWSUM` declared with `bfloat16_t`/`float` tile element types runs correctly on a2a3 hardware, but the **identical kernel structure** with `int32_t` tiles hangs indefinitely. The hang persists with the latest pto-isa main (`687af1a6`).
+
+The pto-isa header `include/pto/npu/a2a3/TRowSum.hpp` (lines 94–133) declares INT32 support — the dtype dispatch falls into a dedicated `vadd`-based integer path. So this looks like the integer code path is reaching the device but not draining a pipeline event correctly, rather than being a missing template instantiation.
+
+The same hang reproduces with both INT16 and INT32; we have not had a chance to test the simpler `int8_t` / unsigned variants.
+
+### Steps to Reproduce
+
+A direct, side-by-side comparison: same compaction trick (TLOAD a wide row × pad grid → TROWSUM along the pad axis → TSTORE column), only changing the element type.
+
+```cpp
+// FP32 — works:
+//   TLOAD wide_tile (R x W_PAD, RowMajor, float) from [L, R, W_PAD] FP32 GM
+//   TROWSUM(sum_tile, wide_tile, tmp_tile)   // sum_tile is R x 1 ColMajor float
+//   TSTORE sum_tile to [L, R] FP32 GM (Layout::DN)
+//
+// INT32 — hangs:  swap `float` → `int32_t` everywhere, all other code identical.
+
+using WWideShape  = pto::Shape<1, 1, 1, R, W_PAD>;
+using WWideStride = pto::Stride<R * W_PAD, R * W_PAD, R * W_PAD, W_PAD, 1>;
+using WWideG      = pto::GlobalTensor<float /* or int32_t */, WWideShape, WWideStride>;
+using WWideTile   = pto::Tile<pto::TileType::Vec, float /* or int32_t */, R, W_PAD,
+                              pto::BLayout::RowMajor, R, W_PAD>;
+using WSumShape   = pto::Shape<1, 1, 1, R, 1>;
+using WSumStride  = pto::Stride<1, 1, 1, 1, 1>;
+using WSumG       = pto::GlobalTensor<float /* or int32_t */, WSumShape, WSumStride,
+                                       pto::Layout::DN>;
+using WSumTile    = pto::Tile<pto::TileType::Vec, float /* or int32_t */, R, 1,
+                              pto::BLayout::ColMajor, R, 1>;
+
+WWideTile wide_tile;
+WSumTile  sum_tile;
+WWideTile tmp_tile;     // same shape as src, per pto-isa convention
+TASSIGN(wide_tile, 0x10000);
+TASSIGN(sum_tile,  0x20000);
+TASSIGN(tmp_tile,  0x21000);
+
+// The pipeline scaffolding is identical for both dtypes:
+TLOAD(wide_tile, win_g);
+set_flag(PIPE_MTE2, PIPE_V, EVENT_ID1);
+wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID1);
+pipe_barrier(PIPE_V);
+TROWSUM(sum_tile, wide_tile, tmp_tile);     // ← INT32 hangs here
+pipe_barrier(PIPE_V);
+set_flag(PIPE_V, PIPE_MTE3, EVENT_ID1);
+wait_flag(PIPE_V, PIPE_MTE3, EVENT_ID1);
+TSTORE(out_g, sum_tile);
+```
+
+Constants in our reproducer: `R = 32`, `W_PAD = IDX_PAD = 8`. Total wide tile size = `32 × 8 × sizeof(T) = 1 KB` for both FP32 and INT32.
+
+The full kernel that exhibits the hang is checked in at:
+
+`examples/workers/l3/ep_dispatch_distributed/kernels/aiv/ep_dispatch_kernel.cpp` in the simpler repo (function `kernel_entry`, the Phase 4 stage-out section). Today it uses FP32 TROWSUM for the `recv_w` channel and a scalar GM copy fallback for the `recv_idx` channel; switching the idx fallback to INT32 TROWSUM with otherwise identical code is what triggers the hang.
+
+### Expected Behavior
+
+INT32 TROWSUM compacts the wide row tile and `TSTORE`s the per-row sum to the destination GlobalTensor, identical in shape semantics to the FP32 path. Total runtime should be on the order of microseconds for a 32×8 reduction.
+
+### Actual Behavior
+
+Kernel hangs indefinitely. Task scheduler logs show bootstrap completing on both ranks, the dispatch task finishing, then the kernel sitting in the stage-out task until the watchdog kills it:
+
+```
+Resource phase: 1 case(s), pool=[12, 14], max_parallel=2
+[scheduler] START standalone test_ep_dispatch_distributed (rt=tensormap_and_ringbuffer, dev=2) pid=... devices=[12, 14]
+[taskqueue] task timed out (60s), automatically killed
+```
+
+Replacing only the INT32 TROWSUM with a scalar copy loop (or replacing the dtype with `float`) is sufficient to make the kernel return immediately and the test pass.
+
+### Git Commit ID
+
+`687af1a6bdd9ddd6a47a56cea773896d9d494e0f` (latest main as of report time)
+
+### CANN Version
+
+CANN 8.5.0
+
+### Driver Version
+
+25.3.rc1 (ascendhal 7.35.23)
+
+### Host Platform
+
+Linux aarch64 (5.10.0 kernel)
+
+### Additional Context
+
+- Same shape (`R × W_PAD = 32 × 8`), same layout (RowMajor src, ColMajor `R × 1` dst with `Layout::DN` GlobalTensor), same UB tile addresses, same pipe barriers — only the element type differs between the working FP32 path and the hanging INT32 path.
+- TRowSum.hpp lines 94–133 contain a dedicated INT32 implementation that uses `vector_dup` + `vadd` + `pipe_barrier(PIPE_V)` + `pipe_barrier(PIPE_ALL)` followed by a final scalar reduction across 8 lanes. The internal `pipe_barrier(PIPE_ALL)` mid-implementation is unusual relative to the FP32 vcadd path and may be implicated.
+- Workaround in our codebase: scalar GM copy of column 0 (`out[i] = wide[i * PAD]`). For our usage volume (≤ a few hundred INT32 stores in the final stage-out) the perf cost is negligible, but a working tile-level INT32 TROWSUM would be valuable for higher-volume reductions in production EP combine paths.
+
+---
+
+## #121 Add reverse instruction for mask-pattern TGATHER: mask-pattern TSCATTER
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/121
+- Created: 2026-05-12T02:51:28Z
+- Updated: 2026-05-25T01:13:50Z
+- Closed: 2026-05-25T01:13:50Z
+
+### Body
+
+## Background
+
+`TGATHER` currently has a mask-pattern overload (`include/pto/common/pto_instr.hpp:977`):
+
+```cpp
+template <typename DstTileData, typename SrcTileData, MaskPattern maskPattern, typename... WaitEvents>
+PTO_INST RecordEvent TGATHER(DstTileData &dst, SrcTileData &src, WaitEvents &...events);
+```
+
+Semantics (see the mask-pattern `TGather` in `include/pto/cpu/TGather.hpp`): iterate over `src`'s valid region; for each row, filter columns by `pto::MaskPattern` (e.g. `P0101` = take the 1st of every 2 elements); selected elements are **compacted** into `dst`'s contiguous storage (`didx++`), requiring `dst.GetValidCol() == DstTileData::Cols`. Effectively a fixed-pattern stream compaction.
+
+`MaskPattern` is used **only** by `TGATHER` today (a repo-wide grep for `maskPattern` / `#pto.mask_pattern` only hits the TGATHER intrinsic, `type.hpp`, the per-backend `TGather` impls, the costmodel, and the tgather docs).
+
+## Request
+
+Add a symmetric reverse instruction: scatter a compacted `src` back into the selected column positions of a wider `dst` according to a `MaskPattern` (deposit / expand-by-pattern), i.e. the inverse of mask-pattern `TGATHER`. Proposed shape:
+
+```cpp
+template <typename DstTileData, typename SrcTileData, MaskPattern maskPattern, typename... WaitEvents>
+PTO_INST RecordEvent TSCATTER(DstTileData &dst, SrcTileData &src, WaitEvents &...events);
+```
+
+Reference semantics (CPU-SIM):
+
+```text
+sidx = 0
+for r in [0, src.ValidRow):
+  for c in [0, dst.ValidCol):
+    if MaskSelect(maskPattern, c):
+      dst[r, c] = src.flat[sidx]; sidx++
+    # behavior for non-selected dst positions (zero / keep / caller's responsibility) must be specified
+```
+
+## Current workaround
+
+Use the index-based `TSCATTER(dst, src, idx)` (`include/pto/common/pto_instr.hpp:1680`) and manually build an index tile that expands the `MaskPattern` into flattened destination offsets; or `TSEL` + a mask tile. Both require extra data prep and are asymmetric with the forward op.
+
+## Open questions
+
+- Semantics for non-selected positions: zero / leave untouched / caller-managed (affects whether a preceding `TDUP` is needed).
+- Whether dtype / element-width constraints should mirror mask-pattern `TGATHER` (A2/A3 limited to 2/4B; A5 includes 1B and fp8).
+- Lowering feasibility on the three backends (A2/A3, A5, CPU-SIM) — is there a hardware pattern-deposit primitive, or does it lower to an index scatter?
+- Whether the GM-side `MGATHER` / `MSCATTER` need a symmetric form too; scope this to the tile side for now.
+
+
+---
+
+## #122 CPU backend TPUT_IMPL appears to copy in the wrong direction
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/122
+- Created: 2026-05-12T07:32:09Z
+- Updated: 2026-05-14T06:42:52Z
+- Closed: 2026-05-14T06:42:52Z
+
+### Body
+
+# CPU backend `TPUT_IMPL` appears to copy in the wrong direction
+
+## Summary
+
+The CPU simulation implementation of `pto::comm::TPUT` appears to reverse the source and destination operands.
+
+The public `TPUT(dst, src, tile)` API and the a2a3 backend implement a remote write:
+
+```text
+srcGlobalData -> stagingTileData -> dstGlobalData
+```
+
+However, the CPU backend currently calls `Copy_Data(src, dst)`, while `Copy_Data(dstTensor, srcTensor)` assigns `dst = src`. This makes CPU `TPUT(dst, src, ...)` behave like `src = dst`.
+
+## Relevant code
+
+In `include/pto/comm/pto_comm_inst.hpp`, `TPUT` forwards arguments as `(dstGlobalData, srcGlobalData, stagingTileData)`:
+
+```cpp
+::pto::comm::TPUT_IMPL<GlobalDstData, GlobalSrcData, TileData, atomicType>(
+    dstGlobalData, srcGlobalData, stagingTileData);
+```
+
+In `include/pto/cpu/comm/TGet.hpp`, `Copy_Data` has destination-first semantics:
+
+```cpp
+template <typename GlobalDstData, typename GlobalSrcData, AtomicType atomicType = AtomicType::AtomicNone>
+PTO_INTERNAL void Copy_Data(GlobalDstData &dstTensor, GlobalSrcData &srcTensor)
+{
+    typename GlobalDstData::DType *dst = dstTensor.data();
+    typename GlobalSrcData::DType *src = srcTensor.data();
+    ...
+    dst[index] = src[index];
+}
+```
+
+But in `include/pto/cpu/comm/TPut.hpp`, CPU `TPUT_IMPL` calls it with reversed operands:
+
+```cpp
+template <typename GlobalDstData, typename GlobalSrcData, typename TileData, AtomicType atomicType>
+PTO_INTERNAL void TPUT_IMPL(GlobalDstData &dst, GlobalSrcData &src, TileData &src1)
+{
+    Copy_Data(src, dst);
+}
+
+template <typename GlobalDstData, typename GlobalSrcData, typename TileData>
+PTO_INTERNAL void TPUT_IMPL(GlobalDstData &dst, GlobalSrcData &src, TileData &ping, TileData &pong)
+{
+    Copy_Data(src, dst);
+}
+
+template <DmaEngine engine = DmaEngine::SDMA, typename GlobalDstData, typename GlobalSrcData>
+PTO_INTERNAL AsyncEvent TPUT_ASYNC_IMPL(GlobalDstData &dst, GlobalSrcData &src, const AsyncSession &session)
+{
+    Copy_Data(src, dst);
+    return AsyncEvent(0, engine);
+}
+```
+
+The a2a3 backend in `include/pto/comm/a2a3/TPut.hpp` uses the expected direction:
+
+```cpp
+TLOAD(stagingTileData, srcGlobalData);
+...
+TSTORE_IMPL<TileData, GlobalDstData, atomicType>(dstGlobalData, stagingTileData);
+```
+
+## Observed behavior
+
+In a CPU-simulated distributed allreduce example, each rank calls:
+
+```cpp
+pto::comm::TPUT(remote_slot, partial_local, staging_tile);
+```
+
+Expected behavior:
+
+```text
+remote_slot = partial_local
+```
+
+Observed behavior with the CPU backend:
+
+```text
+partial_local appears to be overwritten/read from remote_slot instead
+```
+
+As a result, the simulated allreduce only sees the local contribution and fails the golden check. Replacing CPU-sim `TPUT` with an explicit elementwise copy:
+
+```cpp
+for (int i = 0; i < n; ++i) {
+    remote_slot_ptr[i] = partial_local_ptr[i];
+}
+```
+
+makes the same test pass with zero diff. The onboard/a2a3 path using the normal `TPUT` implementation already passes.
+
+## Expected fix
+
+The CPU backend likely should call `Copy_Data(dst, src)` instead:
+
+```cpp
+Copy_Data(dst, src);
+```
+
+This should be applied consistently to:
+
+- `TPUT_IMPL(dst, src, tile)`
+- `TPUT_IMPL(dst, src, ping, pong)`
+- `TPUT_ASYNC_IMPL(dst, src, session)`
+
+Please confirm whether this is indeed a CPU backend bug or whether CPU `TPUT` intentionally has different operand semantics from the public `TPUT(dst, src, ...)` API.
+
+
+---
+
+## #127 TPipe destructor leaks FFTS free signals on a2a3/a5 (regression in 687af1a6)
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/127
+- Created: 2026-05-18T01:35:10Z
+- Updated: 2026-05-22T11:00:30Z
+- Closed: 2026-05-22T11:00:30Z
+- Labels: bug
+
+### Body
+
+## Summary
+
+Commit **687af1a6 "Optimize reverse dependencies with sync periods"** introduces a signal-count imbalance in `TPipe<>` on both **a2a3** (`include/pto/npu/a2a3/TPush.hpp`) and **a5** (`include/pto/npu/a5/TPush.hpp`). For any pipeline with `SlotNum > SyncPeriod` (e.g. the common `SlotNum=8, SyncPeriod=4` case), each kernel invocation leaks `SlotNum / SyncPeriod` FFTS `free` signals into the cross-core flag register. On NPU hardware (A2/A3) this manifests as **CANN runtime error 507018 (`ACL_ERROR_RT_AICPU_EXCEPTION`)** after one or more invocations.
+
+The bug is still present on `main` at `d779cd01` — no commits between `687af1a6..d779cd01` modify the relevant headers.
+
+## Reproduction
+
+Downstream PyPTO test (NPU A2/A3, real hardware):
+
+```bash
+pytest tests/st/runtime/test_qwen3_decode_scope3_mixed.py \
+       --platform a2a3 --device <N> --save-kernels \
+       --pto-isa-commit=d779cd0
+```
+
+Result on `d779cd01`:
+
+```
+RuntimeError: run_prepared failed with code 507018
+[ERROR] aclrtSynchronizeStreamWithTimeout (AICPU) failed: 507018
+```
+
+Reverting to the prior commit `fcc6f420` makes the test pass. Re-applying the patch in §Proposed Fix on top of `d779cd01` also makes the test pass.
+
+The failing kernels (`scope3_incore_{1,4,5}`) use:
+
+```cpp
+TPipe<0, Direction::DIR_C2V, /*SlotSize=*/4096, /*SlotNum=*/8,
+      /*LocalSlotNum=*/8, /*IsNoSplit=*/false>
+// => SyncPeriod = SlotNum / 2 = 4
+```
+
+## Root Cause (numerical)
+
+Consider a producer/consumer loop of `T` tiles with `SlotNum = 8, SyncPeriod = 4`:
+
+| Stage | Code site | Signals (free pulses to `FlagID+1`) |
+| --- | --- | --- |
+| Constructor (consumer) | `TPipe::TPipe` runs `cons.free()` × `SyncPeriod` | **+4** |
+| In-loop consumer | `TPOP_IMPL` calls `cons.free()` iff `shouldNotifyFree(i)` = `((i+1) % SP) == 0` | **+T / 4** |
+| In-loop producer | `TPUSH_IMPL` calls `prod.allocate()` iff `shouldWaitFree(i)` = `(i ≥ SlotNum) && (i % SP) == 0` | **−(T − 8) / 4** |
+| Destructor (producer) | `TPipe::~TPipe` runs `prod.allocate()` × `SyncPeriod` | **−4** |
+
+Net residual on `FlagID+1` per kernel invocation:
+
+```
+(SyncPeriod + T/SP) - ((T - SlotNum)/SP + SyncPeriod)
+= SlotNum / SyncPeriod
+= 8 / 4
+= 2  (leaked free signals)
+```
+
+The asymmetry comes from `shouldWaitFree` skipping the first `SlotNum` tiles (the "startup protection") while `shouldNotifyFree` does **not** skip the matching tail; the destructor doesn't compensate either.
+
+Relevant code (a2a3, `include/pto/npu/a2a3/TPush.hpp`):
+
+```cpp
+// L53-72
+PTO_INTERNAL static bool shouldWaitFree(uint32_t tileIndex) {
+    if constexpr (SlotNum == 1) return true;
+    else {
+        if (tileIndex < SlotNum) return false;   // <-- skips first SlotNum
+        return (tileIndex % SyncPeriod) == 0;
+    }
+}
+PTO_INTERNAL static bool shouldNotifyFree(uint32_t tileIndex) {
+    if constexpr (SlotNum == 1) return true;
+    else return ((tileIndex + 1) % SyncPeriod) == 0;   // <-- no matching skip
+}
+
+// L444-450
+PTO_INTERNAL ~TPipe() {
+    for (uint32_t i = 0; i < SyncPeriod; ++i) {
+        prod.allocate();    // <-- drains SyncPeriod, but needs SyncPeriod + SlotNum/SyncPeriod
+    }
+}
+```
+
+The a5 backend has the identical pattern at `include/pto/npu/a5/TPush.hpp:611-621`.
+
+## Proposed Fix
+
+Increase the destructor drain count to balance the constructor + in-loop pulse counts:
+
+```cpp
+PTO_INTERNAL ~TPipe()
+{
+    constexpr uint32_t kSkippedBatches = (SlotNum > 1) ? (SlotNum / SyncPeriod) : 0;
+    constexpr uint32_t kDestructorWaits = SyncPeriod + kSkippedBatches;
+    for (uint32_t i = 0; i < kDestructorWaits; ++i) {
+        prod.allocate();
+    }
+}
+```
+
+Verified on real NPU hardware: with this patch applied on top of `d779cd01`, the failing PyPTO test passes (`1 passed in 9.77s`).
+
+The same change should be mirrored in `include/pto/npu/a5/TPush.hpp:~TPipe()` (same algebra, same template pattern using the split-axis `allocate<>` overload).
+
+## Why the CV regression test didn't catch this
+
+The new test in `tests/npu/a2a3/src/st/testcase/tpushpop_cv/tpushpop_cv_kernel.cpp` exercises only `FIFO_DEPTH = 1` (i.e. `SlotNum == 1`), which short-circuits both `shouldWaitFree` and `shouldNotifyFree` to `true` and trivially preserves balance. The leak only appears for `SlotNum ≥ 4`.
+
+Adding a `SlotNum=8, SyncPeriod=4` variant to that test (and asserting absence of residual FFTS counts after a few invocations) would catch this class of bug.
+
+## Environment
+
+- CANN: 9.0.0
+- Platform: A2/A3 NPU, single device
+- pto-isa: `d779cd01` (also reproduces on `687af1a6`)
+- Downstream: PyPTO `tests/st/runtime/test_qwen3_decode_scope3_mixed.py`
+
+
+---
+
+## #128 [Bug] CPU SIM ST CI build failure: ambiguous std::exp(half) overload in ElementOp.h
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/128
+- Created: 2026-05-18T15:43:07Z
+- Updated: 2026-05-21T11:59:07Z
+- Closed: 2026-05-21T11:59:07Z
+- Labels: bug
+
+### Body
+
+### What happened?
+
+The `CPU SIM full ST` job fails when building `tests/cpu/st`. The first failing target is:
+
+```
+FAILED: testcase/hashfind/CMakeFiles/hashfind.dir/hashfind_kernel.cpp.o
+```
+
+Root cause is at [include/pto/cpu/ElementOp.h:277](https://github.com/hw-native-sys/pto-isa/blob/main/include/pto/cpu/ElementOp.h#L277):
+
+```cpp
+#if defined(__GNUC__) && !defined(__clang__)
+template <>
+struct ElementOpCal<half, ElementOp::OP_EXPDIF> {
+    static void apply(half &dst, const half &src0, const half &src1)
+    {
+        dst = std::exp(src0 - src1);   // <-- error
+    }
+};
+#endif
+```
+
+GCC 13 reports an ambiguous overload:
+
+```
+error: call of overloaded 'exp(half)' is ambiguous
+note: candidate: 'double exp(double)'
+note: candidate: 'constexpr float std::exp(float)'
+note: candidate: 'constexpr long double std::exp(long double)'
+```
+
+`half` (`_Float16`) implicitly converts to `float`, `double`, and `long double`, so all three `std::exp` overloads match and GCC 13 cannot pick one. This cascades into compilation failures across multiple testcases (`hashfind`, `mgather`, etc.).
+
+**Affected CI runs (same root cause):**
+- PR #117 / run [26042893738](https://github.com/hw-native-sys/pto-isa/actions/runs/26042893738/job/76559448734)
+- PR #116 / run [26026454466](https://github.com/hw-native-sys/pto-isa/actions/runs/26026454466/job/76501130922)
+
+### Expected behavior
+
+`CPU SIM full ST` should build successfully under GCC 13, with the `OP_EXPDIF` half-precision specialization compiling without overload ambiguity.
+
+### How to reproduce
+
+1. Check out `main` (commit `9562e76b`).
+2. On a GCC 13 / Ubuntu 24.04 environment, run:
+   ```bash
+   bash tests/run_cpu_tests.sh --generator Ninja --build-folder build/cpu_st_ci
+   ```
+3. Compilation of `testcase/hashfind/hashfind_kernel.cpp.o` fails with `error: call of overloaded 'exp(half)' is ambiguous`.
+
+### Environment & version info
+
+- Repo commit: `9562e76bff3adcfdb5ba3f726f5e54c940f3a24a` (main)
+- Compiler: GCC 13.3.0
+- OS: Ubuntu 24.04.4 LTS (GitHub-hosted runner `ubuntu-24.04`)
+- C++ standard: `-std=c++20`
+- Affected job: `CPU SIM full ST` → `Run CPU SIM ST suite`
+
+### Other
+
+**Suggested fix:** make the argument type explicit so overload resolution is unambiguous, e.g.:
+
+```cpp
+dst = static_cast<half>(std::exp(static_cast<float>(src0 - src1)));
+```
+
+Alternatively, provide a `half`-specific `exp` implementation.
+
+---
+
+## #133 CPU TRSQRT tmp overload is misnamed
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/133
+- Created: 2026-05-20T03:27:02Z
+- Updated: 2026-05-21T02:01:14Z
+- Closed: 2026-05-21T02:01:14Z
+
+### Body
+
+## Problem
+
+The public TRSQRT wrapper has an overload for `TRSQRT(dst, src, tmp, ...)` and calls `TRSQRT_IMPL<PrecisionType>(dst, src, tmp)`.
+
+In `include/pto/cpu/TRSqrt.hpp`, the CPU implementation defines the three-argument overload as `TSQRT_IMPL` instead of `TRSQRT_IMPL`. As a result, CPU simulation builds fail when generated code uses the three-argument TRSQRT form.
+
+## Failure Mode
+
+Compilation reports that `TRSQRT_IMPL<...>(dst, src, tmp)` has no matching function, with only the two-argument candidate available.
+
+## Expected Behavior
+
+The CPU TRSQRT implementation should expose the same three-argument `TRSQRT_IMPL(dst, src, tmp)` overload that the common wrapper and NPU implementations expect.
+
+## Scope
+
+This is limited to the CPU simulation shim. The a2a3 and a5 NPU headers already define three-argument `TRSQRT_IMPL` overloads.
+
+---
+
+## #139 [Bug] CPU SIM full ST build failure: tscatter_kernel.cpp calls 2-arg TSCATTER<MaskPattern>(dst, src) but only 3-arg overload exists
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/139
+- Created: 2026-05-22T03:41:08Z
+- Updated: 2026-05-22T04:26:55Z
+- Closed: 2026-05-22T04:26:55Z
+- Labels: bug
+
+### Body
+
+### What happened?
+
+The `CPU SIM full ST` job fails when building `tests/cpu/st`. The failing target is:
+
+```
+FAILED: testcase/tscatter/CMakeFiles/tscatter.dir/tscatter_kernel.cpp.o
+```
+
+[tests/cpu/st/testcase/tscatter/tscatter_kernel.cpp:83](https://github.com/hw-native-sys/pto-isa/blob/main/tests/cpu/st/testcase/tscatter/tscatter_kernel.cpp#L83) calls a 2-arg form of `TSCATTER` parameterized only on a `pto::MaskPattern`:
+
+```cpp
+TSCATTER<maskPattern>(dstTile, srcTile);
+```
+
+However the only declaration visible at [include/pto/common/pto_instr.hpp:1754](https://github.com/hw-native-sys/pto-isa/blob/main/include/pto/common/pto_instr.hpp#L1754) is the 3-arg form:
+
+```cpp
+template <typename TileDataD, typename TileDataS, typename TileDataI, typename... WaitEvents>
+PTO_INST RecordEvent TSCATTER(TileDataD &dst, TileDataS &src, TileDataI &indexes, WaitEvents &...events);
+```
+
+so GCC errors out with:
+
+```
+tests/cpu/st/testcase/tscatter/tscatter_kernel.cpp:83:26:
+  error: no matching function for call to 'TSCATTER<pto::MaskPattern::P0101>(DstTileData&, SrcTileData&)'
+note: candidate expects at least 3 arguments, 2 provided
+```
+
+The same error repeats for every mask pattern × shape combination: `P0101`, `P1010`, `P0001`, `P0010`, `P0100`, `P1000`, `P1111`.
+
+This breakage is on `main` and is not introduced by any single PR. It surfaces in every PR run that exercises `CPU SIM full ST` (e.g. PR #123 / run [26218721403](https://github.com/hw-native-sys/pto-isa/actions/runs/26218721403/job/77153773315)). Recent main-branch `CI` workflow runs (2026-05-20 ~ 2026-05-21) consistently show `CI: failure`.
+
+### Expected behavior
+
+`CPU SIM full ST` should build successfully on `main`. Either:
+
+- `tscatter_kernel.cpp` should be updated to use the existing 3-arg `TSCATTER(dst, src, indexes, ...)` API (providing an `indexes` tile); **or**
+- `pto_instr.hpp` should expose a 2-arg `TSCATTER<MaskPattern>(dst, src, ...)` overload mirroring the existing mask-pattern `TGATHER<MaskPattern>` form at `include/pto/common/pto_instr.hpp:977`.
+
+The design intent (mask-pattern variant) is tracked by #121 — once that lands, the test call site becomes valid. Until then, either side of the contract needs to align so `main` stops red-lining.
+
+### How to reproduce
+
+1. Check out `main` (commit `9dc91fee`).
+2. On a GCC 13 / Ubuntu 24.04 environment, run:
+   ```bash
+   bash tests/run_cpu_tests.sh --generator Ninja --build-folder build/cpu_st_ci
+   ```
+3. Compilation of `testcase/tscatter/tscatter_kernel.cpp.o` fails with `error: no matching function for call to 'TSCATTER<pto::MaskPattern::P0101>(DstTileData&, SrcTileData&)'`.
+
+### Environment & version info
+
+- Repo commit: `9dc91fee409c53476811f4acbc865e40025020a8` (main, observed 2026-05-21)
+- Compiler: GCC 13 (Ubuntu 24.04 runner)
+- OS: Ubuntu 24.04.4 LTS (GitHub-hosted runner `ubuntu-24.04`)
+- C++ standard: `-std=c++20`
+- Affected job: `CPU SIM full ST` → `Run CPU SIM ST suite`
+
+### Other
+
+Related: #121 (design + feature request for mask-pattern `TSCATTER`).
+
+**Suggested directions** (pick one — defer to the ISA design notes in `docs/isa/comm/TSCATTER.md` / `TSCATTER_zh.md` first):
+
+1. Add a 2-arg `TSCATTER<MaskPattern>(dst, src, ...)` overload to `include/pto/common/pto_instr.hpp` (likely as part of resolving #121). Use a non-type `MaskPattern` template parameter with SFINAE so it coexists with the 3-arg index-based form.
+2. Update `tests/cpu/st/testcase/tscatter/tscatter_kernel.cpp` to call the existing 3-arg `TSCATTER(dst, src, indexes, ...)` API and supply an `indexes` tile.
+
+---
+
+## #143 [Spec] Make Rv=0 / Cv=0 a normative no-op for store-class instructions, and document odd-axis padding rules
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/143
+- Created: 2026-05-27T05:59:54Z
+- Updated: 2026-06-01T02:06:40Z
+- Closed: 2026-06-01T02:06:40Z
+- Labels: enhancement
+
+### Body
+
+### Summary
+
+`docs/isa/programming-model/tiles-and-valid-regions.md` already says that the iteration domain of any instruction is `0 <= i < dst.Rv, 0 <= j < dst.Cv`, which implies that `Rv = 0` (or `Cv = 0`) makes the domain empty and the instruction semantically a no-op.
+
+However, this is currently a derived consequence rather than a normative statement, and several practical questions are not addressed:
+
+1. For **store-class instructions** (`TSTORE`, `TMOV` writing to a different memory space, `TASSEMBLE`-like ops, `TPUSH_TO_AIC`, `TPUSH_TO_AIV`), is the "no element written" guarantee binding on the hardware, or only on the math model? In other words: when `dst.Rv = 0`, is the hardware required not to issue any DRAM/SRAM write transaction, or could it speculatively write garbage that happens to be ignored by the read-back logic?
+
+2. For **the V2C/C2V cross-pipe handoff** (`TPUSH_TO_AIC`, `TPOP_FROM_AIV`, etc.), what is the semantics when the pushed tile has `Rv = 0`? Is the slot "consumed" by the AIC side (pop must succeed) or is the push silently dropped?
+
+3. For **odd-axis tile shapes**, is there a documented physical alignment requirement on `rows` / `cols` beyond what fractal / `SLayout` already imposes? Specifically: can a `Vec` tile have `rows = 16, valid_row = 5` legally, and does any ISA op behave differently based on the gap?
+
+### Motivation / Use Case
+
+PyPTO and PTOAS are coordinating to support odd-axis tile shapes (see hw-native-sys/pypto#1031 and hw-native-sys/PTOAS#708). The intended lowering pattern relies on the "physical even, valid odd" tile shape plus a `valid_row = 0` per-lane no-op contract under UP_DOWN split.
+
+Concrete kernel pattern (Qwen3-14B decode, trying to fuse the online-softmax tail into the mixed cube+vec `fa_fused` root):
+
+- dst tile: `[16, 128]` physical, lower lane gets `valid_row = 0` after UP_DOWN split
+- chain: `subview [0:5]` → `tcvt fp32→bf16` → `tassemble` (stores one row of 640 cols to GM `attn_out[b, head_offset]`)
+
+We need to guarantee that the lower lane's `tassemble` does **not** write garbage to GM (which would overwrite the upper lane's correct output). If the hardware honors `dst.Rv = 0` as "no STU/MTE issued", PTOAS can simply lower the op as-is and rely on hardware. If not, PTOAS must emit an explicit predicate or skip codegen entirely.
+
+Without a normative spec answer here, PTOAS implementers have to choose conservatively (always skip codegen on Rv=0), which is fine but needs to be documented as the contract.
+
+### Proposed Spec Additions
+
+Add to `docs/isa/programming-model/tiles-and-valid-regions.md` a new section, e.g. "Empty Valid Regions":
+
+> **Empty Domain (Rv = 0 or Cv = 0)**: When the destination tile's valid region is empty (`Rv = 0` or `Cv = 0`), the iteration domain is empty and no `dst[i, j]` is defined. For **destructive** ops (those that produce a new value in `dst`), the instruction is a normative no-op: no architectural state outside `dst`'s storage is modified.
+>
+> For **store-class** instructions (`TSTORE`, cross-space `TMOV`, `TASSEMBLE`-like ops, `TPUSH_TO_AIC`, `TPUSH_TO_AIV`), the empty domain additionally implies:
+>
+>   - No memory transaction is issued to the destination address space.
+>   - For pipe handoffs (`TPUSH_*` / `TPOP_*`), the slot is **not** consumed; the matching `TPOP_*` must not be issued by the consumer side for this iteration.
+>
+> Hardware implementations MUST honor this contract. Compilers MAY additionally elide such instructions at codegen time as an optimization.
+
+Add to each store-class instruction page an explicit "Empty Domain" sub-section reinforcing the above.
+
+Add to `docs/isa/programming-model/tiles-and-valid-regions.md` (or a new "Padding Rules" page):
+
+> **Physical vs. Valid Dimensions**: A tile's physical `rows` and `cols` may legally exceed `valid_row` / `valid_col`. The physical dimensions must respect any per-`SLayout` / `Fractal` alignment requirements (see Layout Reference), but the valid dimensions are not constrained beyond `0 <= valid <= physical`. In particular, odd valid dimensions are legal when the physical dimension is rounded up to the next aligned size.
+
+### Acceptance Criteria
+
+- The "Empty Domain" section is added with the wording above (or equivalent normative content).
+- At least `TSTORE`, `TMOV`, `TASSEMBLE`, `TPUSH_TO_AIC`, `TPUSH_TO_AIV`, `TPOP_FROM_AIV`, `TPOP_FROM_AIC` instruction pages link to or quote the new section.
+- The "Physical vs. Valid Dimensions" rule is documented.
+
+### Related
+
+- hw-native-sys/pypto#1031 (PyPTO frontend `SplitVectorKernel`)
+- hw-native-sys/PTOAS#708 (PTOAS verifier + codegen)
+
+---
+
+## #146 TSCATTER index form returns wrong results for 2-byte dtypes (fp16/bf16/int16): values land in the wrong row
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/146
+- Created: 2026-05-28T08:53:12Z
+- Updated: 2026-06-01T02:56:23Z
+- Closed: 2026-06-01T02:56:23Z
+- Labels: bug
+
+### Body
+
+## Summary
+
+Index-form `TSCATTER(dst, src, idx)` produces **incorrect results for all 2-byte element types** — `fp16`, `bf16`, `int16` (paired with `int16` indices) — on the **A2/A3** backend. The 4-byte paths (`fp32` and `int32` with `int32` indices) are correct, and the mask-form scatter is correct.
+
+The scattered **values are intact** (the expected magnitudes all appear in the output), but they are written to the **wrong destination row**: in every mismatch the *column* index is preserved while the *row* offset is miscomputed. Since the dtype `static_assert`s in `TScatter.hpp` accept these types, this is a **silent wrong-result bug** — no compile error, no runtime crash.
+
+## Affected version
+
+pto-isa commit `0f171f7327472e79c8def3b5f5b46b692c48b117` (`0f171f7`).
+
+Context: we bumped our pin from `2c607938` to `0f171f7` to pick up the mask-form 2-arg `TSCATTER<maskPattern>(dst, src)` overload. The 2-byte index-form cases were passing before the bump; they regressed after moving to `0f171f7`.
+
+## Op / location
+
+- `include/pto/npu/a2a3/TScatter.hpp` — index-form `TSCATTER` (`TScatterImpl` / `TSCATTER_IMPL` path; **not** the mask form).
+- The type guard at `TSCATTER_IMPL` accepts `(sizeof(TD) == 2 && sizeof(TI) == 2)`, i.e. fp16/bf16/int16 dst with int16 idx are explicitly allowed — so the wrong output is returned silently.
+
+## Symptom
+
+Per-row column scatter `out[b, index[b, k]] = val[b, k]`. Shapes: dst `[16, 32]`, src/idx `[16, 16]`. Indices passed to TSCATTER are flat per-element offsets into dst (`b * dst_cols + col`).
+
+| dst / src | idx | result |
+| --------- | --- | ------ |
+| fp32 | int32 | PASS |
+| int32 | int32 | PASS |
+| **fp16** | **int16** | **FAIL** |
+| **bf16** | **int16** | **FAIL** |
+| **int16** | **int16** | **FAIL** |
+| mask-form (fp32) | — | PASS |
+
+In every mismatch the **column is preserved and only the row is wrong** (flat index = `row * 32 + col`):
+
+- **fp16** (33/512 mismatched): `val[14,0] = 225` should write to dst flat **462** (row 14, col 14). Instead flat 462 keeps the base sentinel (`-29`) and `225` appears at flat **494** (row 15, col 14) — column 14 preserved, **row 14 → 15**.
+- **bf16 / int16** (49/512 mismatched): `val[14,0] = 225` again expected at flat **462** (row 14, col 14), but appears at flat **14** (row 0, col 14) — column 14 preserved, **row 14 → 0**.
+
+The set of wrong rows differs between fp16 and bf16 even though the inputs and index tensors are identical, so this is **not** a simple fixed shift — it points to a defect in the destination row-offset / stride computation of the 2-byte index-form path.
+
+## Expected
+
+Index-form `TSCATTER` for 2-byte dst (fp16/bf16/int16) with int16 indices should match the 4-byte behaviour: `dst[flat_idx[i,j]] = src[i,j]` for all valid `(i,j)`, leaving rows untouched by any index at their original (DPS-preserved) values.
+
+## Repro
+
+Reproduced through the PyPTO system test `tests/st/runtime/ops/test_scatter.py::TestScatterIndexForm` on platform `a2a3`, with pto-isa pinned at `0f171f7`. `fp32`/`int32` pass; `fp16`/`bf16`/`int16` fail with golden mismatches as above.
+
+<details>
+<summary>Failing output excerpt (fp16)</summary>
+
+```
+test_scatter_fp16[a2a3] FAILED
+AssertionError: Output 'output' does not match golden.
+  Mismatched elements: 33/512
+  rtol=1e-05, atol=1e-05
+  First mismatches:
+    [462] actual=-29.0, expected=225.0   # row14,col14: stayed base, value 225 missing
+    [463] actual=-30.0, expected=226.0
+    ...
+    [494] actual=225.0, expected=-30.0   # row15,col14: got 225 (belongs to row14)
+    [495] actual=226.0, expected=241.0
+```
+
+bf16 / int16 show the same shape with the misplaced row being 0 instead of 15.
+</details>
+
+---
+
+## #147 [Bug] Heap-ring deadlock (PTO2_ERROR_HEAP_RING_DEADLOCK) introduced by 687af1a6 in Qwen3-14B fused decode
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/147
+- Created: 2026-05-28T11:51:55Z
+- Updated: 2026-06-02T01:04:58Z
+- Closed: 2026-06-02T01:04:58Z
+- Labels: bug
+
+### Body
+
+## Summary
+
+A pto-isa change at commit **`687af1a6`** ("Optimize reverse dependencies with sync periods") causes the PTO2 runtime to **deadlock the heap ring** (`PTO2_ERROR_HEAP_RING_DEADLOCK`) when executing the Qwen3-14B **optimized fused decode** on a2a3. The immediate parent commit **`fcc6f420`** runs the exact same workload correctly. Verified by an A/B test where **only `PTO_ISA_ROOT` was changed** between the two runs.
+
+## Bisect (single-commit boundary)
+
+| pto-isa commit | result |
+|---|---|
+| `fcc6f420` "Tune A3 TROWPROD pipeline synchronization" (parent) | ✅ decode runs, generates output |
+| `687af1a6` "Optimize reverse dependencies with sync periods" | ❌ decode **deadlocks** |
+
+All other components (pypto, simpler, pypto-lib, ptoas, ring sizes, device, prompt) were identical across the two runs; only `PTO_ISA_ROOT` differed.
+
+## Symptom
+
+Prefill completes normally; the **per-token decode step** (40-layer fused Qwen3-14B) deadlocks — the AICPU orchestrator spins waiting for heap-ring space that never frees:
+
+```
+[ERROR] run: [device_runner.cpp] Stream sync timeout: stream=AICPU timeout_ms=2000 ...   # host-side, stock 2s timeout
+[ERROR] validate_runtime_impl: PTO2 runtime failed: orch_error_code=2 sched_error_code=0 runtime_status=-2
+RuntimeError: run_prepared failed with code 507018
+```
+
+`orch_error_code=2` = `PTO2_ERROR_HEAP_RING_DEADLOCK` (see `runtime/.../common/pto_runtime_status.h`). With the stock 2000 ms AICPU stream-sync timeout it first surfaces as a host-side `Stream sync timeout` (`507046`); raising the timeout lets the device run longer and then report the deadlock directly (`507017`/`507018`).
+
+## Reproduction
+
+- pypto-lib @ `3834f3d` (Qwen3-14B), pypto @ `b0d1d49a`, simpler @ `a94d5140`, ptoas `0.41`, a2a3 NPU, CANN 9.0.0
+- Workload: the optimized non-L3 `models/qwen3/14b/decode_layer.py` (mix-fuse cube+vec, scope-3 flat `pl.spmd`) driven via pypto-serving:
+
+```bash
+PTO_ISA_ROOT=<pto-isa checkout> \
+PTO2_RING_HEAP=2147483648 PTO2_RING_TASK_WINDOW=262144 PTO2_RING_DEP_POOL=262144 \
+python examples/model/qwen3_14b/npu_generate.py \
+  --model-dir <Qwen3-14B> --prompt 'Huawei is' \
+  --platform a2a3 --max-seq-len 128 --max-new-tokens 16
+```
+
+- `PTO_ISA_ROOT` at **`687af1a6`** → deadlock (`507018` / heap-ring).
+- `PTO_ISA_ROOT` at **`fcc6f420`** → runs, generates `token_ids [264, 8453, 2813, 13, 576, 2813, 374, 7407, 304, 279, 3639, 4180, 13, 576, 2813, 374]`.
+
+(Single-layer decode runs fine on `687af1a6`; the deadlock only appears at full 40-layer depth.)
+
+## Notes
+
+- The deadlock is **not** avoidable via runtime tuning: enlarging the rings OOMs the device (the 14B weights nearly fill the card), smaller rings still deadlock, and `PTO2_ORCH_TO_SCHED` / `PTO2_READY_QUEUE_SHARDS` do not help.
+- `687af1a6` changes reverse-dependency / sync-period handling, which plausibly alters the emitted task dependency/sync structure so the heap ring can no longer be reclaimed for this graph — a good place to start.
+
+
+---
+
+## #149 [Bug] A2A3/A5 pushVec2GMFiFo TILE_NO_SPLIT path lacks inactive-lane guard → AIV1 clobbers AIV0 store (silent all-zero in mixed C/V NONE scopes)
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/149
+- Created: 2026-05-29T01:08:04Z
+- Updated: 2026-05-29T05:12:54Z
+- Closed: 2026-05-29T05:12:54Z
+- Labels: bug
+
+### Body
+
+### Summary
+
+On A2A3 (and A5), the device-side vec→cube producer intrinsic `pushVec2GMFiFo` has **no inactive-lane guard for the `TILE_NO_SPLIT` path**. Under `SplitMode.NONE` in a mixed Cube/Vec scope, hardware runs the Vec kernel on **both** sub-cores (AIV0 + AIV1). For `TILE_NO_SPLIT` the device stores the full static tile at `subAIVOffset = 0` for *both* lanes, so AIV1 (the inactive replay lane, whose tile carries runtime `valid_shape=[0,0]`) writes a full tile of **zeros** into the same v2c slot that AIV0 wrote its real result to — clobbering it. The cube then pops zeros → **silent all-zero output** with a clean compile and no assert.
+
+The CPU sim does **not** surface this because it has an inactive-lane guard that the device path is missing (see "Sim vs device divergence" below). This is the device-side root cause confirmed for `hw-native-sys/pypto#1525` (a board owner reproduced it on a real a2a3 board and handed it off to pto-isa).
+
+### Affected code
+
+Producer (the clobbering store), `TILE_NO_SPLIT` branch sets `subAIVOffset = 0` for both lanes and unconditionally `TSTORE_IMPL`s, with no `get_subblockid()` guard:
+
+- A2A3: `include/pto/npu/a2a3/TPush.hpp` — `pushVec2GMFiFo`, `TILE_NO_SPLIT` branch around **line 208-210** ("single writer, no offset needed").
+- A5: `include/pto/npu/a5/TPush.hpp` — `pushVec2GMFiFo`, `TILE_NO_SPLIT` branch around **line 301-302** (same "single writer, no offset needed" comment). A5's split-aware sync suppresses the *second Vec sync*, but the no-split **store** itself is likewise un-guarded — please confirm whether A5 is actually affected or saved by its sync gating.
+
+Consumer side has the symmetric no-guard `TILE_NO_SPLIT` branch (`subAIVOffset = 0`, "single reader") at `a2a3/TPush.hpp:380` and `a5/TPush.hpp:540` — read-side is harmless but worth keeping in mind for any fix.
+
+Confirmed live at pto-isa `0f171f73` (`grep -r IsInactiveNoSplitVecLane include/pto/npu/` → no match). The fix commit `491d7f23` referenced on pypto#1525 does **not** exist in this repo.
+
+### Mechanism (per the a2a3 board investigation on pypto#1525)
+
+1. pypto's `SplitVectorKernel` correctly dual-dispatches the AIV under NONE: AIV0 does the real work; AIV1 is an empty `valid_shape=[0,0]` replay.
+2. AIV1's `tpush_to_aic` replay is **load-bearing** — it participates in the FFTS `CV_CORES_SYNC` barrier (fixed cube+AIV0+AIV1). Dropping it in the pass → cube hangs `rtStreamSynchronize (AICPU) failed: 507018`.
+3. The device `pushVec2GMFiFo` `TILE_NO_SPLIT` branch ignores runtime `valid_shape` and stores the full static tile at `subAIVOffset = 0` for both lanes → AIV1 overwrites AIV0 with zeros.
+
+### Why the obvious fixes do not work (already tried)
+
+- **Skip only the store on the inactive lane, keep `record()`** → also hangs `507018`: v2c `record()` syncs on `PIPE_MTE3` (the store pipe, `TPush.hpp:165`), so an inactive lane that records without storing deadlocks the cube.
+- **Drop AIV1's push in the pypto pass** → hangs `507018` (FFTS barrier needs AIV1's notify).
+- The NONE-mode v2c slot is sized for **one** tile, so the inactive lane cannot just retarget to a non-conflicting scratch offset.
+
+So this needs an FFTS-aware device fix, not a one-line guard.
+
+### Suggested direction
+
+Mirror the CPU-sim semantics on the device in an FFTS-safe way, e.g. size the NONE-mode v2c slot to hold **two** tiles and route the inactive lane's store to the second region (cube reads the first), so the `PIPE_MTE3`/`CV_CORES_SYNC` sync still sees a real store from AIV1 but there is no clobber. This is the conceptual target; the exact shape needs device iteration. (See also the closed design-clarification #83, where the agreed model was "AIV1 strips the store / side-effecting ops" — this issue is that the device code does not actually do so, plus the constraint that a naive strip deadlocks.)
+
+### Reproducer
+
+~40-line pypto program (single `CORE_GROUP`, `SplitMode.NONE`, cube → vec cast → cube):
+
+```python
+import pypto.language as pl
+M = K = N = 64
+@pl.program
+class Repro:
+    @pl.function(type=pl.FunctionType.Opaque)
+    def fused(self, a: pl.Tensor[[M, K], pl.BF16], w: pl.Tensor[[K, N], pl.BF16],
+              w2: pl.Tensor[[K, N], pl.BF16], y: pl.Out[pl.Tensor[[M, N], pl.FP32]]) -> pl.Tensor[[M, N], pl.FP32]:
+        with pl.at(level=pl.Level.CORE_GROUP, optimizations=[pl.split(pl.SplitMode.NONE)]):
+            t1 = pl.matmul(a, w, out_dtype=pl.FP32)
+            t1b = pl.cast(t1, target_type=pl.BF16, mode="rint")
+            y = pl.matmul(t1b, w2, out_dtype=pl.FP32, b_trans=True)
+        return y
+```
+
+**Observed on a2a3 board:** compiles clean, runs, output all-zero (4095/4096 mismatch, `actual=0.0`). **CPU sim:** does not reproduce (guard present).
+
+### Workaround (consumers)
+
+Use `pl.split(pl.SplitMode.UP_DOWN)` + `pl.assemble` instead of `NONE` + direct return — the chained cube→vec→cube fusion runs correctly on a2a3 that way.
+
+### Sim vs device divergence (the smoking gun)
+
+The CPU sim has the inactive-NO_SPLIT-vec-lane guard; the NPU device tree has none:
+
+- Guard exists ONLY in sim: `IsInactiveNoSplitVecLane` at `include/pto/cpu/TPush.hpp:175`, applied as an early-return in `TPUSH_IMPL` at `include/pto/cpu/TPush.hpp:797`; consumer variant `IsInactiveNoSplitVecConsumerLane` at `cpu/TPush.hpp:194`.
+- `grep -rn "IsInactive" include/pto/npu/` → **no matches**. Neither a2a3 nor a5 device paths gate the inactive lane.
+
+### Related
+
+- `hw-native-sys/pypto#1525` (origin; board root-cause + handoff to pto-isa)
+- pto-isa #83 (closed design-clarification: "A2A3 NONE requires both Vec sub-cores; AIV1 should strip side-effecting store" — this issue is the bug that it does not)
+- pto-isa #82 (`TPUSH_IMPL` PIPE_MTE3 barrier vs `record()` — same sync pipe involved)
+- pypto symptom family: #1507, #1523, #1564
+
+### Environment
+
+| Component | Version |
+|---|---|
+| pto-isa | `0f171f73` (bug also present at `0a1ce52` reported on #1525) |
+| pypto | `b0d1d49a` |
+| pypto-lib | `53a2efa` |
+| pypto runtime (submodule) | `324df3d6` |
+| ptoas | 0.41 |
+| CANN | 9.0.0 |
+| Host | Linux (aarch64) |
+
+
+---
+
+## #157 [Bug] A2A3 copy_ubuf_to_gm_align_b8 silently drops writes when dst is peer-rank-mapped GM — b16/b32 paths unaffected
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/157
+- Created: 2026-06-02T11:26:57Z
+- Updated: 2026-06-09T09:28:32Z
+- Closed: 2026-06-09T09:28:32Z
+- Labels: bug
+
+### Body
+
+## Summary
+
+On A2/A3, `TSTORE` of a `Tile<TileType::Vec, int8_t, ...>` to a `GlobalTensor<int8_t, ...>` whose underlying pointer is a **peer-rank-mapped GM region** (a remote window slot in a multi-rank topology) silently writes nothing — subsequent `TLOAD` from the same address on the destination rank returns the prior (zero-initialised) buffer contents. The same `TSTORE` with `bfloat16_t` / `half` / `float` / `int32_t` to the **same** peer GM region works correctly. The same `TSTORE` with `int8_t` to a **local** GM region also works correctly.
+
+The bug is the **intersection** of `{ sizeof(DType) == 1 }` and `{ dst points into a peer-mapped GM window }`. Neither condition alone reproduces.
+
+The only code path that diverges between the working and failing cases is the dtype dispatch in `TStoreUb2gmInstr` / `TLoadInstrGm2ub`, which selects `copy_ubuf_to_gm_align_b8` instead of `copy_ubuf_to_gm_align_b16` / `_b32`. The template wrapper itself is structurally symmetric (same `nBurst`, `lenBurst`, `gmGap`, `ubGap`, `ubPad`); only the intrinsic name differs.
+
+Silent wrong-result — clean compile, no assert, the TSTORE returns and downstream MTE3→MTE2 sync flags fire normally; just no bytes ever land at the dst address from the perspective of the destination rank's later TLOAD.
+
+## Affected version
+
+pto-isa commit `6909e5c406227e09720d56a8ff0878ef57c06f9f` (`6909e5c4`).
+
+## Op / location
+
+`include/pto/npu/a2a3/TStore.hpp:17-28` — `TStoreUb2gmInstr` dispatch:
+
+```cpp
+template <typename GlobalData, typename TileData>
+PTO_INTERNAL void TStoreUb2gmInstr(typename GlobalData::DType *dst, __ubuf__ typename TileData::DType *src,
+                                   uint16_t nBurst, uint32_t lenBurst, uint32_t gmGap, uint32_t ubGap)
+{
+    if constexpr (sizeof(typename TileData::DType) == 1) {
+        copy_ubuf_to_gm_align_b8(dst, src, 0, nBurst, lenBurst, 0, 0, ubGap, gmGap);   // ← failing path
+    } else if constexpr (sizeof(typename TileData::DType) == 2) {
+        copy_ubuf_to_gm_align_b16(dst, src, 0, nBurst, lenBurst, 0, 0, ubGap, gmGap);
+    } else if constexpr (sizeof(typename TileData::DType) == 4 || sizeof(typename TileData::DType) == 8) {
+        copy_ubuf_to_gm_align_b32(dst, src, 0, nBurst, lenBurst, 0, 0, ubGap, gmGap);
+    }
+}
+```
+
+Symmetric loader at `include/pto/npu/a2a3/TLoad.hpp:15-28` — `TLoadInstrGm2ub` selects `copy_gm_to_ubuf_align_b8` for `sizeof(DType) == 1`.
+
+For the failing case the burst args are emitted symmetrically with the working b16/b32 calls — a `Tile<TileType::Vec, int8_t, 1, 64, ..., PadValue::Null>` + `GlobalTensor<int8_t, Shape<1,1,1,1,64>, Stride<64,64,64,64,1>, Layout::ND>` lowers (via `TStoreUb2gmNd2nd`) to:
+
+```cpp
+copy_ubuf_to_gm_align_b8(dst, src, /*sid=*/0, /*nBurst=*/1, /*lenBurst=*/64, 0, 0, /*ubGap=*/0, /*gmGap=*/0);
+```
+
+`lenBurst=64` is `2 * BLOCK_BYTE_SIZE` (32-byte aligned). The BF16 baseline emits the same shape with `lenBurst=128` and `copy_ubuf_to_gm_align_b16`.
+
+## Symptom — what we observed
+
+Identical 2-rank dispatch program, parameterised on the x-channel dtype only (protocol / `TNOTIFY` / `TWAIT` / barrier signal cells / address arithmetic / surrounding b32 channels held fixed):
+
+| TSTORE call | DType (sizeof) | dst GM region | Result |
+| - | - | - | - |
+| `copy_ubuf_to_gm_align_b16` | bfloat16_t (2) | peer-rank-mapped window | PASS |
+| `copy_ubuf_to_gm_align_b8`  | int8_t (1), `lenBurst=64`  | peer-rank-mapped window | **FAIL** — dst read-back is all zero (max abs diff = 91, full INT8 range) |
+| `copy_ubuf_to_gm_align_b8`  | int8_t (1), `lenBurst=128` | peer-rank-mapped window | **FAIL** — same all-zero |
+| `copy_ubuf_to_gm_align_b16` | half (2) (int8 TCVT→ fp16 → wire → fp16 TCVT→ int8) | peer-rank-mapped window | PASS |
+| `copy_ubuf_to_gm_align_b8`  | int8_t (1) | **local** rank GM | PASS (`torch.equal == True`) |
+
+The `lenBurst=64` vs `lenBurst=128` comparison rules out row-byte vs HW visibility-granule alignment (BF16 `lenBurst=128` works; INT8 `lenBurst=128` still fails — only the intrinsic selection differs). The fp16-wire variant — INT8 input cast through TCVT to FP16 on the UB side before the cross-rank `TSTORE`, then TCVT back to INT8 after the destination's `TLOAD` — passes byte-identically against the same golden, confirming that the b16 cross-rank path itself is correct and that swapping out the b8 intrinsic is sufficient to make the same data flow land. The local-GM baseline confirms `copy_ubuf_to_gm_align_b8` is correct when dst is on the same rank; the failure surfaces only when dst is a peer-mapped GM address.
+
+Adjacent b32 / b16 transfers in the **same kernel run** (a parallel FP32 channel via `copy_ubuf_to_gm_align_b32` and an INT32 channel) all match expected, isolating the failure to the b8 path specifically.
+
+Same downstream `MTE3→MTE2` sync via `wait_flag`/`set_flag` with identical `EVENT_ID` pattern on both BF16 and INT8 — the failure is not a sync timing issue (verified by structural diff of the emitted device code).
+
+## Expected
+
+`copy_ubuf_to_gm_align_b8(dst, ...)` with dst pointing into a peer-rank-mapped GM window should deliver the source bytes byte-identically, matching the behaviour of `copy_ubuf_to_gm_align_b16` / `_b32` on the same address.
+
+## Repro
+
+Reproduced through PyPTO system tests at `e3879f26`. The tests build small 2-rank programs whose generated AIV kernels emit the `TSTORE` calls described above; the difference between passing/failing variants is the dtype of the cross-rank window and the consequent `_b8` / `_b16` intrinsic selection in `TStoreUb2gmInstr`.
+
+- `tests/st/distributed/test_l3_ep_dispatch_combine.py` — BF16 baseline (b16 cross-rank TSTORE) — **passes**.
+- `tests/st/distributed/test_l3_ep_dispatch_combine_int8.py` — same program with x channel re-typed INT8 (b8 cross-rank TSTORE) — **fails**, dst all-zero.
+- `tests/st/distributed/test_l3_ep_dispatch_combine_int8_via_fp16.py` — same program, x channel TCVT-cast to FP16 on the UB side before TSTORE and TCVT-cast back to INT8 after TLOAD (b16 cross-rank TSTORE on `half`) — **passes**.
+- `tests/st/distributed/test_l3_ep_dispatch_combine_int8_local_dbg.py` — INT8 baseline plus an extra `TSTORE` of the same UB tile to a **local** GM buffer right before the cross-rank `TSTORE` (b8 local TSTORE) — local read-back is `torch.equal == True` in the same run where the cross-rank read-back is all-zero.
+
+Generated AIV kernel for the failing path (excerpt from the int8 build):
+
+```cpp
+Tile<TileType::Vec, int8_t, 1, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> v114
+    = Tile<TileType::Vec, int8_t, 1, 64, ...>(/*Rows=*/1, /*Cols=*/64);
+TASSIGN(v114, /*zero-init*/ 0);
+GlobalTensor<int8_t, Shape<1,1,1,1,64>, Stride<64,64,64,64,1>, Layout::ND> v118(
+    /*local src ptr*/ v2 + slot_local * 64, ...);
+wait_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID0);
+TLOAD(v114, v118);                                       // local int8 TLOAD — OK
+set_flag(PIPE_MTE2, PIPE_MTE3, EVENT_ID0);
+
+int32_t v119 = CommRemoteOffset_i8(/*comm_table*/ v18, /*peer=*/ v107);
+__gm__ int8_t* v120 = v11 + v119;                        // base + (peer_base − my_base) → peer-mapped GM
+GlobalTensor<int8_t, Shape<1,1,1,1,64>, Stride<64,64,64,64,1>, Layout::ND> v123(
+    v120 + slot_peer * 64, ...);
+wait_flag(PIPE_MTE2, PIPE_MTE3, EVENT_ID0);
+TSTORE(v123, v114);                                      // ← b8 cross-rank — silently delivers zeros
+set_flag(PIPE_MTE3, PIPE_MTE2, EVENT_ID0);
+```
+
+The BF16 baseline build is byte-identical in structure, differs only in `int8_t → bfloat16_t`, the offset helper picks `÷2` instead of `÷1`, and the burst goes through `copy_ubuf_to_gm_align_b16`.
+
+## What we ruled out
+
+| Hypothesis | Verified ruled out |
+| - | - |
+| Sync flag insertion (wait/set EVENT_ID, PIPE_MTE2/MTE3) | Generated code is byte-identical between BF16 (passes) and INT8 (fails) for the cross-rank channel. |
+| Burst arg asymmetry vs b16 path | `nBurst`, `lenBurst`, `gmGap`, `ubGap`, `ubPad` all symmetric; only the intrinsic-name selection at TStore.hpp:21-22 / TLoad.hpp:19-20 differs. |
+| `lenBurst` vs HW visibility-granule | Doubling `lenBurst` from 64 to 128 bytes (D=64 → D=128) still fails; BF16 with `lenBurst=128` succeeds. |
+| b8 intrinsic correctness on local GM | Local `copy_ubuf_to_gm_align_b8` baseline matches `torch.equal == True`. |
+| Cross-rank correctness in general | b16 (bfloat16_t baseline, fp16-cast variant) / b32 cross-rank transfers in the same kernel all pass. |
+| `CommRemoteOffset_<dtype>` arithmetic | Returns the same byte address for both dtypes after pointer arithmetic (`int8* + delta_bytes` ≡ `bf16* + delta_bytes/2`). |
+
+## Environment
+
+| Component | Version |
+| - | - |
+| pto-isa | `6909e5c4` |
+| pypto (repro harness) | `e3879f26` |
+| pypto runtime (submodule) | `324df3d6` |
+| CANN | 9.0.0 |
+| Host | Linux (aarch64) |
+| Platform | a2a3 |
+
+
+---
+
+## #161 [Bug] RHS mask producer tail lanes fail unless dummy cmp materializes the path
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/161
+- Created: 2026-06-05T07:54:21Z
+- Updated: 2026-06-09T03:10:52Z
+- Closed: 2026-06-09T03:10:52Z
+- Labels: bug
+
+### Body
+
+### Summary
+
+PyPTO can generate a producer kernel that builds an RHS / identity-like mask through row expansion, compare/select, BF16 cast, and GM store. After the PyPTO-side reshape lowering fix, the producer is still intermittently writing stale/zero tail lanes in the original race repros.
+
+Adding a dummy `cmp`-style materialization/control changes the behavior: the same race2/race3/raceB families pass 10/10 in fresh L2 runs. This looks like a PTO ISA / codegen-runtime interaction around Vec lane materialization, `TSEL` scratch/aliasing, barriers, or final MTE/BF16 store ordering, not a missing PyPTO dependency edge.
+
+### PyPTO version under test
+
+- PyPTO PR: https://github.com/hw-native-sys/pypto/pull/1690
+- Branch: `sunkaixuan2018:codex/fix-issue-1503-reshape-pr`
+- Tested commit after rebase: `391614e73e6ef8d75e5effb5180e0945f5952a88`
+- Scope of that PR: fixes the confirmed PyPTO lowering bug where static `[1, K] -> [K, 1]` reshape must be materialized instead of treated as a view-only shape change.
+- Focused PyPTO test passed on `myserver`: `python3 -m pytest tests/ut/codegen/test_pto_codegen_ops.py -k 'row_vector or k64_row' -v` -> 3 passed, 46 deselected.
+
+### Problem pattern
+
+The producer builds an RHS mask similar to:
+
+```python
+idx = pl.tensor.ci(0, [1, K], dtype=pl.INT32)
+idx_col = pl.tensor.reshape(idx, [K, 1])
+row = pl.tensor.cast(idx_col, target_type=pl.FP32)
+row2d = pl.row_expand_mul(ones, row)
+cmp = pl.tensor.cmp(row2d, cols, cmp_type=0)
+w_build[:, :] = pl.tensor.cast(cmp, target_type=pl.BF16)
+```
+
+PyPTO now emits a real transpose/materialization for `[1, K] -> [K, 1]`. However, the original RHS race repros still intermittently produce zero/stale tail diagonal points. Extra dummy compare/materialization code makes the bad points disappear in the sampled runs.
+
+### Reproduction scripts
+
+Original repros on `myserver`:
+
+```text
+/data/sunkaixuan/codex_sh/_tmp_rhs_race2.py
+/data/sunkaixuan/codex_sh/_tmp_rhs_race3.py
+/data/sunkaixuan/codex_sh/_tmp_rhs_raceB.py
+```
+
+Dummy-cmp control repros:
+
+```text
+/data/sunkaixuan/codex_sh/issue1503_rhs_race2_dummy_cmp.py
+/data/sunkaixuan/codex_sh/issue1503_rhs_race3_dummy_cmp.py
+/data/sunkaixuan/codex_sh/issue1503_rhs_raceB_dummy_cmp.py
+```
+
+10x loop command:
+
+```bash
+ssh myserver "bash /data/sunkaixuan/codex_sh/issue1503_loop_rhs_dummy_cmp_basic_perf_10x_l2.sh"
+```
+
+Important: every L2 sample must be a fresh `task-submit` invocation. Do not run several cases in one Python process.
+
+### 10x result
+
+Summary/log artifacts:
+
+```text
+/data/sunkaixuan/skx_log_output/issue1503_rhs_dummy_cmp_basic_perf_10x_20260605_151549/summary.log
+/data/sunkaixuan/skx_log_output/issue1503_rhs_dummy_cmp_basic_perf_10x_20260605_151549/results.tsv
+```
+
+| Case | Samples | Tensor PASS | Tensor FAIL | Runtime/device failure | First known mismatch positions |
+| --- | ---: | ---: | ---: | ---: | --- |
+| race2 original | 10 | 1 | 9 | 0 | `[60, 61, 62, 63, ...]`; 2035-2042/32768 mismatches in failing runs |
+| race3 original | 10 | 3 | 7 | 0 | `[3900, 3965, 4030, 4095, ...]`; 128/131072 mismatches |
+| raceB original | 10 | 3 | 7 | 0 | `[3900, 3965, 4030, 4095, ...]`; 128/131072 mismatches |
+| race2 dummy-cmp | 10 | 10 | 0 | 0 | None |
+| race3 dummy-cmp | 10 | 10 | 0 | 0 | None |
+| raceB dummy-cmp | 10 | 10 | 0 | 0 | None |
+
+Representative artifacts:
+
+```text
+race2 original FAIL: /data/sunkaixuan/pypto-lib/models/deepseek/v4/build_output/_jit_rhs_race2_test_20260605_151551
+race2 original PASS: /data/sunkaixuan/pypto-lib/models/deepseek/v4/build_output/_jit_rhs_race2_test_20260605_151720
+race3 original FAIL: /data/sunkaixuan/pypto-lib/models/deepseek/v4/build_output/_jit_rhs_race3_test_20260605_151826
+race3 original PASS: /data/sunkaixuan/pypto-lib/models/deepseek/v4/build_output/_jit_rhs_race3_test_20260605_151852
+raceB original FAIL: /data/sunkaixuan/pypto-lib/models/deepseek/v4/build_output/_jit_rhs_raceB_test_20260605_152038
+raceB original PASS: /data/sunkaixuan/pypto-lib/models/deepseek/v4/build_output/_jit_rhs_raceB_test_20260605_152052
+race2 dummy-cmp PASS: /data/sunkaixuan/pypto-lib/models/deepseek/v4/build_output/_jit_rhs_race2_test_20260605_152303
+race3 dummy-cmp PASS: /data/sunkaixuan/pypto-lib/models/deepseek/v4/build_output/_jit_rhs_race3_test_20260605_152547
+raceB dummy-cmp PASS: /data/sunkaixuan/pypto-lib/models/deepseek/v4/build_output/_jit_rhs_raceB_test_20260605_152802
+```
+
+### Current observations
+
+- The PyPTO dependency graph contains the expected producer -> consumer TensorMap edge.
+- L2 swimlane evidence showed the consumer dispatching after the producer finishes.
+- A plain peek/read of `w_build` can still observe the bad mask data, so this is not only a consumer scheduling problem.
+- Removing matmul did not remove the stale tail points.
+- Simple wait/fence/double-store variants did not fix the original bad tail points.
+- Intermediate dumps or dummy compare/materialization can mask the issue.
+
+### Suggested pto-isa investigation directions
+
+Please check the generated producer path around:
+
+```text
+TROWEXPANDMUL / TCMP -> TSEL -> TMOV -> TCVT -> BF16 TSTORE
+```
+
+Questions to investigate:
+
+- Does `TROWEXPANDMUL` guarantee all valid/tail lanes are materialized before a following `TCMP` / `TSEL` chain consumes them?
+- Does `TSEL` require a full-sized scratch tile for this full-lane materialization pattern?
+- Are there aliasing restrictions between `TSEL` output and inputs such as `cmp_one`, `cmp_zero`, `cmp_mask`, or `cmp_tmp`?
+- Are extra barriers required between `TSEL`, `TMOV`, `TCVT`, and BF16 `TSTORE` for tail rows?
+- Why does an unrelated dummy compare / materialization path make race2/race3/raceB pass in 10/10 fresh L2 runs, while the original path still fails frequently?
+
+### Expected behavior
+
+The original and dummy-cmp variants should both produce the same correct RHS mask. Adding an unrelated dummy compare/materialization should not be required to make tail diagonal lanes visible to later readers.
+
+### Actual behavior
+
+The original variants still fail frequently after the PyPTO reshape materialization fix, while the dummy-cmp variants passed 10/10 in the same fresh L2 sampling setup.
+
+---
+
+## #164 Non-templated MSCATTER default coalesce semantics diverge between CPU sim (Elem) and NPU onboard (Row)
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/164
+- Created: 2026-06-08T06:34:47Z
+- Updated: 2026-06-12T02:17:31Z
+- Closed: 2026-06-12T02:17:31Z
+
+### Body
+
+## Summary
+
+The **non-templated** `MSCATTER` overload is available on both the CPU
+simulator and NPU targets, but its **default coalesce semantics differ by
+backend**: the CPU sim models `Coalesce::Elem`, while NPU hardware defaults to
+`Coalesce::Row`. As a result, a single non-templated `MSCATTER(dst, src, idx)`
+kernel source produces **different results on sim vs. onboard**, so one golden
+cannot validate both — defeating the purpose of offering a portable
+non-templated surface.
+
+## Details
+
+The dispatch layer exposes a non-templated `MSCATTER` unconditionally, but all
+templated overloads are gated behind `#ifdef PTO_NPU_ARCH_A5`:
+
+- `include/pto/common/pto_instr.hpp:1936` — non-templated `MSCATTER` (no `#ifdef`)
+- `include/pto/common/pto_instr.hpp:1943-1978` — all templated `MSCATTER<Coalesce, ...>` overloads inside `#ifdef PTO_NPU_ARCH_A5`
+
+Backend behavior of the non-templated form:
+
+- **CPU sim** (`include/pto/cpu/MGatherScatter.hpp`, `MSCATTER_IMPL`) — no
+  `Coalesce` parameter at all; always walks `validRow × validCol` and writes
+  `dst[idx[i,j]] = src[i,j]`, i.e. **`Coalesce::Elem`** semantics.
+- **A5 onboard** (`include/pto/npu/a5/MScatter.hpp`, `MSCATTER_IMPL` default
+  `Coalesce Mode = Coalesce::Row`) — non-templated call deduces the default
+  `Coalesce::Row`, dispatching to `MScatterRowImpl` (per-row scatter, index
+  treated as a logical row index).
+
+The docs confirm the asymmetry:
+
+- `docs/isa/tile/ops/memory-and-data-movement/mscatter.md:11` — `Coalesce::Row` is the default.
+- `mscatter.md:22` / `:127` / `:242` — the CPU simulator "always" does `Coalesce::Elem` and "does not have a separate Row coalesce path".
+
+## Impact
+
+A kernel that wants element-scatter semantics and must build for both the CPU
+simulator and A5 onboard cannot use a single non-templated `MSCATTER` call:
+
+- On sim, non-templated = Elem (correct).
+- On A5 onboard, non-templated = Row (wrong for an element-scatter test), and
+  for an `[R, C]`-shaped index tile it additionally fails `MScatterCheck`,
+  which requires `idx.ValidRow == 1` in Row mode — so it may not even compile.
+
+Today the only way to get consistent element-scatter on both is a per-target
+split:
+
+```cpp
+#ifdef __CPU_SIM
+    MSCATTER(out, src, idx);                                        // cpu: Elem (only form)
+#else
+    MSCATTER<Coalesce::Elem, ScatterAtomicOp::None, ScatterOOB::Skip>(out, src, idx);  // a5: explicit Elem
+#endif
+```
+
+Notably, the repo's own ST suite sidesteps this by keeping **separate kernel
+files per backend** (`tests/cpu/st/testcase/mscatter/mscatter_kernel.cpp` uses
+non-templated; `tests/npu/a5/src/st/testcase/mscatter/mscatter_kernel.cpp` uses
+only explicit `MSCATTER<Coalesce::Row|Elem, ...>`), so it never shares one
+kernel source across sim and onboard.
+
+## Suggested fix (any one)
+
+1. **Make the non-templated default consistent** — have the CPU sim model the
+   same default (`Coalesce::Row`) as hardware, or make hardware's non-templated
+   default `Coalesce::Elem`, so one non-templated source behaves identically on
+   both.
+2. **Remove the non-templated overload on hardware** (or `static_assert` it
+   out), forcing the mode to be explicit at every call site. This makes the
+   sim/onboard divergence a compile error instead of a silent golden mismatch.
+3. **Document the trap loudly** at the non-templated `MSCATTER` declaration if
+   the asymmetry is intentional, so callers know it is not portable.
+
+Option 1 best matches the apparent intent of offering a portable non-templated
+surface.
+
+## Environment
+
+- Observed against `hw-native-sys/pto-isa` (current `main`).
+- Surfaced while making an a5 SIMT element-scatter ST run under both `a5sim`
+  (CPU sim, `__CPU_SIM`) and `a5` onboard in a downstream consumer.
+
+
+---
+
+## #168 TCONCAT (a2a3): asymmetric-width concat corrupts dst — src1 copy reuses src0's blockLen
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/168
+- Created: 2026-06-15T12:34:36Z
+- Updated: 2026-06-30T01:36:35Z
+- Closed: 2026-06-30T01:36:35Z
+- Labels: bug
+
+### Body
+
+## Summary
+
+On a2a3, `TCONCAT` corrupts the destination tile whenever the two sources have **different valid column counts** (`validCol0 != validCol1`) **and** `validCol0` is block-aligned. The aligned fast path copies `src1` using the **block length derived from `validCol0`**, so it writes `validCol0` columns of `src1` (instead of `validCol1`) starting at column `validCol0`, overrunning each destination row into the following rows.
+
+The symmetric case (`validCol0 == validCol1`, e.g. the shipped `[32,16]+[32,16]` example and the `tconcat` ST tests) is unaffected, which is why this has gone unnoticed.
+
+## Affected code
+
+`include/pto/npu/a2a3/TConcat.hpp` — `TConcatImpl(...)`, the `isAligned` fast path (commit `b9122ec5`):
+
+```cpp
+unsigned blockLen = (validCol0 * sizeof(TD) + BLOCK_BYTE_SIZE - 1) / BLOCK_BYTE_SIZE;  // from validCol0
+... // src0 copy uses blockLen  -- correct
+
+bool isAligned = (validCol0 % elementsPerBlock) == 0;
+if (isAligned) {
+    unsigned src1Gap = (TileDataS1::Cols * sizeof(TD) + BLOCK_BYTE_SIZE - 1) / BLOCK_BYTE_SIZE - blockLen; // (A)
+    for (int i = 0; i < validRow; i++) {
+        pto_copy_ubuf_to_ubuf(dstPtr + i * dstRowStride + validCol0, src1Ptr + i * src1RowStride,
+                              1, blockLen,                 // (B) <-- uses src0's blockLen for src1
+                              src1Gap, dstGap);
+    }
+}
+```
+
+- **(B)** copies `blockLen` blocks of `src1`, where `blockLen` was computed from `validCol0`. It should copy a block count derived from `validCol1`.
+- **(A)** `src1Gap` also underflows: for `validCol1 < validCol0`, `ceil(S1::Cols/block) - blockLen` is negative and wraps to a huge `unsigned`.
+
+The unaligned `else` branch (element-wise copy of exactly `validCol1` columns) is correct, and the CPU reference (`include/pto/cpu/TConcat.hpp`) is correct (copies `cols0` from src0, `cols1` from src1). Only the a2a3 aligned fast path is wrong.
+
+## Concrete example
+
+bf16 (`sizeof=2`), `BLOCK_BYTE_SIZE=32` ⇒ `elementsPerBlock=16`.
+`src0` valid `[16, 448]`, `src1` valid `[16, 64]`, `dst` `[16, 512]` (row stride 512):
+
+- `blockLen = ceil(448*2/32) = 28` blocks (= 448 elements) — correct for src0.
+- `isAligned = (448 % 16 == 0) = true` ⇒ fast path taken.
+- src1 copy writes **`blockLen` = 28 blocks = 448 elements** of `src1` at `dst[:, 448:896]`, overrunning the 512-wide rows. Expected: 64 elements at `dst[:, 448:512]`.
+
+## Minimal repro
+
+Any bf16 `tconcat` with `validCol0` a multiple of `elementsPerBlock` and `validCol0 != validCol1`, e.g. `src0[16,32] + src1[16,16] -> dst[16,48]`: `dst[:, 32:48]` receives 32 elements of src1 (16 valid + 16 stale) instead of 16. The existing `tests/.../testcase/tconcat` cases only use equal widths; adding an asymmetric-width case reproduces it.
+
+## How it was found
+
+Surfaced building a `[16,448] (no-RoPE) + [16,64] (RoPE)` head tile in a PyPTO sparse-attention kernel (one `pl.concat` for a 512-wide head). Device validation showed **99.18%** of outputs wrong (`max abs diff ≈ 0.055`); replacing the single `concat` with two separate column-range stores of the same data is **bit-exact**, confirming the corruption is inside `TCONCAT`, not the producer.
+
+## Proposed fix
+
+Give `src1` its own block length:
+
+```cpp
+    if (isAligned) {
+        unsigned blockLen1 = (validCol1 * sizeof(TD) + BLOCK_BYTE_SIZE - 1) / BLOCK_BYTE_SIZE;
+        unsigned src1Gap = (TileDataS1::Cols * sizeof(TD) + BLOCK_BYTE_SIZE - 1) / BLOCK_BYTE_SIZE - blockLen1;
+        for (int i = 0; i < validRow; i++) {
+            pto_copy_ubuf_to_ubuf(dstPtr + i * dstRowStride + validCol0, src1Ptr + i * src1RowStride,
+                                  1, blockLen1, src1Gap, dstGap);
+        }
+    }
+```
+
+Worth also adding an asymmetric-width (`validCol0 != validCol1`) case to the `tconcat` ST tests, and checking the a5/other backends for the same pattern (a5's `TConcat.hpp` uses a different path and does not appear affected).
+
+## Environment
+
+- pto-isa commit `b9122ec5`
+- Backend: a2a3 (`dav-c220`), bf16
+- Toolchain: CANN cann-8.5.1
+
+
+---
+
+## #170 Vector UB usable size appears to be ~184KB (not 192KB) on Ascend910B1 / cann-9.0.0 — silent corruption when tile allocations exceed ~184KB
+
+- State: open
+- URL: https://github.com/hw-native-sys/pto-isa/issues/170
+- Created: 2026-06-17T07:00:59Z
+- Updated: 2026-06-17T09:14:44Z
+- Labels: bug
+
+### Body
+
+## Summary
+
+On **Ascend910B1 / CANN `cann-9.0.0`** (target `a2a3`), a pure-Vector kernel whose `pto.alloc_tile` allocations reach a **188.8 KB** Vec high-water — well within the **192 KB** Vec UB — produces **NaN** in its output on device. The *same* kernel reduced to a **183.3 KB** high-water is correct. The corruption switches on **between 183.3 KB (clean) and 188.8 KB (NaN)** — i.e. right around **184 KB**. Nothing errors at compile in either case; the 188.8 KB case **silently corrupts** at runtime.
+
+| case | Vec footprint | # buffers | device output |
+| ---- | ------------- | --------- | ------------- |
+| HD512 | **188.8 KB** / 192 KB | 81 | **NaN** (112 NaNs) |
+| HD496 | **183.3 KB** / 192 KB | 81 | correct (0 NaN) |
+
+Both are the *same* kernel with an identical op sequence; only the tile column size differs (→ footprint).
+
+## CANN version (important)
+
+The device reproduction runs on **cann-9.0.0** (active `ASCEND_HOME_PATH` / `LD_LIBRARY_PATH` / `PATH` all point at `.../Ascend/cann-9.0.0`, Version=9.0.0). We were told this Vec-UB reservation "was removed" — but **188.8 KB (< 192 KB) still corrupts on 9.0.0**, so it appears to still be in effect. (`cann-8.5.1` was used *only* for the in-core op-simulator, which needs a TL-capable `bisheng` for the camodel build; it does not run the device NaN.)
+
+## Hypothesis
+
+The real usable Vec UB is **~184 KB, not 192 KB** — i.e. ~8 KB at the top is reserved (we see `ReserveBufferOp` / `PTOInferValidatePipeInitPass` in PTOAS). A tile placed in that top region reads/writes garbage → NaN. The upstream (PyPTO) allocator's 192 KB budget does not subtract this, so it emits a `.pto` reaching 188.8 KB without any error.
+
+## Evidence the NaN is memory corruption (not numerics, not a logic bug)
+
+- **Localized**: every NaN is in the highest-address accumulator tiles (the `m_oi_nope` accumulator, NOPE half of the output); lower-address tiles are clean.
+- **Footprint-causal**: drop the high-water below ~184 KB (smaller tiles, or set the inner pipeline to `stage=1`) → 0 NaN; same kernel otherwise.
+- **Not a numerical artifact**: with inputs that keep the divisor `n_denom = li + exp(...)` strictly positive, the 188.8 KB case **still** NaNs → corrupted buffer data, not a division.
+- **Data-dependent cells**: NaN cells vary with input seed (88 vs 112) — consistent with a high-address buffer overlapping a reserved/garbage region.
+
+## Reproduction
+
+Artifacts — both `.pto`, the per-buffer memory reports, and the repro scripts:
+**https://gist.github.com/Hzfengsy/8f655587af225f73665a1e9a3112441a**
+
+For PTOAS directly: compile `HD512_WRONG_merge_rope_pack.pto` and `HD496_CORRECT_merge_rope_pack.pto` for `a2a3` / `Ascend910B1` / cann-9.0.0, run, and check the output for NaN. HD512's top `alloc_tile` reaches addr ~188.6 KB (→ NaN); HD496 stays ≤ ~183.1 KB (→ clean). `diff` the two `.pto` — same structure, only tile sizes / `addr` values differ.
+
+<details><summary>PyPTO-side standalone device harness — merge_h.py (HD env var sets the hidden dim / footprint)</summary>
+
+```python
+# Copyright (c) PyPTO Contributors.
+# Standalone device harness: lifts the dsv4 `merge_rope_pack` scope out of
+# decode_sparse_attn.py and runs it as its own kernel on device (-d 0) to check
+# whether o_packed (its OWN output) contains NaN/Inf. Isolates whether the
+# coloring corruption is intrinsic to the kernel.
+import sys
+
+sys.path.insert(0, "/home/syfeng/pypto-pipeline-stage-scope/python")
+import pypto  # noqa: E402
+
+assert "pipeline-stage-scope" in pypto.__file__, pypto.__file__
+assert "pipeline-stage-scope" in pypto.pypto_core.__file__, pypto.pypto_core.__file__
+
+sys.path.insert(0, "/home/syfeng/pypto/dsv4_kernels")
+import pypto.language as pl  # noqa: E402
+import decode_sparse_attn as M  # noqa: E402
+import os
+
+# Reference constants through M.* so they stay in sync with the kernel.
+T = M.T
+H = M.H
+HEAD_DIM = int(os.environ.get('HD', M.HEAD_DIM))
+NOPE_DIM = HEAD_DIM - M.ROPE_DIM
+ROPE_DIM = M.ROPE_DIM
+HALF_ROPE = M.HALF_ROPE
+ROPE_H_TILE = M.ROPE_H_TILE
+ROPE_SUBTILES = M.ROPE_SUBTILES
+H_TILE = M.H_TILE
+SPARSE_BLOCKS = M.SPARSE_BLOCKS
+HEADS_PER_GROUP = M.HEADS_PER_GROUP
+O_GROUPS = M.O_GROUPS
+D = M.HEADS_PER_GROUP * HEAD_DIM
+FUSE_ALIGNED_SINGLE_STORE = M.FUSE_ALIGNED_SINGLE_STORE
+
+# T*(H//H_TILE)*SPARSE_BLOCKS*H_TILE = 128*4*5*16 = 40960
+SPARSE_ROWS = T * (H // H_TILE) * SPARSE_BLOCKS * H_TILE
+assert SPARSE_ROWS == 40960, SPARSE_ROWS
+
+
+@pl.jit
+def main(
+    sparse_blk_mi: pl.Tensor[[40960, 1], pl.FP32],
+    sparse_blk_li: pl.Tensor[[40960, 1], pl.FP32],
+    sparse_blk_oi: pl.Tensor[[40960, HEAD_DIM], pl.FP32],
+    attn_sink: pl.Tensor[[64], pl.FP32],
+    freqs_cos: pl.Tensor[[128, 64], pl.BF16],
+    freqs_sin: pl.Tensor[[128, 64], pl.BF16],
+    o_packed: pl.Out[pl.Tensor[[1024, D], pl.BF16]],
+):
+    # ---- BEGIN verbatim lift of decode_sparse_attn.py lines 346..449 ----
+    for m_t in pl.spmd(T, name_hint="merge_rope_pack"):
+        m_token_base = m_t * (H // ROPE_H_TILE) * SPARSE_BLOCKS * ROPE_H_TILE
+        # Inverse-RoPE interleave pattern (j^1 swap, j>>1 dup, [+1,-1,...] sign)
+        # over the FULL ROPE_DIM at once (the standalone rope chunked into 32-col
+        # tloads; here the rope tail is a single contiguous [ROPE_H_TILE, ROPE_DIM]
+        # tile, so we rotate it in one pass -- no chunk-slicing). Column-only ->
+        # build once per token-task, on ROPE_H_TILE rows.
+        sp_ones = pl.full([ROPE_H_TILE, ROPE_DIM], dtype=pl.FP32, value=1.0)
+        sp_col = pl.col_expand_mul(
+            sp_ones, pl.cast(pl.arange(0, [1, ROPE_DIM], dtype=pl.INT32), target_type=pl.FP32)
+        )
+        sp_dup_f = pl.cast(
+            pl.cast(pl.mul(sp_col, 0.5), target_type=pl.INT32, mode="trunc"), target_type=pl.FP32
+        )
+        sp_dup_idx = pl.cast(sp_dup_f, target_type=pl.INT32)  # j>>1
+        sp_lane = pl.sub(sp_col, pl.mul(sp_dup_f, 2.0))  # j%2
+        sp_swap_idx = pl.cast(pl.sub(pl.add(sp_col, 1.0), pl.mul(sp_lane, 2.0)), target_type=pl.INT32)  # j^1
+        sp_sign = pl.neg(pl.sub(pl.mul(sp_lane, 2.0), 1.0))  # [+1,-1,...] (conjugate)
+
+        for m_h_idx in pl.pipeline(H // ROPE_H_TILE, stage=2):
+            m_h0 = m_h_idx * ROPE_H_TILE
+            # sparse_blk_* is stored in H_TILE-row blocks (qk_pv layout). Map this
+            # ROPE_H_TILE-row sub-tile to its stored head-tile m_ht and the half
+            # m_half within that block; the base offsets into the block by
+            # m_half * ROPE_H_TILE, and the sparse-block stride below stays H_TILE
+            # (the storage stride), not ROPE_H_TILE.
+            m_ht = m_h_idx // ROPE_SUBTILES
+            m_half = m_h_idx % ROPE_SUBTILES
+            m_blk_base = m_token_base + m_ht * SPARSE_BLOCKS * H_TILE + m_half * ROPE_H_TILE
+            m_mi = sparse_blk_mi[m_blk_base : m_blk_base + ROPE_H_TILE, 0:1]
+            m_li = sparse_blk_li[m_blk_base : m_blk_base + ROPE_H_TILE, 0:1]
+            # Split the attention-output accumulator into NOPE + ROPE column
+            # ranges, each loaded as its own contiguous tile (tensor slice ->
+            # tload). PyPTO Vec ops need full contiguous operands, so the rope
+            # tail must be a standalone tile, not a column-subview of a wide one.
+            m_oi_nope = sparse_blk_oi[m_blk_base : m_blk_base + ROPE_H_TILE, 0:NOPE_DIM]
+            m_oi_rope = sparse_blk_oi[m_blk_base : m_blk_base + ROPE_H_TILE, NOPE_DIM:HEAD_DIM]
+
+            for m_sb in pl.pipeline(1, SPARSE_BLOCKS, stage=2):
+                m_row = m_blk_base + m_sb * H_TILE
+                m_cur_mi = sparse_blk_mi[m_row : m_row + ROPE_H_TILE, 0:1]
+                m_cur_li = sparse_blk_li[m_row : m_row + ROPE_H_TILE, 0:1]
+                m_cur_oi_nope = sparse_blk_oi[m_row : m_row + ROPE_H_TILE, 0:NOPE_DIM]
+                m_cur_oi_rope = sparse_blk_oi[m_row : m_row + ROPE_H_TILE, NOPE_DIM:HEAD_DIM]
+                m_mi_new = pl.maximum(m_mi, m_cur_mi)
+                m_alpha = pl.exp(pl.sub(m_mi, m_mi_new))
+                m_beta = pl.exp(pl.sub(m_cur_mi, m_mi_new))
+                m_li = pl.add(pl.mul(m_alpha, m_li), pl.mul(m_beta, m_cur_li))
+                m_oi_nope = pl.add(
+                    pl.row_expand_mul(m_oi_nope, m_alpha), pl.row_expand_mul(m_cur_oi_nope, m_beta)
+                )
+                m_oi_rope = pl.add(
+                    pl.row_expand_mul(m_oi_rope, m_alpha), pl.row_expand_mul(m_cur_oi_rope, m_beta)
+                )
+                m_mi = m_mi_new
+
+            n_sink_bias = pl.reshape(attn_sink[m_h0 : m_h0 + ROPE_H_TILE], [ROPE_H_TILE, 1])
+            n_sink_tile = pl.add(pl.sub(m_mi, m_mi), n_sink_bias)
+            n_denom = pl.add(m_li, pl.exp(pl.sub(n_sink_tile, m_mi)))
+            # NOPE half: normalize + BF16 (unchanged from the old NOPE store path).
+            n_nope = pl.cast(pl.row_expand_div(m_oi_nope, n_denom), target_type=pl.BF16)
+            # ROPE half: normalize, then BF16-round the rope INPUT (matches the old
+            # attn_rope_stage BF16 round-trip that golden also does), inverse-RoPE
+            # the contiguous [ROPE_H_TILE, ROPE_DIM] tile, BF16-round the output.
+            #   out[j] = x[j]*cos_il[j] + x[j^1]*sign[j]*sin_il[j]
+            n_rope_in = pl.cast(
+                pl.cast(pl.row_expand_div(m_oi_rope, n_denom), target_type=pl.BF16), target_type=pl.FP32
+            )
+            r_cos = pl.cast(freqs_cos[m_t : m_t + 1, 0:HALF_ROPE], target_type=pl.FP32)
+            r_sin = pl.cast(freqs_sin[m_t : m_t + 1, 0:HALF_ROPE], target_type=pl.FP32)
+            r_cos_h = pl.col_expand_mul(pl.full([ROPE_H_TILE, HALF_ROPE], dtype=pl.FP32, value=1.0), r_cos)
+            r_sin_h = pl.col_expand_mul(pl.full([ROPE_H_TILE, HALF_ROPE], dtype=pl.FP32, value=1.0), r_sin)
+            r_cos_il = pl.gather(r_cos_h, dim=-1, index=sp_dup_idx)
+            r_sin_il = pl.gather(r_sin_h, dim=-1, index=sp_dup_idx)
+            r_swapped = pl.gather(n_rope_in, dim=-1, index=sp_swap_idx)
+            r_rot = pl.add(pl.mul(n_rope_in, r_cos_il), pl.mul(pl.mul(r_swapped, sp_sign), r_sin_il))
+            n_rope = pl.cast(r_rot, target_type=pl.BF16, mode="rint")
+
+            # Write each head to o_packed. Two store modes (compile-time switch,
+            # FUSE_ALIGNED_SINGLE_STORE) -- both bit-identical in intent, they only
+            # differ in store granularity / alignment:
+            #   - single aligned: join [16,448]+[16,64] -> [16,512] via pl.concat
+            #     and emit one [1,HEAD_DIM]=1024B 512B-aligned store per head.
+            #     Faster (VECTOR-bound) but blocked by pto-isa TCONCAT bug #168.
+            #   - two-store: emit NOPE [1,448] and ROPE [1,64] separately (same as
+            #     the original NOPE + rope_pack stores). Correct today.
+            if FUSE_ALIGNED_SINGLE_STORE:
+                n_full = pl.concat(n_nope, n_rope)
+                for n_hi in pl.range(ROPE_H_TILE):
+                    n_gh = m_h0 + n_hi
+                    n_g = n_gh // HEADS_PER_GROUP
+                    n_hh = n_gh - n_g * HEADS_PER_GROUP
+                    n_pack_row = n_g * T + m_t
+                    n_col = n_hh * HEAD_DIM
+                    o_packed[n_pack_row : n_pack_row + 1, n_col : n_col + HEAD_DIM] = n_full[n_hi : n_hi + 1, 0:HEAD_DIM]
+            else:
+                for n_hi in pl.range(ROPE_H_TILE):
+                    n_gh = m_h0 + n_hi
+                    n_g = n_gh // HEADS_PER_GROUP
+                    n_hh = n_gh - n_g * HEADS_PER_GROUP
+                    n_pack_row = n_g * T + m_t
+                    n_col = n_hh * HEAD_DIM
+                    o_packed[n_pack_row : n_pack_row + 1, n_col : n_col + NOPE_DIM] = n_nope[n_hi : n_hi + 1, 0:NOPE_DIM]
+                    o_packed[n_pack_row : n_pack_row + 1, n_col + NOPE_DIM : n_col + HEAD_DIM] = n_rope[n_hi : n_hi + 1, 0:ROPE_DIM]
+    # ---- END verbatim lift ----
+    return o_packed
+
+
+def _build_specs():
+    """7-entry TensorSpec list: 6 finite-random inputs + o_packed output."""
+    import torch
+    from golden import TensorSpec
+
+    def seeded_uniform(shape, seed, dtype):
+        def _init():
+            gen = torch.Generator()
+            gen.manual_seed(seed)
+            # SMALL finite uniform[-0.5, 0.5] so online-softmax exp() cannot
+            # overflow from data -- any NaN/Inf is therefore CORRUPTION, not math.
+            return (torch.rand(*shape, generator=gen) - 0.5).to(dtype)
+
+        return _init
+
+    return [
+        TensorSpec("sparse_blk_mi", [40960, 1], torch.float32, init_value=seeded_uniform((40960, 1), 11, torch.float32)),
+        TensorSpec("sparse_blk_li", [40960, 1], torch.float32, init_value=seeded_uniform((40960, 1), 12, torch.float32)),
+        TensorSpec("sparse_blk_oi", [40960, HEAD_DIM], torch.float32, init_value=seeded_uniform((40960, HEAD_DIM), 13, torch.float32)),
+        # attn_sink = zeros (matches golden).
+        TensorSpec("attn_sink", [64], torch.float32, init_value=0.0),
+        TensorSpec("freqs_cos", [128, 64], torch.bfloat16, init_value=seeded_uniform((128, 64), 14, torch.bfloat16)),
+        TensorSpec("freqs_sin", [128, 64], torch.bfloat16, init_value=seeded_uniform((128, 64), 15, torch.bfloat16)),
+        TensorSpec("o_packed", [1024, D], torch.bfloat16, is_output=True),
+    ]
+
+
+def _golden_zero(values):
+    """Trivial golden: zero-fill o_packed. _validate still prints the device
+    output's illegal-values (NaN/Inf) line regardless of golden match."""
+    import torch
+
+    values["o_packed"] = torch.zeros((1024, D), dtype=torch.bfloat16)
+
+
+def main_run(device: int = 0, platform: str = "a2a3") -> bool:
+    from golden import ratio_allclose, run_jit
+
+    specs = _build_specs()
+    runtime_cfg = dict(platform=platform, device_id=device, enable_l2_swimlane=False)
+    # Loose max_error_ratio so the ratio check does not abort before the NaN
+    # report; the NaN/Inf hard check inside the comparator always runs first and
+    # prints "illegal values in actual: NaN=.. Inf=.." for the DEVICE output.
+    compare_fn = {"o_packed": ratio_allclose(atol=1e9, rtol=1e9, max_error_ratio=1.0)}
+    result = run_jit(
+        fn=main,
+        specs=specs,
+        golden_fn=_golden_zero,
+        save_data=False,
+        rtol=1e9,
+        atol=1e9,
+        compare_fn=compare_fn,
+        runtime_cfg=runtime_cfg,
+    )
+    print(f"[merge_rope_standalone] passed={result.passed} error={result.error!r}")
+    return result.passed
+
+
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-d", "--device", type=int, default=0)
+    ap.add_argument("-p", "--platform", type=str, default="a2a3")
+    ap.add_argument("--compile-only", action="store_true")
+    args = ap.parse_args()
+
+    if args.compile_only:
+        from golden import run_jit
+
+        res = run_jit(fn=main, specs=_build_specs(), compile_only=True,
+                      runtime_cfg=dict(platform=args.platform, device_id=args.device))
+        print(f"[merge_rope_standalone] compile-only passed={res.passed} error={res.error!r}")
+    else:
+        main_run(device=args.device, platform=args.platform)
+```
+</details>
+
+## Questions for PTO-ISA
+
+1. Is there a Vec UB region PTOAS reserves (pipe-init/validate, or runtime scratch) that a kernel's `alloc_tile` allocations must **not** cross? What is the **real usable Vec UB** for `a2a3` / `Ascend910B1` on cann-9.0.0?
+2. We were told the reservation was removed — but it still corrupts at 188.8 KB on 9.0.0. Is it still in effect, or is this a separate near-full-footprint bug?
+3. If it's a fixed reservation, should the upstream allocator subtract it from the 192 KB budget so an over-tall layout **errors at compile** instead of corrupting silently? Can you confirm the exact reserved size?
+
+
+---
+
+## #172 flash_atten: ~10-12% large-S perf regression from TPipe::SyncPeriod change in TPush.hpp
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/172
+- Created: 2026-06-17T12:28:33Z
+- Updated: 2026-06-25T01:18:25Z
+- Closed: 2026-06-25T01:18:25Z
+
+### Body
+
+## Summary
+
+`kernels/python/flash_atten` (the PTO-DSL four-stage Cube/Vec + GM software-FIFO pipeline) shows a **~10–12% performance regression** on large sequences (S ≥ 32768) versus `torch_npu.npu_fused_infer_attention_score` (speedup drops from ~1.00× to ~0.89–0.90×).
+
+A clean line-by-line isolation traces it to **a single line of code** — the value of `TPipe::SyncPeriod` in `include/pto/npu/a2a3/TPush.hpp`:
+
+```cpp
+// flash_atten instantiates TPipe<0, DIR_C2V, SlotSize=131072, SlotNum=8, ...>
+old (faster):   static constexpr uint32_t SyncPeriod = (SlotNum <= 2) ? SlotNum : SlotNum / 2;  // = 4
+current (slow): static constexpr uint32_t SyncPeriod = SlotNum;                                 // = 8
+```
+
+This was introduced by commit `014920a8` (*"Clean pending free signals during TPUSH"*, csjlchen, 2026-05-22), which — while reworking the TPUSH drain / pending-free-signal cleanup — also bumped `SyncPeriod` from `SlotNum/2` to `SlotNum`. That commit's own message notes `Not-tested: Full NPU hardware validation pending`.
+
+`SyncPeriod = SlotNum` (= the full FIFO depth) makes the Cube↔Vec cross-core synchronization **coarse-grained and bursty**, which breaks steady-state pipeline overlap and slows the DSL kernel by ~10–12% at large S.
+
+> **Related PR: #169** (`flash_atten: refine README, optimize perf (split-KV)`). The ~0.86–0.93× band for `case5`–`case8` in that PR's verification table is exactly this regression. It is **independent of** PR #169's split-KV optimization and its `pto_instr.hpp` build fix — this is a **header-level** performance regression (`ptoas` version and timing mode are *not* the real cause).
+
+---
+
+## Environment
+
+- Platform: Ascend A3 (24 cube cores)
+- `ptoas 0.45`, `bisheng`/CANN `9.0.0`, `torch_npu 2.9.0`
+- Kernel: `kernels/python/flash_atten`; reference: `torch_npu.npu_fused_infer_attention_score`
+- Timing: `--timing sync` (more stable than event timing at large cases; avoids the occasional event-timing glitch)
+
+---
+
+## Experiment: full A/B performance comparison
+
+**Clean isolation:** same card, same `ptoas 0.45`, same MLIR / generated C++; only the bisheng `-I` header root (`PTO_LIB_PATH`) is switched. The two header trees are **byte-identical except the single `SyncPeriod` line at `TPush.hpp:37`**. Full suite `case1`–`case8`, `--timing sync`, 2026-06-17.
+
+- **A** = current main / PR #169 header: `SyncPeriod = SlotNum` (= 8)
+- **B** = proposed: `SyncPeriod = (SlotNum <= 2) ? SlotNum : SlotNum / 2` (= 4)
+
+| case | S0=S1 | tiles | A `fa µs` | B `fa µs` | **kernel speedup (A→B)** | A speedup | B speedup | A TFLOP/s | B TFLOP/s | err_kernel (A=B) |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| case1 | 1024 | 4 | 41.64 | 41.49 | +0.4% | 3.13× | 3.13× | 13.04 | 13.09 | 4.50e-05 |
+| case2 | 2048 | 8 | 59.01 | 52.74 | **+10.6%** | 2.62× | 2.87× | 36.82 | 41.19 | 3.99e-05 |
+| case3 | 4096 | 16 | 115.43 | 115.52 | −0.1% | 1.70× | 1.74× | 75.29 | 75.23 | 2.47e-05 |
+| case4 | 8192 | 32 | 289.18 | 277.74 | +4.0% | 1.20× | 1.26× | 120.21 | 125.16 | 1.78e-05 |
+| case5 | 16384 | 64 | 992.03 | 943.79 | **+4.9%** | 0.92× | 0.96× | 140.17 | 147.33 | 1.27e-05 |
+| case6 | 32768 | 64 | 3520.91 | 3154.31 | **+10.4%** | 0.89× | **1.00×** | 157.97 | 176.33 | 1.76e-05 |
+| case7 | 65536 | 128 | 13532.27 | 12028.19 | **+11.1%** | 0.89× | **1.01×** | 164.41 | 184.96 | 1.36e-05 |
+| case8 | 131072 | 256 | 53116.38 | 48033.67 | **+9.6%** | 0.90× | **1.00×** | 167.54 | 185.27 | 9.07e-06 |
+
+**Reading the table:**
+- `kernel speedup (A→B) = (A_fa − B_fa) / A_fa`, measuring the speedup of the DSL kernel itself. `torch_npu`'s `fused_us` does not use our headers, so it is consistent across the two runs (±noise) and serves as a clean baseline.
+- **Large S (`case6`–`case8`) recovers from 0.89–0.90× to parity with `torch_npu` (~1.00–1.01×, ~185 TFLOP/s)**; `case5` 0.92→0.96×; small S is neutral-to-slightly-up (`case2` also +10.6%, `case1`/`case3` within noise).
+- `err_kernel` is **byte-identical** between A and B (host FP32 / `npu_fused` reference, ≤ 4.5e-05) → correctness is unchanged; the kernel is simply faster.
+
+---
+
+## Mechanism: why `SyncPeriod = SlotNum/2` is faster
+
+The producer protocol in `TPush.hpp` is fully parameterized by `SyncPeriod` (`shouldWaitFree` / `shouldNotifyFree` / the destructor drain all use `% SyncPeriod`). flash_atten's GM-FIFO depth is `SlotNum = 8`:
+
+- **`SyncPeriod = 8` (= full FIFO depth):** the Cube side fills **all 8 slots** before it checks/waits, then must hard-wait for the Vec side to drain a whole period (8 tiles) at once. Synchronization is **coarse and bursty** — Cube sprints a stretch, then stalls for Vec to catch up, and the Cube↔Vec pipeline overlap is broken.
+- **`SyncPeriod = 4` (= SlotNum/2):** the sync frequency doubles, Cube and Vec stay **tightly coupled**, and in steady state the two advance in a smoother interleave with better overlap.
+
+The regression **grows with S** (`case1` ≈ noise → `case6`–`case8` +10–11%) because at large S the steady-state per-tile loop dominates, and `SyncPeriod` is precisely the "metronome" for Cube↔Vec overlap inside that loop; coarsening it directly drags down steady-state throughput.
+
+---
+
+## Recommendation & caveats
+
+Changing `SyncPeriod` back to `(SlotNum <= 2) ? SlotNum : SlotNum / 2` recovers ~10–12% at large S (verified correct for C2V / SlotNum=8).
+
+⚠️ **Do not blindly revert globally.** Commit `014920a8` also introduced the destructor drain, the `FlagID+3 < 16` hardware assertion, and Ctrl-type support — the `SyncPeriod` bump **may have been made for the pending-free correctness of other configurations (DIR_BOTH / V2C / other SlotNum)**. Before reverting globally, verify push/pop synchronization correctness on those configurations/kernels. Possible safe paths:
+
+1. Restore `SlotNum/2` **only on the C2V single-producer / single-consumer path**;
+2. Expose `SyncPeriod` as a `TPipe` template parameter (defaulting conservatively to `SlotNum`), letting kernels opt into `SlotNum/2`;
+3. Keep `SlotNum/2` as the default but add the regression test for the pending-free correctness scenario `014920a8` intended to fix.
+
+---
+
+## Reproduction
+
+```bash
+source /usr/local/Ascend/ascend-toolkit/set_env.sh
+export PATH=/usr/local/bin/ptoas-bin:$PATH      # ptoas 0.45
+export PTOAS_ROOT=/usr/local/bin/ptoas-bin; unset PTOAS
+cd kernels/python/flash_atten
+
+# A: current header (SyncPeriod = SlotNum)
+FA_SUMMARY_TSV=/tmp/A.tsv PTO_LIB_PATH=<repo-root> python3 run.py --timing sync
+
+# B: copy include/ elsewhere, change only TPush.hpp:37 SyncPeriod to (SlotNum<=2)?SlotNum:SlotNum/2
+FA_SUMMARY_TSV=/tmp/B.tsv PTO_LIB_PATH=<patched-include-root> python3 run.py --timing sync
+```
+
+> Each NPU command is submitted via `task-submit --device auto`; A and B run back-to-back on the **same card** to eliminate card-to-card variation.
+
+
+---
+
+## #173 [a2a3] FP32 TTRANS miscomputes / hangs (507018) when source validRow < 16 (non-multiple of Y_ELEM_OTHER=16)
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/173
+- Created: 2026-06-18T07:59:33Z
+- Updated: 2026-06-23T03:08:44Z
+- Closed: 2026-06-23T03:08:44Z
+
+### Body
+
+## Summary
+
+On a2a3, a FP32 `TTRANS` (tile transpose) whose **source `validRow` is not a multiple of `Y_ELEM_OTHER` (16)** — in particular `validRow < 16` — produces an **incorrect transpose**. It assembles cleanly (no ptoas/compile error); at runtime it either returns wrong values or hangs the AICore with error **507018**.
+
+A `[8, 8]` FP32 transpose is the minimal trigger. A `[16, 8] -> [8, 16]` transpose (validRow = 16) is correct.
+
+## Repro (pypto / a2a3)
+
+Minimal kernel — load `[8,8]` FP32, transpose, store; golden is `x.T`:
+
+```python
+@pl.jit
+def transpose_88(x: pl.Tensor[[8, 8], pl.FP32], y: pl.Out[pl.Tensor[[8, 8], pl.FP32]]):
+    with pl.at(level=pl.Level.CORE_GROUP):
+        xt = pl.load(x, [0, 0], [8, 8], target_memory=pl.MemorySpace.Vec)
+        yt = pl.transpose(xt, axis1=0, axis2=1)
+        pl.store(yt, [0, 0], y)
+    return y
+# golden: y = x.T ; compare ratio/allclose
+```
+
+Generated kernel: `TTRANS(dst, src, tmp)` with all three tiles `Tile<Vec, float, 8, 8, RowMajor, validRow=8, validCol=8>`.
+
+## Observed (a2a3 device)
+
+- `[8, 8]` FP32 transpose: **FAIL** — wrong output values (~28/64 elements mismatch in one run) or **507018** AICore error (deterministic on a fresh card in other runs). Undefined-behaviour-like; a failed run also poisons the card.
+- `[16, 8] -> [8, 16]` FP32 transpose (validRow = 16): **PASS**.
+
+## Root cause
+
+`include/pto/npu/a2a3/TTrans.hpp`, `TTransOperation` (around line 224). For FP32, `yTileSizeElem = Y_ELEM_OTHER = 16` (line 27). With `validRow = 8`:
+
+```cpp
+int numSubTileY = validRow / yTileSizeElem;   // 8 / 16 = 0  -> full sub-tile path skipped
+...
+int remainY = validRow % yTileSizeElem;       // 8           -> only the Y-tail path runs
+if (remainY > 0) {
+    TransYTailTiles<...>(tmpPtr, srcPtr, tmpStride, numSubTileX, numSubTileY /*=0*/, remainY, srcStride);
+}
+```
+
+So the whole transpose is handled by `TransYTailTiles` with `numSubTileY == 0`, and that tail path does not correctly transpose the 8 rows. (Same shape applies to the b8 path with `Y_ELEM_B8 = 32` for `validRow < 32`.)
+
+## Expected
+
+A FP32 (and b8) transpose with `validRow` smaller than / not a multiple of the row tile should still produce a correct transpose — or, if unsupported, fail loudly at assembly rather than silently miscomputing or hanging the AICore.
+
+## Environment
+
+- Target: a2a3 (Ascend910B)
+- pto-isa: `e25732f0` (PTO-ISA/pto-isa, as consumed by the pypto runtime submodule)
+- Surfaced from pypto issue hw-native-sys/pypto#1790 (the kernel split path produced `[8,8]` FP32 transposes).
+
+---
+
+## #178 [Bug] a2a3 MGatherRowImpl missing PtoSetWaitFlag<PIPE_MTE2,PIPE_S> -> index DMA race (507018 / wrong gather)
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/178
+- Created: 2026-06-24T01:56:39Z
+- Updated: 2026-06-24T03:09:39Z
+- Closed: 2026-06-24T03:09:39Z
+
+### Body
+
+## Summary
+
+On a2a3, `tile.mgather` in **row** mode produces wrong gathered rows or hangs
+the AICore (507018), nondeterministically across runs. The same case flips
+between a 507018 hang and wrong output values depending on timing, which points
+to a data race rather than a deterministic compute error. **Elem** mode works
+correctly.
+
+## Root cause
+
+In `include/pto/npu/a2a3/MGather.hpp`, `MGatherRowImpl` reads the index tile
+from UB on the scalar pipe (`idxPtr[r]`) **without first waiting for the MTE2
+DMA** (`pto.tload`) that fills that index tile.
+
+Its prologue contains only:
+
+```cpp
+PtoSetWaitFlag<PIPE_V, PIPE_S>();
+PtoSetWaitFlag<PIPE_MTE3, PIPE_S>();
+```
+
+and is **missing** `PtoSetWaitFlag<PIPE_MTE2, PIPE_S>();`.
+
+The sibling `MGatherElemImpl` has that MTE2->S wait, which is why elem mode
+works. Without it, the scalar index reads race the index DMA, yielding
+stale/garbage indices. The bad indices then cause either:
+
+- wrong gathered rows (wrong output values), or
+- out-of-bounds row addresses (AICore 507018 hang).
+
+## One-line fix
+
+Add the missing wait to the `MGatherRowImpl` prologue, right after the existing
+MTE3->S wait, mirroring `MGatherElemImpl`:
+
+```cpp
+PtoSetWaitFlag<PIPE_MTE2, PIPE_S>();
+```
+
+## Evidence
+
+Observed via PyPTO `tile.mgather` system tests on Ascend a2a3, each run
+isolated on a freshly force-reset device:
+
+- row FP32, leading idx `[0..15]`: AICore 507018 hang
+- row FP32, reversed idx `[63..48]`: AICore 507018 hang
+- row FP32, random idx: wrong output values, 480/512 elements mismatched
+- row FP16, random idx: wrong output values, 480/512 elements mismatched
+- row FP32 large (mem `[128,64]`, gather 32 rows): wrong output values,
+  1088/2048 mismatched
+- contrast: elem mode FP32 PASSES; one row INT32 run PASSED (race won that time)
+- the SAME case flips between 507018 and wrong-values across runs (full-suite
+  vs isolated) -> confirms a data race, not a deterministic compute error
+
+## Environment
+
+- Arch: a2a3
+- ptoas: v0.46
+- pto-isa: b2d297e1
+- Flags: `--enable-insert-sync --pto-level=level3 --pto-arch a3`
+
+
+---
+
+## #179 a2a3 TFMOD/TFMODS (FP32) produce all-zero output on real a2a3
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/179
+- Created: 2026-06-24T03:14:07Z
+- Updated: 2026-06-27T01:34:26Z
+- Closed: 2026-06-27T01:33:56Z
+- Labels: bug
+
+### Body
+
+## Summary
+
+On **real a2a3** hardware, `pto.tfmod` / `pto.tfmods` (FP32) produce an **all-zero** output tile. The host-side codegen and the ptoas lowering are both verified correct (see analysis below), so the defect appears to be in the **a2a3 device-side `TFMOD`/`TFMODS` implementation** (or the pto-isa revision the on-board runtime is built against).
+
+`tile.maximum` (`TMAX`), built with a byte-identical kernel scaffold, runs correctly on the same a2a3 device — only the op differs.
+
+## Symptom (device golden mismatch)
+
+A 16×16 FP32 `fmod(lhs, rhs)` kernel returns all zeros:
+
+```
+Output 'out' does not match golden.
+Mismatched elements: 212/256   (the 44 "matches" are exactly the elements whose golden value is 0)
+rtol=1e-05, atol=1e-05
+First mismatches:
+    [2] actual=0.0, expected=-0.5
+    [3] actual=0.0, expected=-3.0
+    [4] actual=0.0, expected=-2.0
+    ...
+```
+
+`tile.fmods` (tile×scalar) shows the same all-zero behavior across scalars {-2.5, 2.5, 3.0}.
+
+## Environment / versions
+
+| Component | Version |
+| --- | --- |
+| Arch | a2a3 (real NPU, CI on-board) |
+| CANN | `cann-9.0.0` (`ASCEND_HOME_PATH=/usr/local/Ascend/cann-9.0.0`) |
+| ptoas | **v0.45** (sha256 `d5e4380df7edd4d3eeb23502d57f923e4c912345eccceb5a9a0ec1aac3b5e7d4`); also reproduced the same lowering with **v0.46** |
+| pto-isa | `origin/main` @ `5a40ed77`; `include/pto/npu/a2a3/TFmod.hpp` last changed in `47db50aa` (2026-04-18). On-board runtime pto-isa pin = whatever `SIMPLER_PTO_ISA_COMMIT` / scene-test `--pto-isa-commit` resolved to (please confirm the deployed revision) |
+| pypto | branch `feat-add-ptoas-math-ops` @ `9d0eb9cd` (base `d6d699a8`) |
+
+## Failing `.pto` (a2a3, tile-tile fmod)
+
+```mlir
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @kernel(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>, %arg2: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  ...
+  %a__ssa_v0 = pto.alloc_tile addr = %c0_i64 valid_row = %c16_index valid_col = %c16_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16, ...>
+  pto.tload ins(%lhs__ssa_v0_pview ...) outs(%a__ssa_v0 ...)
+  %b__ssa_v0 = pto.alloc_tile addr = %c1024_i64 valid_row = %c16_index valid_col = %c16_index : ...
+  pto.tload ins(%rhs__ssa_v0_pview ...) outs(%b__ssa_v0 ...)
+  %c__ssa_v0 = pto.alloc_tile addr = %c0_i64 valid_row = %c16_index valid_col = %c16_index : ...
+  pto.tfmod ins(%a__ssa_v0, %b__ssa_v0 : ...f32..., ...f32...) outs(%c__ssa_v0 : ...f32...)
+  pto.tstore ins(%c__ssa_v0 ...) outs(%out__ssa_v0_pview ...)
+  return
+  }
+}
+```
+
+Note `alloc_tile ... valid_row=16 valid_col=16` — the dst/src tiles carry valid_row = valid_col = 16, so `dst.GetValidRow()/GetValidCol()` should be 16 (not 0).
+
+## Generated device `.cpp` (ptoas v0.45, `--pto-level=level3 --enable-insert-sync`)
+
+```cpp
+// v8 = lhs, v13 = rhs, v18 = dst, all Tile<Vec,float,16,16,RowMajor,...>(v5, v5)
+TLOAD(v8, v12);
+TLOAD(v13, v17);
+... Tile<...> v18 = Tile<...>(v5, v5);
+TASSIGN(v18, v19);
+wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+TFMOD(v18, v8, v13);          // <-- produces all zeros on a2a3
+set_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
+TSTORE(v22, v18);
+```
+
+`TFMOD(dst, src0, src1)` is lowered correctly (correct operand order, no tmp needed — unlike `TREM`/`TREMS` which take a tmp). Swapping `TFMOD` → `TMAX` in this exact scaffold passes on the same device.
+
+## Why we believe this is pto-isa, not pypto / ptoas
+
+1. **pypto codegen is correct**: the pypto-emitted `.pto` for `tile.fmod` is byte-identical to the working `tile.maximum` `.pto` except the op name (same tile alloc, valid_shape=16, layout, load/store, sync).
+2. **ptoas lowering is correct**: both v0.45 and v0.46 lower `pto.tfmod` → `TFMOD(v18, v8, v13)`. The a5 TileLang template `share/ptoas/TileOps/tfmod_template.py` (`target="a5"`) is byte-identical between v0.45 and v0.46, and a2a3 does not use it — a2a3 resolves `TFMOD` from `pto/pto-inst.hpp` (pto-isa) at ccec compile time.
+3. **a2a3 `TFmod.hpp` on origin/main looks correct** (`vdiv → vconv_f322f32z(trunc) → vmul → vsub`), so the deployed/pinned pto-isa revision used by the on-board runtime is the likely suspect.
+
+## Questions
+
+1. Is FP32 `TFMOD`/`TFMODS` on **a2a3** expected to be supported and correct at this point? (There has been recent churn: `e6d79157` add A3 TFMOD, `2a3db556` remove A3 fp16, `f7f22f30` remove A2A3 int16/int32.)
+2. What pto-isa commit should the a2a3 on-board runtime be pinned to for a correct a2a3 TFMOD? Is `47db50aa`/`origin/main` known-good on a2a3, or is the all-zero a real defect in the a2a3 `TFMOD` device path?
+
+## Repro
+
+Minimal: assemble the `.pto` above with `ptoas <file> -o k.cpp --enable-insert-sync --pto-level=level3`, build the kernel against the on-board a2a3 pto-isa, run with `lhs` in [-6,6], nonzero `rhs` in [1.5,5.5]; expected `torch.fmod(lhs, rhs)`, actual all zeros.
+
+
+---
+
+## #182 [Bug] GM-FIFO auto-split uses CCE `get_subblockid()`, which is stale (0/0) inside PTO2-dispatched user kernels
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/182
+- Created: 2026-06-27T01:31:05Z
+- Updated: 2026-07-14T01:32:23Z
+- Closed: 2026-07-14T01:32:23Z
+
+### Body
+
+### Component
+
+Backend (ISA library / per-AIV auto-split address computation for the GM ring-buffer)
+
+---
+
+### Description
+
+When the ISA library performs `TILE_UP_DOWN` / row-column auto-split for a `TPipe` GM ring-buffer, it uses the **CCE hardware builtin `get_subblockid()`** to compute each AIV lane's in-slot offset `subAIVOffset`:
+
+- `include/pto/npu/a2a3/TPush.hpp:208` (Producer, V2C push)
+  `subAIVOffset = get_subblockid() * gmValidR * gmValidC * sizeof(T);`
+- `include/pto/npu/a2a3/TPush.hpp:435` (Consumer, C2V pop)
+  `subAIVOffset = get_subblockid() * ConsM * ConsN * sizeof(T);`
+- Final address: `addr = GM_SLOT_BUFFER + entryBase + subAIVOffset + entryOffset`
+  (`TPush.hpp:216` / `TPush.hpp:440`)
+
+The same pattern appears in many auto-split paths across both a2a3 and a5 (`TPush.hpp` / `TPop.hpp` / `TAlloc.hpp`), so it is a systemic assumption of the ISA library.
+
+**The problem**: `get_subblockid()` reads the AICore **hardware sub-block register**, which is only meaningful at a genuine hardware kernel-launch entry. The `tensormap_and_ringbuffer` (PTO2) runtime does **not** launch user kernels per task. It launches **one persistent MIX kernel** per cluster (1 AIC + 2 AIV) and then dispatches user kernels onto those already-running cores through a software executor that **calls them via a raw function pointer** (`aicore_executor.cpp: kernel(args)`). The ISA auto-split runs *inside that dispatched user kernel*, and there `get_subblockid()` no longer reflects the lane — it returns **0 for both AIV0 and AIV1**. As a result `subAIVOffset` is constantly 0 for both lanes, and both map to the **same GM slot offset**:
+
+- Producer side: AIV1's half is never written (overwritten by / colliding with AIV0);
+- Consumer side: AIV1 reads a region it never wrote (uninitialized GM); the value is amplified by a downstream `TEXP` and overflows to `nan`, corrupting the output.
+
+> **Important correction (measured on hardware, see Evidence):** `get_subblockid()` is **not** "never programmed". At the platform persistent-kernel entry (`src/.../platform/onboard/aicore/kernel.cpp:93`) it is **correctly 0/1** and the runtime relies on it there. It only goes stale to **0** by the time a user kernel is reached through the executor's function-pointer call. So the bug is specifically: **the ISA auto-split reads this builtin from a context (the dispatched user kernel) where it is no longer valid.**
+
+Crucially, the runtime's software lane id is **itself a snapshot of `get_subblockid()` taken while it was still valid** — not an independent source. At the persistent-kernel entry each core computes `block_idx = get_block_idx()*get_subblockdim() + get_subblockid() + get_block_num()`, encoding the entry-time sub-block id into its handshake slot (the two AIVs of a cluster land on adjacent slots that differ only by the `+ get_subblockid()` term). The AICPU scheduler then discovers the AIV cores in slot order, pairs them, and writes `GlobalContext.sub_block_id` = 0/1 — which therefore **equals the entry-time `get_subblockid()`**. Kernels read this snapshot via `get_sub_block_id(args)` and it stays correct in the user kernel. The ISA library instead re-reads `get_subblockid()` *live*, after it has gone stale.
+
+> So the two values are the **same `get_subblockid()`, read at two different times** — not two independent lane sources. That difference in read time is exactly why the runtime and the ISA library disagree:
+>
+> | When / where `get_subblockid()` is read | AIV0 | AIV1 | Value |
+> | --- | :--: | :--: | --- |
+> | Runtime: at the **persistent-kernel entry**, captured into `GlobalContext.sub_block_id`, then read in the user kernel via `get_sub_block_id(args)` | 0 | **1** ✅ | correct — register still valid at entry |
+> | ISA library: **live, inside the dispatched user kernel** | 0 | **0** ❌ | stale — register already clobbered |
+
+#### Minimal reproducing semantics (flash-attention decode kernel)
+
+The cube produces a 16x128 QK^T score block (Acc f32) -> a `TPipe<DIR_BOTH>` with `TILE_UP_DOWN` splits it into two 8x128 halves, AIV0 handling rows 0-7 and AIV1 handling rows 8-15. Each lane runs online softmax and pushes back its 8x128 P (bf16) for the PV matmul. With `subAIVOffset` constantly 0, AIV1's half is invalid.
+
+---
+
+### Steps to Reproduce
+
+1. On a2a3 hardware, run a MIX kernel that uses `TPipe<DIR_BOTH>` + `TILE_UP_DOWN` auto-split (cube -> 2xAIV up/down split, e.g. flash-attention decode; see the qwen3_14b_decode example under `tensormap_and_ringbuffer` in the `simpler` repo), dispatched by the PTO2 runtime per cluster (1 AIC + 2 AIV).
+2. Let the ISA library's internal `subAIVOffset` (derived from `get_subblockid()`) drive the per-lane GM offset, with **no** kernel-side per-lane compensation.
+3. Run the golden comparison.
+
+---
+
+### Expected Behavior
+
+The ISA library's `TILE_UP_DOWN` / row-column auto-split should place AIV0 and AIV1 in their respective GM slot halves under the PTO2 runtime, without the kernel author manually patching the offset; the golden comparison should PASS.
+
+---
+
+### Actual Behavior
+
+In the dispatched user kernel `get_subblockid()` returns 0 for both AIV0 and AIV1 -> `subAIVOffset` is constantly 0 -> both lanes alias the same GM slot offset; AIV1's half is unwritten / reads uninitialized GM, which overflows to `nan` through `TEXP` and corrupts the output.
+
+Measured on a2a3 hardware (qwen3_14b_decode):
+
+| Configuration | Result | Symptom |
+| --- | --- | --- |
+| Per-lane offset supplied from the runtime software lane | ✅ **PASS** | -- |
+| ISA-internal `subAIVOffset` (`get_subblockid()`) only | ❌ **FAIL** | `AssertionError: Golden mismatch on 'k_cache': max_diff=nan, rtol=0.05, atol=0.1` |
+
+---
+
+### Evidence (on-hardware instrumentation)
+
+The AICore was instrumented to stash `get_subblockid()` / `get_block_idx()` (raw CCE builtins) into the handshake; the AICPU scheduler logged them per core. Plus three PASS/FAIL probes in the user kernel. Findings:
+
+- `get_block_idx()` is **per-MIX-block** (identical for the AIC and both AIVs of a cluster): values `0,0,0 / 1,1,1 / ... / 23,23,23`.
+- At the **persistent-kernel entry**, `get_subblockid()` is **0/1** (proven indirectly but unambiguously: the two AIVs of a cluster register at *adjacent, distinct* handshake slots, e.g. 24 and 25; since `block_idx = get_block_idx()*2 + get_subblockid() + N` and `get_block_idx()*2 + N` is even, only the `+ get_subblockid()` term can produce the odd slot — so one AIV had `get_subblockid()=1` at entry).
+- In the **user kernel** (and when re-read later in the executor), `get_subblockid()` is **0 for both lanes** (3 PASS/FAIL probes: `lane=get_subblockid()` FAILs with `nan`; `lane=sub_block_id - get_subblockid()` PASSes ⇒ the builtin contributes 0; instrumented read in `aicore_execute` confirms 0).
+
+Conclusion: the sub-block register is valid at launch entry and **clobbered/stale** by the time the user kernel runs.
+
+#### Root cause summary
+
+`get_subblockid()` (CCE hardware register) is only valid at the genuine kernel-launch entry. PTO2 dispatches user kernels onto persistent cores via a software function-pointer call, where that register is stale (0/0). The runtime had already captured the **entry-time** `get_subblockid()` into software (`GlobalContext.sub_block_id`, read via `get_sub_block_id(args)`), so it still has the correct 0/1. The ISA auto-split, however, executes in the dispatched context and re-reads the **same builtin live**, getting the stale 0/0 — so AIV0 and AIV1 land on the same (0) offset. Same builtin, different read time; the ISA library reads it at the wrong time and never uses the runtime's already-captured snapshot.
+
+---
+
+### Suggested fix direction (implemented + validated)
+
+The ISA library must not read `get_subblockid()` from inside the dispatched user kernel. It should use the runtime software lane id instead. **It cannot read `GlobalContext`/`args` directly** — the ISA library is header-only with no access to `args`, and simpler's AICore loader forbids any hidden per-core global (a `[[block_local]]` global emits a `.rela.text` relocation the loader rejects). So the lane must be **threaded in from the kernel through the `TPipe` object** (stack member, folds into a single `.text` via `always_inline` — no relocation).
+
+Implemented and validated on a2a3 (qwen3_14b_decode now PASSes with no kernel-side offset math):
+
+- `TPipe` gains `setSubBlockId(int32_t lane)`; `Producer`/`Consumer` store it and expose `laneId()` returning the stored lane when set, else falling back to `get_subblockid()` (preserves native CANN/AscendC dispatch, where the builtin is valid).
+- All auto-split sites use `laneId()` instead of `get_subblockid()`: a2a3 `TPush.hpp`/`TPop.hpp`/`TAlloc.hpp` (and the symmetric a5 files).
+- The kernel passes the runtime lane once: `pipe.setSubBlockId(get_sub_block_id(args))` (codegen should emit this for MIX `TILE_UP_DOWN` pipes).
+
+Note: this **replaces** the broken builtin rather than adding to it, so there is no additive "2x offset" hazard. (An earlier kernel-side workaround that *added* `sub_block_id*bytes` via `setEntryOffset` did carry that hazard; the threaded approach removes it.)
+
+---
+
+### Git Commit ID
+
+`e722679b6eb286de84ce0d668bd19e09eafee929` (the same logic is also present in the earlier `8e436661`)
+
+---
+
+### NPU Kind
+
+Ascend 910B
+
+---
+
+### Host Platform
+
+Linux (aarch64)
+
+---
+
+### Additional Context
+
+- Same fault family as issue #900 / PR #899 ("CCE builtin `get_subblockid()` reads 0 for both AIV0/AIV1 in PTO2 user kernels, partial output is 0/wrong"). That case was a kernel directly misusing the builtin; this one is the **ISA library internally** misusing the same builtin in its auto-split.
+- Related interface: `get_sub_block_id(args)` reads `GlobalContext.sub_block_id` (0/1) — the scheduler's software capture of the **entry-time** `get_subblockid()`; it is the reliable lane identity inside PTO2 user kernels precisely because it was snapshotted before the register went stale.
+- Blast radius: every MIX kernel that relies on ISA-library GM-FIFO auto-split (`TILE_UP_DOWN` and row/column split) hits this under the PTO2 runtime.
+
+
+---
+
+## #183 [Bug] fa_fused DIR_BOTH+TILE_UP_DOWN cross-core tile-pipe stalls under CPU sim (a2a3sim) — passes on real a2a3
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/183
+- Created: 2026-06-29T07:01:04Z
+- Updated: 2026-07-08T01:34:24Z
+- Closed: 2026-07-08T01:34:24Z
+- Labels: bug
+
+### Body
+
+> **History.** This issue originally reported a CPU `Consumer::setentryOffset`
+> casing typo — that was **already fixed** in `e066bbd7` *"[CPU-SIM] Fix
+> Consumer::setEntryOffset casing to match Producer and NPU header"*. After
+> pinning to a fixed rev (`32064ca0`) compilation succeeds; this issue now
+> tracks the **real remaining a2a3sim blocker** that surfaces once it compiles.
+
+## Summary
+
+The `qwen3_14b_decode` fused-attention kernel **`fa_fused`** — a persistent
+grid-stride kernel driving a cross-core `TPipe<0, Direction::DIR_BOTH, 8192, 4,
+4, false>` GM-FIFO with `TPUSH`/`TPOP` and `TileSplitAxis::TILE_UP_DOWN` between
+the AIC producer and the two AIV-lane consumers — **never makes forward progress
+under the CPU functional simulator (`a2a3sim`)**. The cluster cores enter the
+kernel and never signal completion, so the scheduler stalls and the graph times
+out (`rc=-100`). The **same case passes deterministically on real a2a3 silicon**
+(output + both layers' KV-cache match the torch reference).
+
+## Repro
+
+```bash
+# onboard — PASSES
+python examples/a2a3/tensormap_and_ringbuffer/qwen3_14b_decode/test_qwen3_14b_decode.py -p a2a3   # ✅
+# CPU sim — STALLS / times out
+python examples/a2a3/tensormap_and_ringbuffer/qwen3_14b_decode/test_qwen3_14b_decode.py -p a2a3sim # ❌
+```
+
+Case `StressBatch16Seq3500` (BATCH=16, seq_len=3500, 2 fused decode layers).
+Reproduced **3×**, including against an isolated worktree pinned at `32064ca0`
+(rules out the header-flip / stale-cache confound).
+
+## Diagnostic (a2a3sim scheduler stall snapshot)
+
+```
+PTO2 total submitted tasks = 713, already executed 23
+[STALL] reason=scheduler_timeout idle_iterations=281813
+SUMMARY completed=30/713 last_progress_iteration=28 scan_ready=0 scan_waiting=682 scan_running=1
+
+TASK task_id=...610 state=RUNNING fanin 5/5 kernels=[aic:16 aiv0:17 aiv1:17]
+CLUSTER cluster_id=0 aic=core0 (busy kernel=16 task=...610 cond_reg_state=ack)
+                    aiv0=core24(busy kernel=17 …)  aiv1=core25(busy kernel=17 …)
+# every cluster assigned ...610 has all of {aic, aiv0, aiv1} "busy" inside
+# kernel 16/17 and never completes; 682 downstream tasks WAIT missing_deps=1 on it.
+```
+
+Forward progress freezes after **30/713** tasks. The single `RUNNING` task is the
+fused-attention task; it never returns on **any** cluster. After the scheduler
+timeout the cores never acknowledge exit (`Emergency shutdown: N cores did not
+acknowledge exit`) and the runtime returns `rc=-100`.
+
+`kernel=16/17` map to `fa_fused` in this case's `CALLABLE`:
+
+| func_id | name | source | core |
+| ------- | ---- | ------ | ---- |
+| 16 | `fa_fused_aic` | `kernels/aic/fa_fused_aic.cpp` | aic |
+| 17 | `fa_fused_aiv` | `kernels/aiv/fa_fused_aiv.cpp` | aiv (2 lanes) |
+
+## Ruled out
+
+- **`subblock_dim` / dual-lane gating.** The CPU `TPush.hpp` dual-lane C2V
+  protocol that depends on `get_subblockdim() >= 2`
+  (`IsDualLaneC2VActive`) is only taken for `TILE_NO_SPLIT`. `fa_fused` uses
+  `TILE_UP_DOWN`, whose per-lane offset comes from
+  `GetSplitRowOffset = get_subblockid() * Rows/2` — i.e. it uses
+  **`get_subblockid()`** (which the sim host injects correctly as 0/1 via
+  `pto_sim_get_subblock_id`), **not** `get_subblockdim()`. Forcing
+  `get_subblockdim()=2` in sim does not change the stall. So this is *not* the
+  same mechanism as #182.
+
+## Open / where help is needed
+
+Root cause is not yet pinned. The cores spin **inside** the kernel (a
+spin-wait in the CPU `TPUSH`/`TPOP` `TILE_UP_DOWN` / `DIR_BOTH` handshake that is
+never satisfied), not in the scheduler. gdb can't unwind the simulated-core
+stacks to localize the exact wait.
+
+The hang lives in pto-isa's **CPU** cross-core tile-pipe implementation
+(`pto/cpu/TPush.hpp` / `TPop.hpp`) as driven by the sim host's per-core identity
+(`pto_sim_get_subblock_id`) and per-cluster pipe shared state
+(`pto_sim_get_pipe_shared_state`). It is therefore a pto-isa-CPU-primitive vs.
+sim-host-integration **boundary** question — "passes on board" localizes the
+defect to the sim-only path but does not by itself prove the ISA side.
+
+Questions for maintainers:
+- Is the `DIR_BOTH` + `TILE_UP_DOWN` cross-core tile-pipe expected to work under
+  the CPU functional sim with a **persistent grid-stride** kernel and **PTO2
+  multi-cluster dispatch** (1 AIC + 2 AIV per cluster, many clusters)?
+- What does the CPU `TPUSH`/`TPOP` `TILE_UP_DOWN` producer/consumer rendezvous
+  require from the sim host beyond `subblock_id` + per-cluster pipe shared state?
+
+Full scheduler stall log and a stripped-down repro available on request.
+
+
+---
+
+## #184 fix(cpu-sim): ping-pong TPUT_IMPL missing AtomicType template parameter
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/184
+- Created: 2026-06-29T14:38:16Z
+- Updated: 2026-07-02T02:45:06Z
+- Closed: 2026-07-02T02:45:06Z
+
+### Body
+
+## Problem
+
+The CPU simulator ping-pong (double-buffered) overload of `TPUT_IMPL` in `include/pto/cpu/comm/TPut.hpp` is missing the `AtomicType atomicType` template parameter, but the public wrapper in `include/pto/comm/pto_comm_inst.hpp` always passes it:
+
+```cpp
+// pto_comm_inst.hpp:67 — passes 4 template args
+::pto::comm::TPUT_IMPL<GlobalDstData, GlobalSrcData, TileData, atomicType>(
+    dstGlobalData, srcGlobalData, pingTile, pongTile);
+```
+
+```cpp
+// TPut.hpp:25 — only accepted 3 template args (broken)
+template <typename GDD, typename GSD, typename TD>
+PTO_INTERNAL void TPUT_IMPL(GDD &dst, GSD &src, TD &ping, TD &pong) { ... }
+```
+
+This causes a template argument mismatch when compiling any kernel that uses `TPUT` with `pipeline=True` (double-buffered) on the CPU simulator (`a5sim` / `a2a3sim`).
+
+## Reproduction
+
+```bash
+pytest tests/st/distributed/test_l3_put.py::TestL3Put::test_ring_shuffle_pipeline \
+  -v --forked --platform=a5sim --device=0,1,2,3
+```
+
+Fails with:
+```
+error: wrong number of template arguments (4, should be 3)
+```
+
+## Why CI passes
+
+CI runs distributed tests on real NPU hardware (not sim), so the NPU `TPut.hpp` implementations (which handle `AtomicType` correctly) are used instead of the CPU sim path.
+
+## Fix
+
+Add `AtomicType atomicType` as a template parameter to the ping-pong `TPUT_IMPL` and forward it to `Copy_Data`:
+
+- `include/pto/cpu/comm/TPut.hpp:25`
+- `include/pto/cpu/TGet.hpp:71` (duplicate definition in same namespace)
+
+---
+
+## #188 [Bug] TPUSH destructor drain off-by-one on even push counts causes AICore 507018 (014920a8 regression)
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/188
+- Created: 2026-07-02T04:04:20Z
+- Updated: 2026-07-03T09:04:01Z
+- Closed: 2026-07-03T09:04:01Z
+- Labels: bug
+
+### Body
+
+### Summary
+
+Commit `014920a8` "Clean pending free signals during TPUSH" changed the `TPipe` destructor drain logic and removed the constructor pre-free. For a `SlotNum=2` C2V/V2C pipe with an **even number of TPUSH** operations, the destructor's computed `drainCount` is off-by-one (yields 1, should be 0), so the destructor's `prod.allocate()` (`wait_flag_dev`) waits for a free flag that never arrives -> AICore running-stalled -> `aclrtSynchronizeStreamWithTimeout` 507018. Odd push counts yield `drainCount=0` and are unaffected.
+
+Stably reproduced on simpler's `spmd_paged_attention` case (MIX AIC+AIV cooperative TPUSH/TPOP pipeline, `FIFO_DEPTH=2`), and confirmed via bisect + revert verification.
+
+### Root-cause commit
+
+- First bad: `014920a894f0ac47bcc453f889f1fd1a3080f573` "Clean pending free signals during TPUSH" (csjlchen, 2026-05-22)
+- The commit self-notes: `Tested: Pending final sync verification.` / `Not-tested: Full NPU hardware validation pending final sync verification.` — i.e. it was merged without completing NPU hardware validation.
+- The follow-up `1d873362` "Update SyncPeroid and drain counts." attempted a fix (reverted `SyncPeriod` to `(SlotNum<=2)?SlotNum:SlotNum/2` and tweaked the `drainCount` formula) but did **not** fix the even-push off-by-one; versions carrying `1d873362` (e.g. simpler's pinned pto-isa `e722679b`) still 507018 on even cases.
+
+### Changed sites (`include/pto/npu/a2a3/TPush.hpp`, a5 changed the same way)
+
+| Site | pre-014920a8 | 014920a8 |
+| --- | --- | --- |
+| Constructor | `for(i<SyncPeriod) cons.free()` pre-free | `{}` removed |
+| Destructor | `for(i<SyncPeriod) prod.allocate()` fixed count | `drainCount = numPopFree - numPushWait` computed |
+| `shouldWaitFree` (SlotNum==1) | `return true` | `return tileIndex > 0` |
+
+For `SlotNum=2`, `SyncPeriod=2`; mid-stream free send/wait is self-balancing, so there is **no pending free signal to clean**. 014920a8 both removed the constructor pre-free (-2 sends) and made the destructor drain computed: to keep the flag balance the destructor should wait 0; but the formula yields 1 for even `prod.tileIndex` -> one extra wait for a non-existent free flag -> hang. Odd yields 0 -> fine.
+
+### Reproduction
+
+Using simpler's `spmd_paged_attention`; `n_blocks = context_len / block_size` is the per-pipe TPUSH count. `SlotNum=2` (`FIFO_DEPTH=2`), `DIR_C2V`, `TILE_UP_DOWN`.
+
+Parity matrix (a3 onboard, simpler main + simpler's pinned pto-isa `e722679b` which contains 014920a8, `--skip-golden`):
+
+| case | context_len | n_blocks | parity | result | time |
+| --- | --- | --- | --- | --- | --- |
+| Even2  | 256  | 2  | even | **FAIL 507018** | 65.97s |
+| Odd3   | 384  | 3  | odd  | **PASS** | 16.55s |
+| Even32 | 4096 | 32 | even | **FAIL 507018** | 74.71s |
+| Odd31  | 3968 | 31 | odd  | **PASS** | 14.73s |
+| Even64 | 8192 | 64 | even | **FAIL 507018** | 74.62s |
+| Odd63  | 8064 | 63 | odd  | **PASS** | 15.05s |
+
+Error signature:
+```
+RuntimeError: run failed with code 507018
+aclrtSynchronizeStreamWithTimeout (AICPU) failed: 507018
+PTO2 scheduler timeout sub_class=S1:running-stalled completed=0/1 running=1 orch_done=1 stuck_task_id=4294967296
+```
+
+Repro cases are submitted to simpler: https://github.com/yanghaoran29/simpler/tree/spmd_pa_error (`tests/st/a2a3/tensormap_and_ringbuffer/spmd_paged_attention/test_spmd_paged_attention.py`, case names `Even2/Odd3/Even32/Odd31/Even64/Odd63`, manual). To run:
+```bash
+pytest .../test_spmd_paged_attention.py --platform a2a3 --device <dev> \
+  --case TestPagedAttentionUnrollTpushPop::Even2 --manual include --skip-golden -v
+```
+
+### Bisect (simpler fixed at ecfb1663, only pto-isa varies, test = spmd_paged_attention on a3)
+
+- good: pto-isa `ddafa8da` (before 014920a8) -> PASS
+- bad: pto-isa `016396b5` (contains 014920a8) -> FAIL 507018
+- isolation: simpler@ecfb1663 + pto-isa 016396b5 -> FAIL (i.e. pto-isa-version-dependent, not simpler-code-dependent)
+- `git bisect` ddafa8da..016396b5 (125 commits, 6 steps) -> first bad = `014920a8`
+
+### Revert verification (reverting 014920a8's a2a3 TPush.hpp changes on simpler's pinned pto-isa `e722679b`)
+
+Restoring constructor pre-free + fixed destructor `for(i<SyncPeriod) prod.allocate()` + `shouldWaitFree return true`:
+- Even2 / Even64 -> **PASS**
+
+I.e. reverting 014920a8's TPUSH sync changes makes the even cases pass again, confirming the root cause is in those three sites.
+
+### Expected behavior
+
+A `SlotNum=2` pipe should complete for any push count (even or odd) without 507018.
+
+### Actual behavior
+
+Even push counts -> the destructor waits for a free flag that never arrives -> 507018 running-stalled.
+
+### Environment
+
+- pto-isa commit: first bad `014920a894f0ac47bcc453f889f1fd1a3080f573`; verified-bad version: simpler's pinned pto-isa `e722679b`; good `ddafa8da`
+- NPU: Ascend A2/A3 (reproduced a3 onboard)
+- Host: Linux aarch64
+- simpler repro branch: https://github.com/yanghaoran29/simpler/tree/spmd_pa_error
+
+### Possible fixes
+
+- Reverting 014920a8's changes (restore constructor `for(i<SyncPeriod) cons.free()` pre-free + fixed destructor `for(i<SyncPeriod) prod.allocate()` + `shouldWaitFree return true`). Verified: even cases pass after the revert. (Whether this re-introduces whatever 014920a8 was trying to fix — the "split-pipe sync state leak across producer handoffs" — should be checked against the scenario 014920a8 referenced.)
+- Track pending free-flag credits explicitly (consumer `free()` increments, producer `allocate()` decrements); the destructor drains only the actual remaining credits. This is config-independent and correct by construction, and realizes 014920a8's intent of cleaning pending free signals.
+- If keeping 014920a8's no-pre-free style: destructor drain = 0 (with no constructor pre-free, mid-stream send/wait is self-balancing and there is nothing to drain); needs separate validation for `SlotNum=1` / `DIR_BOTH` / `TILE_LEFT_RIGHT`.
+- Fallback: make the destructor `prod.allocate()` non-blocking / only-wait-if-credit, so a miscount cannot deadlock.
+
+Any fix should be validated against the parity matrix above plus paged_attention Case1, qwen3, and a5 bgemm on a3/a5 boards.
+
+### Related
+
+- pto-isa `1d873362` "Update SyncPeroid and drain counts." (did not fix the even case)
+- simpler repro branch `yanghaoran29/simpler@spmd_pa_error` (commit `ddb5fb64` adds cases, `8a389654` removes the module skip)
+- 014920a8 references GitCode `00d3220d02d0c4eb018baa5c924dd5a36ac43318`
+
+---
+
+## #195 DIR_BOTH split-tile pipe C2V/V2C wrong-slot fix (#193) not ported to the a2a3 NPU device path → cross-core corruption on real hardware
+
+- State: closed
+- URL: https://github.com/hw-native-sys/pto-isa/issues/195
+- Created: 2026-07-09T08:51:38Z
+- Updated: 2026-07-12T09:41:00Z
+- Closed: 2026-07-12T09:41:00Z
+
+### Body
+
+## Summary
+
+[PR #193](https://github.com/hw-native-sys/pto-isa/pull/193) ("fix(backend): Separate C2V/V2C cursors in DIR_BOTH split tile pipe", *Fixes #183*) fixed the DIR_BOTH split-tile-pipe wrong-slot bug — but **only in the CPU-SIM path** `include/pto/cpu/TPush.hpp` (its testing was on `a2a3sim`). The **real-hardware NPU device path** `include/pto/npu/a2a3/TPush.hpp` never received the equivalent fix and still has the bug on device, causing non-deterministic cross-core corruption on a2a3 hardware.
+
+Downstream tracking issue (end-to-end DSL repro): [hw-native-sys/pypto#1981](https://github.com/hw-native-sys/pypto/issues/1981).
+
+## Symptom (real a2a3 hardware)
+
+A kernel that uses a DIR_BOTH C↔V split-tile pipe (`pl.split_aiv`, `TILE_UP_DOWN` — i.e. `aiv_shard`/`aic_gather`) inside a repeated MIX `pl.spmd` + `system.syncall(core_type="mix")` loop (e.g. qwen3-14b fused decode over 40 layers) produces **non-deterministic numerical corruption** under load, clustered in the block every core cross-reads. A single dispatch is deterministic-correct; it only manifests across repeated dispatches under load, and is timing/card-dependent (some cards lose the race far more than others).
+
+## Root cause on the device path (`include/pto/npu/a2a3/TPush.hpp`)
+
+For `DIR_BOTH`:
+
+- C2V (`pushAcc2GMFiFo` / `popVecTileFromGMFiFo`) and V2C (`pushVec2GMFiFo` / `popMatTileFromGMFiFo`) **both index the same GM ring** as `GM_SLOT_BUFFER + (tileIndex % SLOT_NUM) * SLOT_SIZE`. `entryOffset` is never set (no caller of `setEntryOffset`) → always 0. So **C2V and V2C share the same physical GM slots.**
+- But the two directions use **separate free-flags** (C2V frees on `FlagIDPlusOne`, V2C on `FlagIDPlusThree`) and separate `tileIndex` cursors. So when a producer reuses a ring slot, it only waits for **its own** direction's consumer to free that slot — **not the other direction's consumer** that last touched the same physical slot.
+- Under load, a later C2V push can overwrite a slot before the V2C consumer has read the previous V2C payload (or vice versa) → **cross-direction wrong-slot / stale read** → the corruption.
+
+This is exactly the class of bug #193 fixed in CPU-SIM (separate C2V/V2C consumer cursors + compile-time split-lane id). The device path additionally still selects the split-lane GM offset via **runtime `get_subblockid()`** (lines ~211/214/438/441/548) instead of the compile-time split lane — the other half of what #193 flagged.
+
+## Why it is NOT a memory-visibility issue
+
+We tried four separate memory fences on the device path (`dsb(DSB_DDR)` in `SYNCALL_IMPL`, `dsb` in `TPush::record()`, `dcci` before the pop `TLOAD`, and `pipe_barrier(PIPE_ALL)`); none of them fixed it. It is a **wrong-slot / overwrite** bug, not a stale-data-visibility bug, so fences cannot help.
+
+## Reproduction & evidence
+
+- A ~130-line minimal kernel (see pypto#1981) reproduces it: one MIX `pl.spmd(24)` per "layer" × 40, two hard `syncall(core_type="mix")` barriers, a cube matmul, and a `split_aiv` UP_DOWN C↔V exchange.
+- A **no-split control** (identical two barriers + cube + cross-core block-0 read, but *without* the C↔V pipe) is deterministic-correct 9/9 on the same losing card, while the split_aiv version fails → confirms the bug is the DIR_BOTH pipe, **not** the barrier and **not** a bad card.
+- Same card, same window, back-to-back, with isolation verified (a deliberately-wrong-slot device build fails 3/3 while the base build passes):
+  - **Unfixed device path: 35/50 FAIL (70%)**
+  - **With C2V and V2C separated onto disjoint physical GM slots: 50/50 PASS**
+
+## Suggested fix
+
+Port #193 to the NPU device path `include/pto/npu/a2a3/TPush.hpp`:
+
+1. Separate the C2V and V2C consumer cursors / GM slot regions so the two directions never share a physical slot (or make each direction's producer also gate on the *other* direction's free when a slot is shared).
+2. Resolve the split-lane GM offset from the compile-time split lane (as in `cpu_pipe::GetSplitLaneId<Split>()`), not runtime `get_subblockid()`.
+3. Mirror the CPU ST coverage added in #193 (`tests/cpu/st/testcase/tpushpop_vc`) with a **device** ST test for interleaved DIR_BOTH `TILE_UP_DOWN` traffic.
+
+## Environment
+
+a2a3; ptoas 0.48; pto-isa pinned `83d01313` (managed clone actually ran `ea34d7a5`). The device pipe code is unchanged between those two revisions w.r.t. this bug — only #193's CPU-SIM file differs — so the device path lacks the fix in both.
+
+
+---
+
+## #197 [Bug] soft SYNCALL busy-spins up to 1e6 iterations (multi-second latency) when blocks arrive in waves
+
+- State: open
+- URL: https://github.com/hw-native-sys/pto-isa/issues/197
+- Created: 2026-07-14T03:46:10Z
+- Updated: 2026-07-14T03:47:49Z
+- Labels: bug
+
+### Body
+
+## Background
+
+While experimenting with folding a MoE dispatch/combine `wait` handshake into a
+neighbouring `pl.spmd` launch using `pl.system.syncall(mode="soft", core_type="aiv_only", ...)`
+at **partial occupancy** (`pl.spmd(N_LOCAL=32)`, *without* `sync_start=True`) in
+`pypto-lib`'s `models/deepseek/v4/moe.py`, single SPMD tasks took **~1.25 s** on
+device (observed makespan 1253 ms for one `combine`/`dispatch` SPMD task, vs
+sub-ms expected). The kernel still produced correct results — it was pure latency,
+not a wrong answer — which pointed at a spin/timeout inside the soft barrier
+rather than a data bug.
+
+Reproduction environment:
+
+| Component | Version |
+|---|---|
+| pypto-lib | `a895306` (branch: `feat/moe-syncall-fold-poc`) |
+| pypto | `ccbf2870` (branch: `main`) |
+| simpler | `438d5cb1` (branch: `detached`) |
+| ptoas | `0.48` |
+| pto-isa | `83d01313` |
+| CANN | not detected |
+
+Diagnosis: **pto-isa** — the soft (GM-polling) `SYNCALL` barrier busy-spins for
+up to `SYNCALL_SOFT_MAX_POLL_ITERATIONS = 1000000` iterations when participating
+blocks arrive late (e.g. a partial-occupancy SPMD launch without `sync_start=True`,
+where the runtime dispatches blocks in waves). Early blocks spin at the barrier
+waiting for blocks that have not yet been dispatched, producing multi-ms to
+multi-second task latency.
+
+**Still present on latest `origin/main`.** Verified against `ecb6c303` (48
+commits ahead of the pinned `83d01313`): the spin loop, the
+`SYNCALL_SOFT_MAX_POLL_ITERATIONS = 1000000` cap, and the `PTO_CPU_ASSERT` +
+`break` soft-fail are all unchanged. The two intervening commits that touch
+`SyncAll.hpp` (`bdeb4e7f`, `756787a9`) add new-arch / tinsert coverage and do not
+alter the soft-barrier logic.
+
+### Details
+
+The soft barrier is implemented in `include/pto/npu/a2a3/SyncAll.hpp` and
+`include/pto/npu/a5/SyncAll.hpp` (both platforms). `SYNCALL_SOFT_AIV_BARRIER`
+(and the AIC / mix counterparts) does:
+
+```cpp
+int32_t pollCnt = 0;
+while (true) {
+    // read all totalBlks slots from GM, count how many have arrived (>= curVal)
+    if (readyCnt >= totalBlks) break;              // all blocks arrived
+    ++pollCnt;
+    if (pollCnt >= SYNCALL_SOFT_MAX_POLL_ITERATIONS) {   // = 1000000
+        PTO_CPU_ASSERT(false, "SYNCALL soft barrier timeout - possible deadlock");
+        break;                                     // give up, proceed anyway
+    }
+}
+```
+
+Constants (`include/pto/common/type.hpp`):
+
+```cpp
+constexpr int32_t SYNCALL_SOFT_SLOT_INT32 = 8;
+constexpr int32_t SYNCALL_SOFT_BACKOFF_THRESHOLD = 16;
+constexpr int32_t SYNCALL_SOFT_MAX_POLL_ITERATIONS = 1000000;
+```
+
+Each poll iteration re-reads the whole GM workspace + a `pipe_barrier(PIPE_ALL)`,
+so a full 1,000,000-iteration spin costs on the order of hundreds of ms to
+seconds — matching the observed ~1.25 s.
+
+**Trigger.** Soft syncall is the recommended path for **partial occupancy** (the
+`HardSyncallOccupancy` verifier on the pypto side explicitly suggests
+`mode="soft"` as the partial-occupancy alternative to hard). But if the enclosing
+SPMD launch is not `sync_start=True`, the runtime may dispatch blocks **in waves**:
+the first wave reaches the barrier and spins waiting for later blocks, which are
+themselves waiting for the spinning cores to free up — a near-deadlock resolved
+only by the 1e6-iteration timeout. This is the **same** wave-dispatch hazard that
+hard syncall documents and guards against with `sync_start=True`, but for soft it
+is neither documented nor guarded.
+
+### Concerns / requested changes
+
+1. **Documentation gap.** `docs/en/dev/ir/05-operators.md` (and the pto-isa
+   `SYNCALL` docs) state the soft form "works at partial occupancy" but do **not**
+   warn that it still requires `sync_start=True` (co-resident blocks) to avoid the
+   wave-dispatch spin. Hard syncall documents this; soft should too.
+
+2. **No guard.** Hard syncall has the `HardSyncallOccupancy` verifier (pypto
+   issue #1935) that fails at compile time on a missing `sync_start`. Soft has no
+   equivalent, so a partial-occupancy soft launch without `sync_start` silently
+   degrades to a multi-second spin at runtime.
+
+3. **Soft-fail masks the problem.** On timeout the barrier only does
+   `PTO_CPU_ASSERT(false, ...)` then `break`s and proceeds; in non-debug builds
+   the assert may be a no-op, so the failure surfaces only as extreme task latency
+   (not an error). Consider a louder / non-maskable timeout signal, and/or a
+   smaller default poll cap with an explicit runtime error.
+
+Reproduction path (for reference, though the defect is analysable directly from
+`SyncAll.hpp`): a `pl.spmd(32)` launch with `pl.system.syncall(mode="soft",
+core_type="aiv_only", gm_workspace=ws, used_cores=32)` and **no** `sync_start=True`
+exhibits the multi-second spin; adding `sync_start=True` (co-resident blocks) is
+expected to remove it.
+
+---
+

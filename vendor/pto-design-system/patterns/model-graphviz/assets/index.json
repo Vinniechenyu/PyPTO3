@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "model_graphviz_assets.v1",
+  "assets": [
+    {
+      "id": "deepseek-v32",
+      "model": "DeepSeek V3.2 Clean Architecture",
+      "schema": "deepseek_v32_model_architecture.json",
+      "preview": "deepseek_v32_modelviz.html",
+      "nodes": 26,
+      "edges": 28,
+      "fullMainLayers": 61,
+      "source": "/Users/yin/modelviz_skill/assets/modelviz.html"
+    },
+    {
+      "id": "qwen7b",
+      "model": "Qwen-7B",
+      "schema": "qwen7b_model_architecture.json",
+      "preview": "qwen7b_modelviz.html",
+      "nodes": 22,
+      "edges": 22,
+      "fullMainLayers": 32,
+      "source": "/Users/yin/gitcode/perf-breakdown-skill-optimize2/run_1/qwen7b/outputs/model_architecture.json"
+    },
+    {
+      "id": "gemma",
+      "model": "Gemma-4-26B-A4B Text Decoder",
+      "schema": "gemma_model_architecture.json",
+      "nodes": 37,
+      "edges": 37,
+      "fullMainLayers": 30,
+      "source": "/Users/yin/gitcode/perf-breakdown-skill-optimize2/run_1/gemma/outputs/model_architecture.json"
+    },
+    {
+      "id": "openpangu-2-0-flash",
+      "model": "openPangu-2.0-Flash",
+      "schema": "openpangu_2_0_flash_model_architecture.json",
+      "preview": "openpangu_2_0_flash_modelviz.html",
+      "validation": "openpangu_2_0_flash_model_architecture_validation.md",
+      "nodes": 55,
+      "edges": 60,
+      "fullMainLayers": 46,
+      "source": "/Users/yin/pto/model-architecture/openpangu-2.0-flash/outputs/model_architecture.json"
+    }
+  ]
+}
