@@ -219,10 +219,64 @@
     .visual-toolbar { height: 68px; flex-wrap: wrap; align-content: center; padding-block: 6px; }
     .toolbar-break { flex-basis: 100%; height: 0; }
     .axis-button.is-active { border-color: var(--primary, #5b7cff); color: var(--primary-hover, #87a0ff); }
-    .space-filters { display: flex; align-items: center; gap: 4px; min-width: 0; }
+    .space-filters { display: flex; flex: 1; align-items: center; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+    .space-filters::-webkit-scrollbar { display: none; }
     .space-filter { display: inline-flex; align-items: center; gap: 5px; }
     .space-filter i { width: 7px; height: 7px; border-radius: 2px; background: var(--space-color); }
     .space-filter[aria-pressed="false"] { opacity: .45; }
+    .buffer-overview-entry {
+      display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; margin-left: 4px;
+      border-color: color-mix(in srgb, var(--primary, #5b7cff) 48%, var(--border-subtle));
+      color: var(--primary-hover, #87a0ff);
+    }
+    .buffer-overview-entry:hover { border-color: var(--primary, #5b7cff); background: color-mix(in srgb, var(--primary, #5b7cff) 10%, var(--surface-2)); }
+    .buffer-overview-entry svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+    .buffer-overview-entry b { min-width: 18px; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, var(--primary, #5b7cff) 16%, transparent); font-size: 9px; text-align: center; }
+    .buffer-overview-backdrop {
+      position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 28px;
+      background: rgb(4 6 10 / 72%); backdrop-filter: blur(8px);
+    }
+    .buffer-overview-backdrop[hidden] { display: none; }
+    .buffer-overview-dialog {
+      width: min(1180px, 96vw); max-height: min(780px, 90vh); overflow: hidden;
+      display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto;
+      border: 1px solid var(--border-strong, #343945); border-radius: 12px;
+      background: var(--surface-1, #111318); box-shadow: 0 28px 80px rgb(0 0 0 / 55%);
+    }
+    .buffer-overview-header { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--border-subtle, #252932); }
+    .buffer-overview-title { min-width: 0; }
+    .buffer-overview-title h2 { margin: 0 0 3px; color: var(--foreground, #fff); font-size: 15px; font-weight: 650; }
+    .buffer-overview-title p { margin: 0; color: var(--foreground-muted, #858c98); font-size: 10px; }
+    .buffer-overview-close { margin-left: auto; width: 28px; padding: 0; font-size: 17px; }
+    .buffer-overview-summary { display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-bottom: 1px solid var(--border-subtle, #252932); }
+    .overview-metric { display: inline-flex; align-items: baseline; gap: 5px; padding: 5px 8px; border: 1px solid var(--border-subtle, #252932); border-radius: 6px; background: var(--surface-2, #171a20); color: var(--foreground-muted, #858c98); font-size: 9px; }
+    .overview-metric b { color: var(--foreground, #fff); font: 600 11px var(--font-mono, monospace); }
+    .overview-metric.is-warning b { color: var(--warning, #f1a340); }
+    .overview-metric.is-danger b { color: var(--danger, #ef6262); }
+    .buffer-overview-scroll { min-height: 0; overflow: auto; }
+    .buffer-overview-table { width: 100%; min-width: 940px; border-spacing: 0; border-collapse: separate; color: var(--foreground-secondary, #b8bec9); font-size: 10px; }
+    .buffer-overview-table th, .buffer-overview-table td { padding: 8px 10px; border-right: 1px solid var(--border-subtle, #252932); border-bottom: 1px solid var(--border-subtle, #252932); text-align: left; }
+    .buffer-overview-table thead th { position: sticky; top: 0; z-index: 2; background: var(--surface-2, #171a20); color: var(--foreground-muted, #858c98); font-size: 9px; letter-spacing: .04em; }
+    .buffer-overview-table th:first-child { position: sticky; left: 0; z-index: 3; width: 215px; background: var(--surface-1, #111318); }
+    .buffer-overview-table thead th:first-child { z-index: 4; background: var(--surface-2, #171a20); }
+    .buffer-overview-table tbody tr { cursor: pointer; }
+    .buffer-overview-table tbody tr:hover td, .buffer-overview-table tbody tr:hover th { background: color-mix(in srgb, var(--primary, #5b7cff) 7%, var(--surface-1)); }
+    .overview-function { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .overview-function i { flex: 0 0 auto; width: 3px; height: 24px; border-radius: 2px; background: var(--function-color); }
+    .overview-function-text { min-width: 0; }
+    .overview-function-name { overflow: hidden; color: var(--foreground, #fff); font: 500 10px var(--font-mono, monospace); text-overflow: ellipsis; white-space: nowrap; }
+    .overview-function-type { margin-top: 2px; color: var(--foreground-muted, #858c98); font-size: 9px; }
+    .overview-cell { min-width: 118px; }
+    .overview-cell-value { display: flex; justify-content: space-between; gap: 7px; font: 9px var(--font-mono, monospace); }
+    .overview-cell-value b { color: var(--foreground-secondary, #b8bec9); font-weight: 600; }
+    .overview-usage { height: 3px; margin-top: 5px; overflow: hidden; border-radius: 999px; background: var(--surface-3, #222630); }
+    .overview-usage i { display: block; width: var(--usage); height: 100%; border-radius: inherit; background: var(--space-color); }
+    .overview-cell.is-warning .overview-cell-value b { color: var(--warning, #f1a340); }
+    .overview-cell.is-warning .overview-usage i { background: var(--warning, #f1a340); }
+    .overview-cell.is-danger .overview-cell-value b { color: var(--danger, #ef6262); }
+    .overview-cell.is-danger .overview-usage i { background: var(--danger, #ef6262); }
+    .overview-empty { color: var(--foreground-disabled, #555c68); text-align: center !important; }
+    .buffer-overview-hint { padding: 9px 18px; color: var(--foreground-muted, #858c98); font-size: 9px; }
     .anomaly-strip {
       display: flex; align-items: center; gap: 7px; min-width: 0; padding: 0 10px;
       border-bottom: 1px solid var(--border-subtle, #252932); background: var(--surface-1, #111318);
@@ -390,6 +444,10 @@
             <span class="pane-meta" id="function-meta">—</span>
             <span class="toolbar-break"></span>
             <div class="space-filters" id="space-filters" aria-label="内存空间筛选"></div>
+            <button class="mini-button buffer-overview-entry" id="buffer-overview-open" type="button" disabled>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"></rect><rect x="9" y="2" width="5" height="5" rx="1"></rect><rect x="2" y="9" width="5" height="5" rx="1"></rect><rect x="9" y="9" width="5" height="5" rx="1"></rect></svg>
+              全部函数 Buffer 总览 <b id="buffer-overview-count">0</b>
+            </button>
           </header>
           <div class="anomaly-strip" aria-label="异常 Tensor 统计">
             <span class="anomaly-title">异常统计</span>
@@ -431,6 +489,26 @@
     </footer>
   </main>
 
+  <div class="buffer-overview-backdrop" id="buffer-overview-backdrop" hidden>
+    <section class="buffer-overview-dialog" role="dialog" aria-modal="true" aria-labelledby="buffer-overview-title">
+      <header class="buffer-overview-header">
+        <div class="buffer-overview-title">
+          <h2 id="buffer-overview-title">全部函数 Buffer 使用总览</h2>
+          <p>峰值使用量 / 硬件容量 · 点击函数行可进入对应的详细内存图</p>
+        </div>
+        <button class="mini-button buffer-overview-close" id="buffer-overview-close" type="button" aria-label="关闭">×</button>
+      </header>
+      <div class="buffer-overview-summary" id="buffer-overview-summary"></div>
+      <div class="buffer-overview-scroll">
+        <table class="buffer-overview-table">
+          <thead id="buffer-overview-head"></thead>
+          <tbody id="buffer-overview-body"></tbody>
+        </table>
+      </div>
+      <div class="buffer-overview-hint">使用率达到 80% 显示为警告，达到 95% 显示为高风险。— 表示该函数未使用此类 Buffer。</div>
+    </section>
+  </div>
+
   <script src="../../vendor/pto-design-system/patterns/ide-frame/pattern.js"></script>
   <script>
     (function () {
@@ -448,6 +526,9 @@
       const tip = document.getElementById('memory-tip');
       const sourceCode = document.getElementById('source-code');
       const functionSelect = document.getElementById('function-select');
+      const overviewOpen = document.getElementById('buffer-overview-open');
+      const overviewBackdrop = document.getElementById('buffer-overview-backdrop');
+      const overviewClose = document.getElementById('buffer-overview-close');
       const state = { data: null, source: '', sourceLines: new Map(), functionIndex: -1, aggregate: null, fitUsed: false, zoom: 1, hidden: new Set(), selected: null, selectedBoxes: [], selectedLine: null };
 
       const esc = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -631,6 +712,75 @@
         }));
       }
 
+      function buildBufferOverview() {
+        const preferredOrder = ['Vec', 'Mat', 'Left', 'LeftScale', 'Right', 'RightScale', 'Acc', 'Bias'];
+        const spaces = [...new Set(state.data.functions.flatMap((fn) => fn.spaces.map((space) => space.space)))]
+          .sort((a, b) => {
+            const ai = preferredOrder.indexOf(a);
+            const bi = preferredOrder.indexOf(b);
+            return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi) || a.localeCompare(b);
+          });
+        const usages = state.data.functions.flatMap((fn) => fn.spaces.map((space) => space.limit ? space.hwm / space.limit : 0));
+        const warningCount = usages.filter((ratio) => ratio >= .8 && ratio < .95).length;
+        const dangerCount = usages.filter((ratio) => ratio >= .95).length;
+        const maxUsage = usages.length ? Math.max(...usages) : 0;
+        document.getElementById('buffer-overview-summary').innerHTML = `
+          <span class="overview-metric">函数 <b>${state.data.functions.length}</b></span>
+          <span class="overview-metric">Buffer 类型 <b>${spaces.length}</b></span>
+          <span class="overview-metric">最高使用率 <b>${(maxUsage * 100).toFixed(1)}%</b></span>
+          <span class="overview-metric is-warning">警告 <b>${warningCount}</b></span>
+          <span class="overview-metric is-danger">高风险 <b>${dangerCount}</b></span>`;
+        document.getElementById('buffer-overview-head').innerHTML = `<tr><th>FUNCTION</th>${spaces.map((space) => `<th style="color:${colorOf(space)}">${esc(space)}</th>`).join('')}</tr>`;
+        document.getElementById('buffer-overview-body').innerHTML = state.data.functions.map((fn, index) => {
+          const byName = new Map(fn.spaces.map((space) => [space.space, space]));
+          const cells = spaces.map((spaceName) => {
+            const space = byName.get(spaceName);
+            if (!space) return '<td class="overview-empty">—</td>';
+            const ratio = space.limit ? space.hwm / space.limit : 0;
+            const risk = ratio >= .95 ? ' is-danger' : ratio >= .8 ? ' is-warning' : '';
+            return `<td class="overview-cell${risk}" title="${esc(fn.name)} · ${esc(spaceName)} · ${(ratio * 100).toFixed(1)}%"><div class="overview-cell-value"><span>${fmtBytes(space.hwm)} / ${fmtBytes(space.limit)}</span><b>${Math.round(ratio * 100)}%</b></div><div class="overview-usage" style="--space-color:${colorOf(spaceName)}"><i style="--usage:${Math.min(100, ratio * 100)}%"></i></div></td>`;
+          }).join('');
+          return `<tr data-function-index="${index}" tabindex="0"><th><div class="overview-function" style="--function-color:${functionColor(index)}"><i></i><div class="overview-function-text"><div class="overview-function-name">${esc(fn.name)}</div><div class="overview-function-type">${esc(fn.ftype)} · ${fn.boxes.length} tiles</div></div></div></th>${cells}</tr>`;
+        }).join('');
+      }
+
+      function closeBufferOverview(restoreFocus = true) {
+        overviewBackdrop.hidden = true;
+        if (restoreFocus) overviewOpen.focus();
+      }
+
+      function openBufferOverview() {
+        if (!state.data) return;
+        buildBufferOverview();
+        overviewBackdrop.hidden = false;
+        overviewClose.focus();
+      }
+
+      function jumpFromOverview(row) {
+        const index = Number(row.dataset.functionIndex);
+        functionSelect.value = String(index);
+        closeBufferOverview(false);
+        changeFunction(index);
+        functionSelect.focus();
+      }
+
+      overviewOpen.addEventListener('click', openBufferOverview);
+      overviewClose.addEventListener('click', () => closeBufferOverview());
+      overviewBackdrop.addEventListener('click', (event) => {
+        if (event.target === overviewBackdrop) closeBufferOverview();
+      });
+      document.getElementById('buffer-overview-body').addEventListener('click', (event) => {
+        const row = event.target.closest('tr[data-function-index]');
+        if (row) jumpFromOverview(row);
+      });
+      document.getElementById('buffer-overview-body').addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const row = event.target.closest('tr[data-function-index]');
+        if (!row) return;
+        event.preventDefault();
+        jumpFromOverview(row);
+      });
+
       function isOverflow(fn, box) {
         const space = fn.spaces.find((item) => item.space === box.space);
         return Boolean(space && box.offset + box.size > space.limit);
@@ -806,6 +956,10 @@
       let resizeTimer;
       window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => state.data && renderMap(), 100); });
       window.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !overviewBackdrop.hidden) {
+          closeBufferOverview();
+          return;
+        }
         if (event.key !== 'Escape' || (!state.selected && state.selectedLine === null)) return;
         state.selected = null;
         state.selectedBoxes = [];
@@ -834,6 +988,8 @@
           functionSelect.appendChild(option);
         });
         functionSelect.addEventListener('change', () => changeFunction(Number(functionSelect.value)));
+        document.getElementById('buffer-overview-count').textContent = data.functions.length;
+        overviewOpen.disabled = false;
         functionSelect.value = '-1';
         changeFunction(-1);
       }).catch((error) => {
