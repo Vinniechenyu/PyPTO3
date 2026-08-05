@@ -6,12 +6,12 @@
   <title>PyPTO Memory Inspector</title>
 
   <!-- PyPTO design system -->
-  <link rel="stylesheet" href="../vendor/pto-design-system/tokens/foundation.css" />
-  <link rel="stylesheet" href="../vendor/pto-design-system/tokens/semantic.css" />
-  <link rel="stylesheet" href="../vendor/pto-design-system/tokens/components.css" />
-  <link rel="stylesheet" href="../vendor/pto-design-system/css/style.css" />
-  <link rel="stylesheet" href="../vendor/pto-design-system/patterns/ide-frame/pattern.css" />
-  <link rel="stylesheet" href="../vendor/pto-design-system/patterns/memory-reuse-viewer/pattern.css" />
+  <link rel="stylesheet" href="../../vendor/pto-design-system/tokens/foundation.css" />
+  <link rel="stylesheet" href="../../vendor/pto-design-system/tokens/semantic.css" />
+  <link rel="stylesheet" href="../../vendor/pto-design-system/tokens/components.css" />
+  <link rel="stylesheet" href="../../vendor/pto-design-system/css/style.css" />
+  <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/ide-frame/pattern.css" />
+  <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/memory-reuse-viewer/pattern.css" />
 
   <style>
     * { box-sizing: border-box; }
@@ -337,9 +337,9 @@
     </footer>
   </main>
 
-  <script src="../vendor/pto-design-system/patterns/ide-frame/pattern.js"></script>
-  <script src="../vendor/pto-design-system/patterns/memory-reuse-viewer/pattern.js"></script>
-  <script src="./memory-viz-demo/js/mock-data.js"></script>
+  <script src="../../vendor/pto-design-system/patterns/ide-frame/pattern.js"></script>
+  <script src="../../vendor/pto-design-system/patterns/memory-reuse-viewer/pattern.js"></script>
+  <script src="../memory-viz-demo/js/mock-data.js"></script>
   <script>
     (function () {
       'use strict';
@@ -488,7 +488,7 @@
       }
 
       async function loadRealSource() {
-        const response = await fetch('./assets/32_after_AllocateMemoryAddr.py');
+        const response = await fetch('../assets/32_after_AllocateMemoryAddr.py');
         if (!response.ok) throw new Error(`Source load failed: ${response.status}`);
         realSource.content = await response.text();
       }
