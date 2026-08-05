@@ -8,10 +8,8 @@ PyPTO3 是一个围绕 PTO / PyPTO 生态进行产品设计、用户体验分析
 PyPTO3/
 ├── .obsidian/                     # 根目录 Obsidian 工作区配置
 ├── Design/
-│   └── memory-viz-demo/        # 内存可视化交互原型
-│       ├── index.html
-│       ├── js/
-│       └── styles/
+│   ├── memory-viz-demo/          # 内存可视化交互原型
+│   └── Toolkit Studio/           # 可信 Kernel Agent 工作台
 ├── Insight/                      # 产品、仓库与用户体验洞察报告
 ├── github_issues/                 # PTO 生态各仓库的 Issue 数据归档
 │   ├── pto/
@@ -32,7 +30,11 @@ PyPTO3/
 
 ## 启动设计 Demo
 
-在仓库根目录启动任意静态 HTTP 服务器，然后访问 `launch.html`：
+**在线访问：[PTO3 Design Lab](https://yuanfeng219-arch.github.io/PyPTO3/)**
+
+Launch 页面由 GitHub Pages 自动发布，可在线浏览并启动 Toolkit Studio 与其他设计 Demo。
+
+如需本地运行，在仓库根目录启动任意静态 HTTP 服务器，然后访问 `launch.html`：
 
 ```bash
 python -m http.server 8000
