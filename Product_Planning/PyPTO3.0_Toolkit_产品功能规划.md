@@ -43,7 +43,7 @@ PyPTO 3.0 Toolkit 不应只是“更多命令的合集”，而应成为贯穿**
 - `pypto-lib`：模型算子、模型配方与基线；
 - `pypto-serving`：服务化验证与资源规划。
 
-产品不以通用 IDE、通用模型训练平台或线上生产运维平台为目标；它聚焦“从模型/算子意图到可验证、可优化、可交付产物”的开发闭环。
+产品不以通用 IDE、通用模型训练平台或生产集群运维平台为目标；它聚焦“从模型/算子意图到可验证、可优化、可部署的推理产物”的开发闭环。服务化能力覆盖本地与多卡推理服务的构建、配置、压测、诊断和发布验收，但不替代生产环境中的通用容器编排、租户计费和全局运维系统。
 
 ---
 
@@ -60,7 +60,9 @@ PyPTO 3.0 Toolkit 不应只是“更多命令的合集”，而应成为贯穿**
 | 编译器工程师 | 保证 lowering/codegen 的正确性与质量 | 开发 Pass、比对 IR、定位 miscompile、做回归 | Pass 静默丢 op、规则多份漂移、人工读 dump | Pass 契约、IR 时间旅行、规则单一事实源、属性测试入口 |
 | 性能工程师 | 找到跨层瓶颈并验证优化收益 | profile、对比 CCE、分析同步/内存/调度、做参数实验 | 指标割裂、只能看到“慢”、优化不可归因 | 跨层性能因果图、可比实验、自动搜索、回归归因 |
 | Runtime/DFX 工程师 | 保证设备任务稳定执行并快速取证 | 查 hang、507018、饥饿、backpressure、event/fence | 裸错误码、trace 与源码断开、采集本身会扰动 | 任务时间线、等待原因、低干扰取证、复现包 |
-| 模型集成/Serving 工程师 | 将模型能力转成稳定服务 | 配容量、KV cache、并行策略、长序列测试、SLO 评估 | 能力边界不清，kernel 指标与 TTFT/TPOT 断开 | 能力矩阵、容量规划、服务就绪门禁、SLO 下钻 |
+| 模型集成工程师 | 将完整模型接入并跑通推理 | 导入权重/配置、映射算子、验证 tokenizer/采样、比较生成结果 | 能跑 kernel 不等于能跑模型，模型接入链路缺少统一验证 | 模型导入向导、Inference Runner、算子覆盖分析、端到端输出对齐 |
+| 推理服务工程师 | 将模型能力转成稳定服务 | 配置 batching、KV cache、并行策略，压测长序列和并发，评估 SLO | 能力边界不清，服务配置靠经验，kernel 指标与 TTFT/TPOT 断开 | Service Builder、容量规划、请求级追踪、服务就绪门禁、SLO 下钻 |
+| 推理应用开发者 | 调用和验证模型推理 API | 发起对话/补全请求、切换采样参数、做流式与批量测试 | 不清楚模型支持边界、失败原因和响应质量 | Playground、SDK/API 示例、请求重放、输出质量与延迟对比 |
 | 平台/版本维护者 | 提供可重复的开发基线 | 管版本组合、硬件矩阵、CI、文档、问题路由 | 环境差异晚暴露、知识散落于多个仓库和 issue | 环境画像、兼容矩阵、可执行文档、证据化问题路由 |
 
 ### 2.2 端到端主作业流
@@ -97,13 +99,26 @@ PyPTO 3.0 Toolkit 不应只是“更多命令的合集”，而应成为贯穿**
 
 **完成标准**：得到可行动根因或最小复现，而不是得到更多无关联日志。
 
-#### 流程 D：从模型产物到服务就绪
+#### 流程 D：从模型产物到可用推理
 
-1. 选择模型、硬件、精度、序列长度、并发和并行策略。
-2. Capacity Planner 预测权重、workspace、KV cache、ring heap、offload 和安全余量。
-3. 运行代表性 prefill/decode/长 prompt/prefix cache 场景，检查正确性与死锁保护。
-4. 将 TTFT、TPOT、queue wait、cache hit、NPU memory 下钻至 kernel 和 runtime 根因。
-5. 输出“服务就绪报告”：支持边界、推荐配置、容量区间、性能基线、已知限制与证据。
+1. 从模型目录或标准模型包导入配置、权重、tokenizer 和 generation config，识别模型架构、精度及算子覆盖情况。
+2. Toolkit 将模型节点匹配到 PyPTO 实现或 fallback，并提前列出缺失算子、不支持精度和目标硬件限制。
+3. 使用 Inference Runner 运行单 prompt、对话、多轮、批量和数据集推理，覆盖 greedy、sampling、beam 等已支持解码策略。
+4. 对齐 reference/library 与 PyPTO 的 logits、token、停止条件和最终文本，定位首个模型节点或 decode step 分歧。
+5. 记录模型、权重、tokenizer、算子实现、编译产物和运行参数的完整版本关系，形成可发布的 Inference Bundle。
+
+**完成标准**：模型能够在目标设备上稳定生成正确结果，算子覆盖、fallback、精度差异和资源消耗全部可见。
+
+#### 流程 E：从可用推理到可交付服务
+
+1. 从 Inference Bundle 创建服务项目，选择 API 协议、设备拓扑、并行策略、batching、KV cache、量化与流式输出策略。
+2. Capacity Planner 预测权重、workspace、KV cache、ring heap、offload、安全余量以及在不同序列长度/并发下的容量边界。
+3. 一键启动开发服务，在 Playground 或 SDK 中执行同步、流式、批量和并发请求，并支持请求保存与重放。
+4. Workload Lab 运行 prefill/decode、长 prompt、prefix cache cold/hit/miss、突发流量、取消请求和资源回收场景。
+5. 将 TTFT、TPOT、queue wait、batch efficiency、cache hit、NPU memory 下钻至模型节点、kernel 和 runtime 根因。
+6. 通过正确性、稳定性、容量、性能和兼容性门禁后，输出可版本化部署清单、推荐配置及服务就绪报告。
+
+**完成标准**：服务在声明的模型、硬件、流量和序列长度边界内满足 SLO，且每次请求可追踪、问题可重放、发布配置可复现。
 
 ---
 
@@ -122,13 +137,13 @@ PyPTO 3.0 Toolkit 不应只是“更多命令的合集”，而应成为贯穿**
 
 ## 4. 总体产品架构
 
-### 4.1 一个底座、三个入口、六个能力中心
+### 4.1 一个底座、三个入口、七个能力中心
 
 **底座：Development Evidence Graph（开发证据图）**
 
 为每次 build/run 生成统一 Run ID，并维护以下对象的稳定关联：
 
-`model node → source span → DSL op → IR op/pass → PTOAS op/sync → ISA instruction/constraint → runtime task/event/fence → memory/tensor → metric/oracle result`
+`request/session → model/token/decode step → model node → source span → DSL op → IR op/pass → PTOAS op/sync → ISA instruction/constraint → runtime task/event/fence → KV/memory/tensor → metric/oracle result`
 
 这是 3.0 区别于“命令集合”的核心数据能力，也是错值定位、性能归因、实验对比、复现和 AI 辅助的共同基础。
 
@@ -140,14 +155,15 @@ PyPTO 3.0 Toolkit 不应只是“更多命令的合集”，而应成为贯穿**
 
 三个入口共享同一诊断协议、artifact schema 和项目配置，避免“CLI 与 GUI 结论不一致”。
 
-**六个能力中心**
+**七个能力中心**
 
 1. Workspace & Environment：项目、环境与能力画像；
 2. Authoring & Compile Safety：DSL 编写、编译契约与硬件约束；
 3. Trace & Debug：跨层追踪、运行时观测与复现；
 4. Correctness Lab：多 oracle 与分层数值验证；
 5. Performance Lab：跨层性能解释、实验与调优；
-6. Model & Serving Readiness：模型配方、分布式验证与服务就绪。
+6. Model Inference：模型接入、推理运行、生成质量与端到端验证；
+7. Serving Engineering：服务构建、容量规划、负载实验、请求诊断与发布验收。
 
 ### 4.2 统一产物协议
 
@@ -158,6 +174,8 @@ PyPTO 3.0 Toolkit 不应只是“更多命令的合集”，而应成为贯穿**
 - source map、Pass 摘要/diff、PTOAS/ISA 映射；
 - task graph、trace、等待原因、错误字典命中；
 - oracle、tensor 摘要、精度阈值和首个分歧；
+- 模型权重/tokenizer/generation config 指纹、算子覆盖与 fallback 清单；
+- 服务配置、请求负载、request/session ID、batch/KV cache 生命周期与响应摘要；
 - kernel/model/serving 指标与基线差异；
 - 采集等级、估算开销、脱敏状态和复现命令。
 
@@ -303,29 +321,134 @@ AI 辅助定位应建立在证据图上：建议必须引用指标和对应工�
 - 脱敏策略：tensor 默认仅保存 shape/dtype/hash/statistics，原值需显式授权；
 - Issue Router：按症状和证据自动选择责任模块、填充模板、提示缺失证据。
 
-### 5.9 Model Recipe Hub & Serving Readiness
+### 5.9 Model Inference Studio：模型接入与推理开发
 
-**目标**：缩短模型迁移周期，并建立从 kernel 产物到服务能力的验收路径。
+**目标**：让开发者从“已有高性能 kernel”自然走到“完整模型能够正确推理”，缩短模型适配、输出验证和问题定位周期。
 
-核心功能：
+#### 模型接入与兼容性分析
 
-- Model Recipe：prefill、decode、paged attention、RMSNorm+RoPE、MoE expert、lm_head；
+- Model Importer：导入模型配置、权重索引、tokenizer、generation config 与自定义模型代码；
+- Architecture Detector：识别 attention、MoE、RoPE、norm、MLP、lm_head、KV cache 等关键结构；
+- Operator Coverage Report：逐模型节点显示 PyPTO native、融合实现、库实现、fallback 或 unsupported，并评估 fallback 的性能影响；
+- Precision & Quantization Profile：展示 FP16/BF16/INT8/FP8 等已支持精度、混合精度边界、量化参数和校准要求；
+- Model Recipe：提供 prefill、decode、paged attention、RMSNorm+RoPE、MoE expert、lm_head 等可组合配方；
 - 每个 recipe 包含适用模型/shape/平台、reference、精度阈值、性能基线、已知限制和调优点；
-- 模型子图导入与 pattern matching，生成可编辑的实现骨架，而非不可解释的黑盒代码；
-- Model Correctness Harness：token、节点、kernel 和 tensor 多层对齐；
-- Serving Capability Matrix：模型、硬件、精度、batching、prefix cache、KV offload、parallel、quant、API；
-- Capacity Planner：基于模型、batch、seq length、KV dtype、parallel strategy 估算容量、安全余量和降级策略；
-- Serving Readiness Gate：长 prompt、chunked prefill、prefix cache cold/hit/miss、并发、资源回收与 SLO；
-- 输出可交付的服务就绪报告，并能下钻到 kernel/runtime 证据。
+- 模型子图 pattern matching 生成可编辑实现骨架，并保留从模型节点到 PyPTO 源码的映射。
 
-### 5.10 Developer Portal & Knowledge Loop
+#### Inference Runner
+
+- 支持单样本、交互式对话、批量数据集和回归集四种运行方式；
+- 统一输入输出：prompt、token IDs、embedding 输入，以及 text、token、logits/logprobs 等可配置输出；
+- 支持同步与流式生成，并在能力矩阵中明确 greedy、temperature/top-k/top-p、beam、停止词等解码策略的支持状态；
+- 支持 prefill-only、decode-only、prefill+decode 分段运行，便于独立验证与性能分析；
+- 支持固定随机种子、确定性 profile 和请求重放，区分采样差异与系统错误；
+- 保存每次推理的 Model Run：模型/权重/tokenizer 版本、输入、generation 参数、编译产物、设备配置、输出和指标。
+
+建议命令：
+
+```text
+pypto model inspect <model-path>
+pypto infer --model <model-path> --prompt <text>
+pypto infer --model <model-path> --dataset <file> --report
+pypto model bundle <validated-run>
+```
+
+#### 模型级正确性与输出质量
+
+- Model Correctness Harness：reference/library、PyPTO simulator、PyPTO device 与 serving 路径多 oracle 对齐；
+- 从 logits → sampled token → stop condition → final text 逐 decode step 定位首个分歧；
+- 从异常 token 回溯到模型节点、kernel output 和 intermediate tensor；
+- 检测重复文本、提前/延迟停止、非法 token、NaN/Inf、KV cache 污染、prefix 丢写和多轮上下文漂移；
+- 数据集评测采用可插拔 evaluator，支持任务正确率、文本质量和性能联合报告；
+- 对随机采样场景使用分布和统计一致性指标，避免把非确定性误判为错误。
+
+#### Inference Bundle
+
+通过门禁的模型生成自描述推理包，至少包含：
+
+- 模型、权重、tokenizer 与 generation config 指纹；
+- 目标硬件、精度、并行与内存要求；
+- PyPTO 编译产物、算子实现版本和 fallback 清单；
+- 正确性/质量基线、性能基线和已知限制；
+- 本地运行、服务启动、回归验证和回滚所需的版本化配置。
+
+### 5.10 Serving Engineering Studio：推理服务构建与验证
+
+**目标**：让模型推理能力能够以稳定 API 对外提供，并在发布前完成容量、性能、稳定性和兼容性验证。
+
+#### Service Builder
+
+- 从 Inference Bundle 一键生成本地单卡、多卡或多实例服务配置；
+- API Profile：声明 completion/chat、同步/流式、batch、健康检查、模型信息和错误返回等协议能力；
+- 自动生成 Python/C++ 客户端示例和可执行请求，支持应用开发者快速联调；
+- 配置设备拓扑、TP/EP、worker 数量、continuous/dynamic batching、最大 batch/token、调度优先级和超时；
+- 配置 KV cache block、prefix cache、量化、offload、chunked prefill 和 speculative decoding 等已支持策略；
+- 配置校验器在启动前检查模型能力、硬件、并行、内存和 API 组合是否合法；
+- 支持 service profile 的版本化、diff、复制、导入和回滚。
+
+建议命令：
+
+```text
+pypto serve --bundle <inference-bundle> --profile <service-profile>
+pypto serve plan --model <model> --traffic <workload>
+pypto serve benchmark --endpoint <url> --workload <workload>
+pypto serve explain <request-id>
+pypto serve report <service-run>
+```
+
+#### Playground 与应用联调
+
+- 内置 Chat/Completion Playground，可调整 system prompt、采样参数、最大输出长度和停止条件；
+- 实时显示首 token 时间、token 间延迟、累计 token、停止原因和服务错误；
+- 支持同步/流式结果并排对比、不同 service profile A/B 测试；
+- 保存、分享和重放请求，自动隐藏敏感 prompt；
+- 从异常响应直接进入 request trace，无需先搜索服务日志。
+
+#### Capacity Planner 与部署配置
+
+- 输入模型、硬件、精度、并行策略、最大序列长度、输入/输出长度分布、并发和 SLO；
+- 估算权重、workspace、KV cache、ring heap、dependency pool、host memory、offload 与安全余量；
+- 输出可服务的 batch/concurrency/token 区间，以及可能首先耗尽的资源；
+- 对 prefix cache、chunked prefill、KV offload 和不同并行策略做情景比较；
+- 给出推荐配置、降级策略和拒绝策略，并清楚标明推算值与实测值；
+- 生成可交付的服务配置清单，供外部部署/运维系统消费。
+
+#### Workload & Benchmark Lab
+
+- 内置交互式、离线批处理、均匀到达、突发流量、长短请求混合和多轮会话等负载模型；
+- 覆盖 cold start/warmup、长 prompt、prefix cache cold/hit/miss、请求取消、超时、过载和资源回收；
+- 指标包括 TTFT、TPOT、端到端延迟、prefill/decode/output throughput、goodput、queue wait、batch efficiency、cache hit、NPU memory；
+- 同时报告 P50/P90/P99 与错误率，避免均值掩盖尾延迟和不稳定性；
+- 支持同配置下与 reference/library/其他服务基线对比，并锁定模型、数据、采样和硬件条件；
+- 将服务指标回溯到模型节点、kernel latency、runtime queue、sync、memory traffic 和 KV cache 事件。
+
+#### 请求级可观测与故障诊断
+
+- 为 request、sequence、batch、prefill/decode step、KV block、runtime task 建立统一 correlation ID；
+- Request Timeline 展示 admission、queue、batch formation、prefill、decode、streaming 和 finish/cancel；
+- Batch Inspector 解释请求为何被合批、延迟或拆分，以及 padding/token 浪费；
+- KV Cache Inspector 展示分配、命中、复用、碎片、eviction、offload、泄漏和生命周期；
+- 自动识别 OOM、task-ring heap deadlock、调度饥饿、长请求阻塞、cache thrashing 和设备异常；
+- 对单请求执行 `serve explain`，给出用户可见错误、服务层原因与 kernel/runtime 证据；
+- 一键生成包含请求负载、服务配置、trace 和环境指纹的脱敏服务复现包。
+
+#### 弹性与服务就绪门禁
+
+- 支持启动、warmup、优雅停止、请求 drain、worker 异常恢复和资源释放验证；
+- 支持过载保护：最大在途 token、队列上限、超时、取消、背压和明确拒绝原因；
+- 验证服务重启、配置切换、模型重载时不会污染 KV cache 或复用陈旧编译产物；
+- Serving Readiness Gate 覆盖 API 兼容、模型正确性、并发稳定性、容量、安全余量、SLO 和长稳测试；
+- 输出服务就绪报告：支持边界、推荐配置、容量曲线、SLO 结果、已知风险、证据和回滚配置；
+- 3.0 Toolkit 交付发布清单和证据，不承担生产集群的自动扩缩容、租户治理、计费与告警值守。
+
+### 5.11 Developer Portal & Knowledge Loop
 
 **目标**：按任务提供可信入口，让解决问题的证据自动沉淀为可复用知识。
 
 核心功能：
 
 - 顶层架构与角色路径，不要求用户先理解七个仓库；
-- Quickstart、DSL 心智模型、依赖/调度、分布式、错值、hang、性能与 serving 七类任务式指南；
+- Quickstart、DSL 心智模型、依赖/调度、分布式、错值、hang、性能、模型推理和 serving 九类任务式指南；
 - 文档签名、指令与示例从规则/源码生成，并在 CI 真机或仿真执行；
 - 报告中的规则 ID、错误码、known errata 可直接跳转对应文档；
 - 已解决复现包可抽取为回归用例和故障条目，经人工审核后发布；
@@ -374,6 +497,17 @@ AI 辅助定位应建立在证据图上：建议必须引用指标和对应工�
 - AI 结论区分“事实、推断、建议”，并允许一键验证推断；
 - 所有自动决策写入 manifest，确保团队复现相同结果。
 
+### 6.5 统一“推理与服务实验页”
+
+模型推理和服务压测使用同一种实验对象，避免模型验证、性能报告与服务日志彼此割裂：
+
+- 左侧固定显示模型/权重/tokenizer、设备、精度、并行和 service profile；
+- 中央按需切换 Output、Request Timeline、Batch、KV Cache、Model Graph 和 Kernel Trace；
+- 顶部同时显示正确性、稳定性、容量、SLO 和兼容性五个服务门禁；
+- 任一异常 token、长尾请求或失败 batch 均可下钻到模型节点、kernel 与 runtime 事件；
+- 两次实验可以比较输出、服务配置、容量、P50/P99、吞吐和底层根因；
+- 支持将当前实验固化为 Inference Bundle、service profile、回归用例或脱敏复现包。
+
 ---
 
 ## 7. 分阶段路线图
@@ -402,36 +536,45 @@ AI 辅助定位应建立在证据图上：建议必须引用指标和对应工�
 - 依赖、liveness、buffer reuse、multi-Out、WAR/WAW/RAW verifier；
 - Runtime Sentinel 与低干扰 task timeline；
 - Correctness Lab：CPU/reference + library + device 多 oracle；
+- Model Importer、算子覆盖报告与最小 Inference Runner（单 prompt、prefill+decode、流式输出）；
+- logits/token/decode step 基础对齐与 Model Run manifest；
 - Repro Bundle、脱敏与 Issue Router；
 - IDE 中的 source 诊断与下钻入口。
 
-**退出标准**：典型 wrong output/hang 案例可自动定位到首个异常阶段，并生成可重放证据包。
+**退出标准**：典型 wrong output/hang 案例可自动定位到首个异常阶段，并生成可重放证据包；至少一个目标模型可通过统一入口完成端到端推理和输出验证。
 
-### Phase 2：性能与模型规模化（6—12 个月）
+### Phase 2：模型推理与服务化闭环（6—12 个月）
 
-**目标**：让真实模型的优化可解释、可复用。
+**目标**：让真实模型的优化可解释、可复用，并能以稳定开发服务完成应用联调和发布前验证。
 
 - 四层统一性能 schema 与 Performance Lab；
 - sync explain、pipeline/memory/runtime 因果分析；
 - 可信 A/B 实验、性能预算、回归归因；
 - Safe Autotune 与 tuning recipe；
 - Model Recipe Hub 与模型分层正确性；
+- 完整 Inference Runner、Inference Bundle 与批量/数据集评测；
+- Service Builder、API/SDK、Playground 与版本化 service profile；
+- Capacity Planner、基础 KV Cache Inspector 与 Workload Lab；
+- 请求级 correlation ID、TTFT/TPOT/P99 及 SLO → runtime → kernel 下钻；
+- Serving Readiness Gate v1：正确性、API、容量、性能和基础稳定性；
 - 分布式 context verifier 与 task/communication 可视化；
 - Studio 桌面/网页可视分析体验。
 
-**退出标准**：真实模型 kernel 可在同一工作流完成正确性、性能归因和方案复用。
+**退出标准**：真实模型可在同一工作流完成推理正确性、性能归因、服务启动、应用联调、代表性负载压测和服务就绪报告。
 
-### Phase 3：服务就绪与智能开发（12—18 个月）
+### Phase 3：高级服务工程与智能开发（12—18 个月）
 
 **目标**：把经过验证的模型—算子产物可靠地推向服务场景。
 
-- Capacity Planner、KV cache dashboard、长序列 guard；
-- Serving Readiness Gate 与 SLO → runtime → kernel 下钻；
+- 多实例/多卡服务实验、完整 KV cache dashboard、长序列与过载 guard；
+- continuous batching、prefix/offload、chunked prefill 等策略的情景模拟与自动推荐；
+- 长稳、故障恢复、配置切换、模型重载和服务回滚验证；
+- Serving Readiness Gate v2 与可供外部部署系统消费的发布清单；
 - 基于证据图的诊断/优化 Agent，支持“提出假设—运行验证—提交建议”；
 - 跨版本迁移助手、组织级 recipe/规则治理；
 - 仿真—真机 ISA conformance matrix 与硬件差异知识库。
 
-**退出标准**：模型产物可输出带容量、SLO、已知限制和完整证据的服务就绪报告。
+**退出标准**：模型产物可输出带容量曲线、尾延迟、稳定性、SLO、已知限制、回滚配置和完整证据的服务就绪报告。
 
 ---
 
@@ -443,6 +586,8 @@ MVP 必须形成闭环，不能只交付分散命令。
 
 > 算子工程师拿到一个输出全零的 kernel，在同一个项目中运行 `doctor` 排除环境问题；编译卫士指出或缩小到首个异常 Pass；用户从源码查看 semantic diff 和依赖证据；Correctness Lab 对比 reference 定位首个异常 tensor；最后一键生成可重放的复现包。
 
+> 模型集成工程师导入一个目标模型，Toolkit 展示算子覆盖和不支持项；工程师通过统一 Inference Runner 跑通 prompt → token → text，在 reference 与 PyPTO 间定位输出差异；随后启动最小开发服务，用流式 API 完成应用联调，并得到基础 TTFT/TPOT、容量估算和可重放请求。
+
 ### 8.2 MVP 功能包
 
 - Workspace manifest 与 Run ID；
@@ -451,6 +596,10 @@ MVP 必须形成闭环，不能只交付分散命令。
 - Pass verifier SDK + 10—15 条高危规则；
 - source span 保留、Pass timeline、相邻 Pass semantic diff；
 - CPU/reference 与 device 双 oracle；
+- 最小 Model Importer、算子覆盖报告与模型/权重/tokenizer 指纹；
+- 单 prompt 的 prefill+decode Inference Runner、流式输出与 token 对齐；
+- 最小 Service Builder：单机服务启动、同步/流式 API、Playground/示例客户端；
+- 基础容量估算、request timeline、TTFT/TPOT 与请求重放；
 - task/event 基础 timeline；
 - `pypto explain` 聚合报告；
 - reproducible bundle；
@@ -461,7 +610,7 @@ MVP 必须形成闭环，不能只交付分散命令。
 - 全自动通用算子生成；
 - 无边界的 AI 自动改代码；
 - 大规模 autotune 调度平台；
-- 完整 serving 运维 dashboard；
+- 多租户生产运维、跨集群自动扩缩容和完整告警值守平台；
 - 覆盖所有 ISA 与所有历史错误码。
 
 ---
@@ -486,6 +635,12 @@ MVP 必须形成闭环，不能只交付分散命令。
 | 复现 | 问题单首次提交即具备完整环境与证据的比例 | ≥ 85% |
 | 性能 | 性能回退可归因到具体层级的比例 | ≥ 75% |
 | 效率 | 从可信 baseline 到达性能目标的实验次数 | 降低 40% |
+| 模型推理 | 已支持模型从导入到首个正确生成结果的中位时间 | ≤ 30 分钟 |
+| 模型推理 | 模型图中 native/fused/fallback/unsupported 状态可解释覆盖率 | 100% |
+| 服务化 | 从 Inference Bundle 到开发服务首次成功响应的中位时间 | ≤ 10 分钟 |
+| 服务化 | 请求可关联到 batch、KV、模型节点和 runtime 证据的比例 | ≥ 95% |
+| 服务化 | 容量规划对稳定可服务并发/token 上限的预测误差 | ≤ 15% |
+| 服务化 | 服务就绪门禁覆盖的发布前严重问题拦截率 | ≥ 80% |
 | 文档 | Quickstart/示例 CI 可执行通过率 | 100% |
 | 体验 | 裸错误码占 runtime 用户可见错误的比例 | < 5% |
 
@@ -495,6 +650,9 @@ MVP 必须形成闭环，不能只交付分散命令。
 - 低干扰 trace 性能开销：目标 < 3%；完整取证必须在启动前明确预计开销；
 - 诊断假阳性率：高危 error 级规则目标 < 1%；
 - autotune 产生但未过正确性门禁的候选不得进入性能排名；
+- 服务性能结论必须同时报告负载分布、P50/P90/P99、错误率和 goodput，不以单一平均吞吐替代；
+- 服务就绪报告只能对已实测的硬件、模型、序列长度和并发边界作出承诺；外推值必须显式标记；
+- prompt、响应、权重和 KV 内容默认不进入 trace 与共享报告，仅保存脱敏摘要；
 - 默认复现包不得包含原始模型权重或完整敏感 tensor。
 
 ---
@@ -509,7 +667,9 @@ MVP 必须形成闭环，不能只交付分散命令。
 | Pass contract/verifier SDK | pypto 编译器团队 | 高危 Pass 接入模板与 CI 门禁 |
 | Runtime trace protocol | simpler | task/event/fence/wait-reason 标准事件 |
 | Oracle/benchmark protocol | pypto-lib | 可复用 correctness 与 performance case schema |
-| Serving metric/capacity schema | pypto-serving | TTFT/TPOT/KV/resource 标准定义 |
+| Model adapter/inference protocol | pypto-lib + pypto-serving | 模型导入、tokenizer、generation、Inference Bundle 协议 |
+| Serving API/profile schema | pypto-serving | API、batching、parallel、KV、请求生命周期与版本化配置 |
+| Serving metric/capacity schema | pypto-serving + simpler | TTFT/TPOT/P99/goodput/KV/resource 标准定义及 request-to-task ID |
 | Developer Portal | 顶层文档仓 | 角色路径、故障入口、可执行示例 |
 
 建议设立跨仓“Developer Contract Review”：任何新增 DSL 特性、Pass、ISA 约束或 runtime 事件，都需要同时评审其诊断、可追踪性、文档和回归证据，避免 3.0 再次形成层间知识漂移。
@@ -524,6 +684,10 @@ MVP 必须形成闭环，不能只交付分散命令。
 | verifier 假阳性导致用户关闭检查 | 诊断噪声重演 type checker 问题 | error 规则高精度门槛；低置信度降为 warning；提供最小复现 |
 | trace 开销改变问题本身 | full dump 引发 backpressure/deadlock | 两档采集、预算预估、环形缓冲与自监控 |
 | 自动化不可解释 | 用户不信任 sync/autotune/AI 结果 | 所有决策绑定证据、成本与覆写路径 |
+| “服务化”膨胀为生产运维平台 | 范围失控，核心开发闭环延期 | 明确边界在构建、联调、压测、诊断和发布验收；生产编排交给外部平台 |
+| 服务 benchmark 不可比较 | 请求分布、采样和 warmup 不同导致误判 | 版本化 workload，锁定模型/数据/采样/硬件，报告尾延迟、错误率和置信区间 |
+| 模型输出非确定性造成误报 | sampling 差异被当作编译错误 | 支持确定性 profile、固定种子、logits/token 分层对齐和统计一致性 |
+| 推理数据泄露 | prompt、响应或 KV 内容进入 trace/报告 | 默认只采集 hash/shape/statistics，分级授权、脱敏与可审计导出 |
 | 规则单一事实源推进困难 | Python/C++/文档继续各写一份 | schema 先覆盖最高风险 layout/type/ISA 规则，并设 CI 漂移门禁 |
 | 产品范围过大 | 同时做 IDE、Studio、serving 导致无闭环 | 以 wrong output MVP 主线交付，入口可简、证据链必须完整 |
 | 专家工具对新用户仍过载 | 大量 IR/trace 信息造成理解负担 | 严格执行 L1/L2/L3 渐进披露与任务式入口 |
@@ -540,10 +704,13 @@ MVP 必须形成闭环，不能只交付分散命令。
 | 调试依赖人工逐 Pass 读 dump | Evidence Graph、Pass Timeline、Semantic Diff |
 | runtime 裸错误码、hang、饥饿、backpressure | Error Dictionary、Runtime Timeline、Hang Detector |
 | 模型错值跨 pypto/PTOAS/runtime/lib | 多 oracle、分层 tensor 对齐、首个分歧定位 |
+| 完整模型接入缺少算子覆盖与版本闭环 | Model Importer、Coverage Report、Inference Bundle |
+| logits 正确但生成文本异常 | decode step 对齐、采样/停止条件验证、输出质量检测 |
 | 性能指标跨 kernel/runtime/model/serving 割裂 | 四层指标 schema、因果视图、可信 A/B 实验 |
 | PTODSL/ISA 能力边界和文档不清 | Capability Matrix、Intent Preview、可执行文档 |
 | TP/EP/MoE provenance 和通信约束复杂 | DistributedTensor provenance、跨 rank verifier |
-| KV cache、长 prompt、容量与 SLO 风险 | Capacity Planner、Serving Readiness Gate |
+| 服务启动和应用联调链路分散 | Service Builder、API/SDK、Playground、请求重放 |
+| batching、KV cache、长 prompt、容量与 SLO 风险 | Workload Lab、Capacity Planner、Request/KV Inspector、Serving Readiness Gate |
 | 多仓库职责与 issue 路由不清 | 症状式入口、Repro Bundle、Issue Router、Developer Portal |
 
 ---
@@ -556,6 +723,7 @@ PyPTO 3.0 的先进性不应体现在“加入一个 AI 聊天框”，而应体
 - **知道每一步应该保持什么不变量**，而不是编译后把风险交给设备；
 - **知道一个结果从哪里来**，能够沿完整证据链解释；
 - **知道一次优化为什么有效**，并能证明它没有破坏正确性；
+- **知道一个模型如何完成推理并成为稳定服务**，能够解释每个 token、请求、batch 和 KV 状态；
 - **知道何时信息不足**，明确告诉用户，而不是静默猜测。
 
-因此，3.0 的首要建设顺序应是：**可信编译底座 → 跨层证据链 → 正确性闭环 → 性能因果与安全调优 → 模型/服务规模化**。只有这个顺序，才能把现有多个强大但割裂的仓库能力，真正升级成下一代模型—算子开发产品。
+因此，3.0 的首要建设顺序应是：**可信编译底座 → 跨层证据链 → 模型推理正确性闭环 → 性能因果与安全调优 → 服务构建与就绪验证 → 规模化智能开发**。只有这个顺序，才能把现有多个强大但割裂的仓库能力，真正升级成下一代模型—算子开发产品。

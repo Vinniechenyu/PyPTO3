@@ -600,6 +600,17 @@
     // 新增 Design Demo 时，在此数组追加一项即可出现在启动台。
     const demos = [
       {
+        title: "Memory Optimizer",
+        subtitle: "GDR Full-network Memory Budget Lab",
+        category: "内存与性能",
+        status: "UX Demo",
+        version: "04 / PRD",
+        description: "将 Issue #2880 的内存基线转化为可交互工作台：模拟固定开销治理、查看生命周期账本，并验证 Profiling 归因字段。",
+        href: "Design/gdr-memory-optimizer/index.html",
+        preview: "Design/assets/memory-map-v2.png",
+        tags: ["GDR", "Memory Budget", "Profiling", "Issue #2880"]
+      },
+      {
         title: "Ascend Memory Studio",
         subtitle: "Space-time Memory Occupancy",
         category: "内存与性能",
@@ -631,6 +642,17 @@
         href: "Design/Toolkit Studio/index.html",
         preview: "Design/assets/toolkit-studio.png",
         tags: ["Agent Team", "Kernel DSL", "Compiler Guard", "Correctness"]
+      },
+      {
+        title: "Model Inference Studio",
+        subtitle: "Model Onboarding & Compatibility Analysis",
+        category: "开发工具",
+        status: "可体验",
+        version: "05 / §5.9",
+        description: "从已有高性能 Kernel 走到完整模型可正确推理：导入 Qwen3-MoE 工件、识别架构、生成算子覆盖报告与精度量化画像，组合 Recipe 并生成保留节点到源码映射的可编辑实现骨架。",
+        href: "Design/model-inference-studio/index.html",
+        preview: "Design/assets/toolkit-studio.png",
+        tags: ["Model Importer", "Operator Coverage", "Recipe", "Node↔Source"]
       }
     ];
 

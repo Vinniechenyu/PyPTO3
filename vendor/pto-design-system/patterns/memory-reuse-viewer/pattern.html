@@ -1,9 +1,24 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PTO Pattern - Memory Reuse Viewer</title>
+  <script>
+    (() => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('embed')) document.documentElement.dataset.embedPreview = 'true';
+      const applyTheme = (theme) => {
+        if (theme !== 'light' && theme !== 'dark' && theme !== 'glass') return;
+        document.documentElement.dataset.theme = theme;
+        window.dispatchEvent(new CustomEvent('pto-memory-reuse-theme-change'));
+      };
+      applyTheme(params.get('theme'));
+      window.addEventListener('message', (event) => {
+        if (event.data?.type === 'pto-preview-theme') applyTheme(event.data.theme);
+      });
+    })();
+  </script>
   <link rel="stylesheet" href="../../tokens/foundation.css">
   <link rel="stylesheet" href="../../tokens/semantic.css">
   <link rel="stylesheet" href="../../tokens/components.css">
@@ -19,16 +34,20 @@
 
     .preview-shell {
       height: 100vh;
-      padding: 24px;
+      padding: var(--space-6);
       box-sizing: border-box;
     }
 
     #memoryReusePreview {
       height: 100%;
-      border: 1px solid var(--border-default);
-      border-radius: var(--radius-lg);
+      border: 0;
+      border-radius: 0;
       overflow: hidden;
-      background: var(--background-elevated);
+      background: transparent;
+    }
+
+    html[data-embed-preview='true'] .preview-shell {
+      padding: 0;
     }
   </style>
 </head>
@@ -38,11 +57,13 @@
   </main>
   <script src="./pattern.js"></script>
   <script>
-    window.PtoMemoryReuseViewer?.render(
+    const memoryReuseController = window.PtoMemoryReuseViewer?.render(
       document.getElementById('memoryReusePreview'),
       window.PtoMemoryReuseViewer.createDemoData({ coreTitle: 'AIV 1 UB' }),
       { initialBuffer: 'UB' }
     );
+    window.addEventListener('pto-memory-reuse-theme-change', () => memoryReuseController?.resize());
+    window.addEventListener('beforeunload', () => memoryReuseController?.destroy());
   </script>
 </body>
 </html>

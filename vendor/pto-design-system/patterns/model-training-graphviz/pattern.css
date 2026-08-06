@@ -159,6 +159,23 @@
   paint-order: stroke;
 }
 
+:root[data-theme='light'] .pto-model-training-graphviz.pto-model-architecture-stage .pto-model-graphviz-node-label,
+.pto-model-training-graphviz.pto-model-architecture-stage .pto-model-graphviz-node-label {
+  font-size: var(--font-size-title-sm);
+}
+
+:root[data-theme='light'] .pto-model-training-graphviz.pto-model-architecture-stage .pto-model-graphviz-node-type,
+.pto-model-training-graphviz.pto-model-architecture-stage .pto-model-graphviz-node-type {
+  font-size: calc(var(--font-size-label-xs) - 2px);
+}
+
+:root[data-theme='light'] .pto-model-training-graphviz.pto-model-architecture-stage .pto-model-graphviz-node.is-parameter-object .pto-model-graphviz-node-label,
+:root[data-theme='light'] .pto-model-training-graphviz.pto-model-architecture-stage .pto-model-graphviz-node.is-state-object .pto-model-graphviz-node-label,
+.pto-model-training-graphviz.pto-model-architecture-stage .pto-model-graphviz-node.is-parameter-object .pto-model-graphviz-node-label,
+.pto-model-training-graphviz.pto-model-architecture-stage .pto-model-graphviz-node.is-state-object .pto-model-graphviz-node-label {
+  font-size: 13px;
+}
+
 :root[data-theme='light'] .pto-model-training-graphviz .pto-model-graphviz-node-label {
   stroke: rgba(255, 255, 255, 0.45);
 }
@@ -231,7 +248,7 @@
 .pto-model-training-hover-title small {
   display: block;
   color: var(--foreground-muted);
-  font: var(--text-mono);
+  font: var(--type-mono);
 }
 
 .pto-model-training-hover-title strong {

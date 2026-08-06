@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -26,366 +26,451 @@
   <link rel="stylesheet" href="../../tokens/foundation.css">
   <link rel="stylesheet" href="../../tokens/semantic.css">
   <link rel="stylesheet" href="../../tokens/components.css">
-  <link rel="stylesheet" href="../model-graphviz/pattern.css">
-  <link rel="stylesheet" href="./pattern.css">
+  <link rel="stylesheet" href="../model-graphviz/pattern.css?v=training-gallery-align-3">
+  <link rel="stylesheet" href="./pattern.css?v=training-gallery-align-3">
   <style>
-    * { box-sizing: border-box; }
+    :root {
+      --training-bg: var(--background);
+      --training-panel: color-mix(in srgb, var(--panel-shell-bg) 94%, transparent);
+      --training-border: var(--border-subtle);
+      --training-text: var(--foreground);
+      --training-muted: var(--foreground-secondary);
+      --training-accent: var(--highlight-copy-blue-300);
+      --model-graphviz-bg: var(--training-bg);
+      --model-graphviz-surface: var(--training-panel);
+      --model-graphviz-stage-bg: var(--training-bg);
+      --model-graphviz-line: color-mix(in srgb, var(--training-muted) 82%, transparent);
+      --model-graphviz-line-soft: var(--border-strong);
+      --model-graphviz-node-label: var(--training-text);
+      --model-graphviz-node-type: var(--training-muted);
+      --model-graphviz-cluster-label: var(--training-muted);
+      --model-graphviz-toggle-bg: color-mix(in srgb, var(--training-accent) 60%, var(--training-panel));
+      --model-graphviz-toggle-border: color-mix(in srgb, var(--training-accent) 64%, var(--border-strong));
+      --model-graphviz-toggle-icon: var(--training-text);
+      --model-graphviz-node-shadow: none;
+      --model-graphviz-parent-shadow: none;
+      --model-graphviz-panel-shadow: none;
+    }
+
+    :root[data-theme='light'] {
+      --training-panel: #F8F8F8;
+      --model-graphviz-line: color-mix(in srgb, var(--foreground-secondary) 68%, transparent);
+      --model-graphviz-line-soft: color-mix(in srgb, var(--border-strong) 58%, transparent);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
 
     html,
     body {
       min-height: 100%;
       margin: 0;
-      background: var(--background);
-      color: var(--foreground);
+      background: var(--training-bg);
+      color: var(--training-text);
       font-family: var(--font-sans);
     }
 
     body {
-      display: grid;
-      grid-template-rows: auto 1fr;
-      height: 100vh;
       overflow: hidden;
     }
 
-    :root[data-embed='1'] body {
-      grid-template-rows: 1fr;
+    .training-app {
+      display: grid;
+      grid-template-rows: auto 1fr auto auto;
+      min-height: 100vh;
+      background: var(--training-bg);
     }
 
-    :root[data-embed='1'] .preview-topbar {
+    :root[data-embed='1'] .training-app {
+      grid-template-rows: 1fr;
+      min-height: 0;
+      height: 100vh;
+    }
+
+    .training-topbar {
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) auto;
+      gap: var(--space-3);
+      align-items: center;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--training-border);
+      background: var(--training-panel);
+    }
+
+    :root[data-embed='1'] .training-topbar {
       display: none;
     }
 
-    .preview-topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: var(--space-4);
-      padding: var(--space-4);
-      border-bottom: 1px solid var(--border-subtle);
-      background: var(--background);
+    .training-title {
+      min-width: 0;
     }
 
-    .preview-topbar h1 {
+    .training-title h1 {
       margin: 0;
-      font-size: 20px;
-      line-height: 1.25;
+      color: var(--training-text);
+      font: 700 16px / 1.2 var(--font-sans);
       letter-spacing: 0;
     }
 
-    .preview-topbar p {
-      margin: 3px 0 0;
-      color: var(--foreground-secondary);
-      font-size: 14px;
+    .training-title span {
+      display: block;
+      margin-top: 4px;
+      color: var(--training-muted);
+      font: 12px / 1.4 var(--font-sans);
     }
 
-    .preview-actions {
+    .training-actions,
+    .training-facts {
       display: flex;
-      gap: var(--space-2);
+      align-items: center;
+      gap: 8px;
       flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .training-actions {
       justify-content: flex-end;
     }
 
-    .preview-actions button {
-      min-height: 32px;
+    .training-actions button {
+      min-height: 30px;
       border: 1px solid var(--border-default);
       border-radius: var(--radius-md);
       background: var(--surface-1);
-      color: var(--foreground);
-      padding: 0 var(--space-3);
-      font: var(--text-body);
+      color: var(--foreground-secondary);
+      padding: 0 10px;
+      font: 600 12px / 1 var(--font-sans);
+      letter-spacing: 0;
       cursor: pointer;
     }
 
-    .preview-actions button.is-selected {
-      background: var(--state-selected);
-      border-color: var(--border-strong);
+    .training-actions button:hover {
+      color: var(--foreground);
+      background: var(--state-hover);
     }
 
-    .preview-stage {
+    .training-actions button.is-selected {
+      border-color: var(--border-strong);
+      background: var(--state-selected);
+      color: var(--foreground);
+    }
+
+    .training-stage {
+      position: relative;
       min-height: 0;
+      overflow: hidden;
+      background: var(--training-bg);
+      cursor: grab;
+    }
+
+    .training-stage.is-panning {
+      cursor: grabbing;
+    }
+
+    .training-stage svg {
+      display: block;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+
+    .training-facts {
+      padding: 9px 12px;
+      border-top: 1px solid var(--training-border);
+      background: color-mix(in srgb, var(--training-panel) 90%, transparent);
+    }
+
+    .training-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      max-width: 100%;
+      border-radius: 999px;
+      padding: 0 9px;
+      background: color-mix(in srgb, var(--foreground) 9%, transparent);
+      color: var(--training-muted);
+      font: 600 11px / 1 var(--font-sans);
+      white-space: nowrap;
+    }
+
+    .training-status {
+      min-height: 28px;
+      padding: 7px 12px;
+      border-top: 1px solid var(--training-border);
+      color: var(--training-muted);
+      background: var(--training-panel);
+      font: 11px / 1.2 var(--font-sans);
+    }
+
+    :root[data-embed='1'] .training-facts,
+    :root[data-embed='1'] .training-status {
+      display: none;
+    }
+
+    @media (max-width: 860px) {
+      body {
+        overflow: auto;
+      }
+
+      .training-app {
+        min-height: 860px;
+      }
+
+      .training-topbar {
+        grid-template-columns: 1fr;
+      }
+
+      .training-actions {
+        justify-content: flex-start;
+      }
     }
   </style>
 </head>
 <body>
-  <header class="preview-topbar">
-    <div>
-      <h1>Qwen7B Training Architecture</h1>
-      <p>同步 train/training-run-twin 的默认架构图，验证训练证据 hover、edge tag 与阶段高亮联动。</p>
-    </div>
-    <div class="preview-actions" aria-label="训练阶段">
-      <button type="button" data-phase="embedding">Embedding</button>
-      <button type="button" data-phase="attention">Attention</button>
-      <button type="button" data-phase="mlp">SwiGLU</button>
-      <button type="button" data-phase="logits">LM Head</button>
-    </div>
-  </header>
-  <main class="preview-stage" id="previewStage" aria-label="Qwen7B training architecture graph"></main>
+  <main class="training-app">
+    <header class="training-topbar">
+      <div class="training-title">
+        <h1>Pangu MoE Training Graph</h1>
+        <span>model-training-graphviz · compact architecture with phase evidence</span>
+      </div>
+      <div class="training-actions" aria-label="训练阶段">
+        <button type="button" data-phase="embedding">Embedding</button>
+        <button type="button" data-phase="attention">Attention</button>
+        <button type="button" data-phase="router">Router</button>
+        <button type="button" data-phase="experts">Experts</button>
+        <button type="button" data-phase="logits">Logits</button>
+        <button type="button" data-action="fit">Fit</button>
+      </div>
+    </header>
+    <section class="training-stage pto-model-architecture-stage" id="previewStage" aria-label="Pangu MoE training architecture graph"></section>
+    <div class="training-facts" id="factRow" aria-label="Model training graph facts"></div>
+    <div class="training-status" id="statusText">Loading training graph.</div>
+  </main>
 
-  <script src="../model-graphviz/pattern.js?v=cmd-wheel-v1"></script>
-  <script src="./pattern.js"></script>
+  <script src="../model-graphviz/pattern.js?v=training-gallery-align-3"></script>
+  <script src="./pattern.js?v=training-gallery-align-3"></script>
   <script>
+    const FACTS = [
+      '50 decoder layers',
+      'dense 0-3 / MoE 4-49',
+      '80 routed experts',
+      'top-8 routing',
+      'weights left · state right',
+    ];
+
+    const PHASES = {
+      embedding: {
+        label: 'Embedding',
+        nodeId: 'embedding',
+        relatedNodeIds: ['token_ids', 'embedding_weight', 'dense_block'],
+      },
+      attention: {
+        label: 'Attention',
+        nodeId: 'attention',
+        relatedNodeIds: ['dense_block', 'attention_weights', 'moe_norm'],
+      },
+      router: {
+        label: 'Router',
+        nodeId: 'router',
+        relatedNodeIds: ['moe_norm', 'norm_gamma', 'router_weight', 'dispatch', 'dispatch_buffer'],
+      },
+      experts: {
+        label: 'Experts',
+        nodeId: 'experts',
+        relatedNodeIds: ['dispatch', 'dispatch_buffer', 'expert_weights', 'shared_expert', 'shared_weights', 'combine'],
+      },
+      logits: {
+        label: 'Logits',
+        nodeId: 'lm_head',
+        relatedNodeIds: ['final_norm', 'lm_head_weight', 'logits'],
+      },
+    };
+
+    let controller = null;
+    let activePhase = 'router';
+
+    function compactNode(id, label, typeLabel, kind, x, y, width, height, colorKey) {
+      return { id, label, typeLabel, kind, x, y, width, height, colorKey };
+    }
+
     function evidenceItem(dimension, metric, what, evidence, action, relatedNodeIds = [], sources = []) {
       return { dimension, metric, what, evidence, action, relatedNodeIds, sources };
     }
 
-    function makeQwen7BTrainingGraph() {
-      const config = {
-        name: 'Qwen7B',
-        layers: 32,
-        hidden: 4096,
-        heads: '32 attention heads',
-        intermediate: 22016,
-        seq: 8192,
-        parallel: 'TP1 / PP1',
-        batch: 'MBS1 / GBS64',
-      };
-      const mainX = 560;
-      const leftX = 190;
-      const rightX = 930;
+    function makePanguMoETrainingGraph() {
+      const cx = 640;
+      const left = 310;
+      const right = 970;
       const nodes = [
-        { id: 'input_tokens', label: 'Token IDs', typeLabel: 'Input', kind: 'tensor', x: mainX, y: 48, width: 176, height: 48, colorKey: 'io:input' },
-        { id: 'token_embedding_weight', label: 'Embedding Weight', typeLabel: 'Parameter', kind: 'tensor', x: leftX, y: 150, width: 232, height: 52, colorKey: 'io:parameter' },
-        { id: 'token_embedding', label: 'Embedding Lookup', typeLabel: 'Op', kind: 'op', x: mainX, y: 150, width: 246, height: 56, colorKey: 'sem:embedding' },
-        { id: 'hidden_states', label: 'Hidden States', typeLabel: 'Tensor', kind: 'tensor', x: mainX, y: 224, width: 210, height: 48, colorKey: 'io:activation' },
-        { id: 'attn_norm_gamma', label: 'Attn Norm Gamma', typeLabel: 'Parameter', kind: 'tensor', x: rightX, y: 304, width: 204, height: 52, colorKey: 'io:parameter' },
-        { id: 'attn_norm', label: 'Attention RMSNorm', typeLabel: 'Op', kind: 'op', x: mainX, y: 304, width: 232, height: 54, colorKey: 'sem:norm' },
-        { id: 'qkv_weight', label: 'QKV Weight', typeLabel: 'Parameter', kind: 'tensor', x: leftX, y: 384, width: 188, height: 52, colorKey: 'io:parameter' },
-        { id: 'qkv_linear', label: 'QKV Linear', typeLabel: 'Op', kind: 'op', x: mainX, y: 384, width: 204, height: 54, colorKey: 'sem:linear' },
-        { id: 'rope_cache', label: 'RoPE Cache', typeLabel: 'State', kind: 'tensor', x: leftX, y: 464, width: 176, height: 52, colorKey: 'io:state' },
-        { id: 'rotary_apply', label: 'Apply RoPE', typeLabel: 'Op', kind: 'op', x: mainX, y: 464, width: 204, height: 54, colorKey: 'sem:position' },
-        { id: 'kv_cache', label: 'KV Cache', typeLabel: 'State', kind: 'tensor', x: leftX, y: 544, width: 164, height: 52, colorKey: 'io:state' },
-        { id: 'scaled_attention', label: 'Scaled Attention', typeLabel: 'Op', kind: 'op', x: mainX, y: 544, width: 224, height: 54, colorKey: 'sem:attention' },
-        { id: 'attn_out_weight', label: 'O-Proj Weight', typeLabel: 'Parameter', kind: 'tensor', x: rightX, y: 624, width: 194, height: 52, colorKey: 'io:parameter' },
-        { id: 'attn_output_linear', label: 'Attention Output', typeLabel: 'Op', kind: 'op', x: mainX, y: 624, width: 230, height: 54, colorKey: 'sem:linear' },
-        { id: 'mlp_norm_gamma', label: 'MLP Norm Gamma', typeLabel: 'Parameter', kind: 'tensor', x: rightX, y: 704, width: 204, height: 52, colorKey: 'io:parameter' },
-        { id: 'mlp_norm', label: 'MLP RMSNorm', typeLabel: 'Op', kind: 'op', x: mainX, y: 704, width: 214, height: 54, colorKey: 'sem:norm' },
-        { id: 'gate_weight', label: 'Gate Weight', typeLabel: 'Parameter', kind: 'tensor', x: leftX, y: 794, width: 180, height: 52, colorKey: 'io:parameter' },
-        { id: 'mlp_gate_linear', label: 'Gate Linear', typeLabel: 'Op', kind: 'op', x: mainX - 126, y: 794, width: 190, height: 54, colorKey: 'sem:mlp' },
-        { id: 'up_weight', label: 'Up Weight', typeLabel: 'Parameter', kind: 'tensor', x: rightX, y: 794, width: 164, height: 52, colorKey: 'io:parameter' },
-        { id: 'mlp_up_linear', label: 'Up Linear', typeLabel: 'Op', kind: 'op', x: mainX + 126, y: 794, width: 190, height: 54, colorKey: 'sem:mlp' },
-        { id: 'silu_multiply', label: 'SiLU Multiply', typeLabel: 'Op', kind: 'op', x: mainX, y: 874, width: 214, height: 54, colorKey: 'sem:mlp' },
-        { id: 'down_weight', label: 'Down Weight', typeLabel: 'Parameter', kind: 'tensor', x: rightX, y: 954, width: 184, height: 52, colorKey: 'io:parameter' },
-        { id: 'mlp_output_linear', label: 'MLP Output', typeLabel: 'Op', kind: 'op', x: mainX, y: 954, width: 214, height: 54, colorKey: 'sem:linear' },
-        { id: 'decoder_output', label: 'Layer Output', typeLabel: 'Tensor', kind: 'tensor', x: mainX, y: 1034, width: 204, height: 48, colorKey: 'io:activation' },
-        { id: 'final_norm_gamma', label: 'Final Norm Gamma', typeLabel: 'Parameter', kind: 'tensor', x: rightX, y: 1120, width: 206, height: 52, colorKey: 'io:parameter' },
-        { id: 'final_norm', label: 'Final RMSNorm', typeLabel: 'Op', kind: 'op', x: mainX, y: 1120, width: 214, height: 54, colorKey: 'sem:norm' },
-        { id: 'shared_lm_weight', label: 'Shared LM Weight', typeLabel: 'Parameter', kind: 'tensor', x: leftX, y: 1208, width: 224, height: 52, colorKey: 'io:parameter' },
-        { id: 'lm_head', label: 'LM Head Linear', typeLabel: 'Op', kind: 'op', x: mainX, y: 1208, width: 224, height: 54, colorKey: 'sem:head' },
-        { id: 'logits', label: 'Logits', typeLabel: 'Output', kind: 'tensor', x: mainX, y: 1292, width: 176, height: 48, colorKey: 'io:output' },
+        compactNode('token_ids', 'Token IDs', 'Input', 'tensor', cx, 72, 170, 48, 'io:input'),
+        compactNode('embedding', 'Parallel Embedding', 'Op', 'op', cx, 178, 250, 56, 'sem:embedding'),
+        compactNode('dense_block', 'Dense Decoder Block', 'Module', 'op', cx, 292, 280, 58, 'module:decoder'),
+        compactNode('attention', 'MLA Attention', 'Op', 'op', cx, 420, 230, 54, 'sem:attention'),
+        compactNode('moe_norm', 'MoE RMSNorm', 'Op', 'op', cx, 526, 220, 54, 'sem:norm'),
+        compactNode('router', 'Router Gate', 'Op', 'op', cx, 630, 210, 54, 'sem:gate'),
+        compactNode('dispatch', 'All-to-All Dispatch', 'Comm', 'op', cx, 730, 230, 52, 'sem:comm'),
+        compactNode('dispatch_buffer', 'Dispatch Buffer', 'State', 'tensor', right, 730, 188, 48, 'io:state'),
+        compactNode('experts', 'Routed Expert Pool', 'Op', 'op', cx, 832, 250, 58, 'sem:moe'),
+        compactNode('shared_expert', 'Shared Expert', 'Module', 'op', right, 832, 180, 58, 'sem:mlp'),
+        compactNode('combine', 'All-to-All Combine', 'Comm', 'op', cx, 934, 230, 52, 'sem:comm'),
+        compactNode('final_norm', 'Final RMSNorm', 'Op', 'op', cx, 1044, 210, 54, 'sem:norm'),
+        compactNode('lm_head', 'LM Head', 'Op', 'op', cx, 1148, 190, 54, 'sem:head'),
+        compactNode('logits', 'Logits', 'Output', 'tensor', cx, 1252, 160, 48, 'io:output'),
+        compactNode('embedding_weight', 'Embedding Weight', 'Parameter', 'tensor', left, 178, 190, 48, 'io:parameter'),
+        compactNode('attention_weights', 'Attention Weights', 'Parameter', 'tensor', left, 420, 190, 48, 'io:parameter'),
+        compactNode('router_weight', 'Router Weight', 'Parameter', 'tensor', left, 630, 180, 48, 'io:parameter'),
+        compactNode('expert_weights', 'Expert Weights', 'Parameter', 'tensor', left, 832, 180, 48, 'io:parameter'),
+        compactNode('shared_weights', 'Shared Weights', 'Parameter', 'tensor', left, 742, 180, 48, 'io:parameter'),
+        compactNode('norm_gamma', 'Norm Gamma', 'Parameter', 'tensor', left, 526, 170, 48, 'io:parameter'),
+        compactNode('lm_head_weight', 'LM Head Weight', 'Parameter', 'tensor', left, 1148, 190, 48, 'io:parameter'),
       ];
-
-      const clusterNodes = {
-        transformer: [
-          'input_tokens',
-          'token_embedding_weight',
-          'token_embedding',
-          'final_norm_gamma',
-          'final_norm',
-          'shared_lm_weight',
-          'lm_head',
-          'logits',
-        ],
-        decoder_layer: [
-          'hidden_states',
-          'attn_norm',
-          'mlp_norm',
-          'decoder_output',
-        ],
-        attention_box: [
-          'attn_norm_gamma',
-          'qkv_weight',
-          'qkv_linear',
-          'rope_cache',
-          'rotary_apply',
-          'kv_cache',
-          'scaled_attention',
-          'attn_out_weight',
-          'attn_output_linear',
-        ],
-        mlp_box: [
-          'mlp_norm_gamma',
-          'gate_weight',
-          'mlp_gate_linear',
-          'up_weight',
-          'mlp_up_linear',
-          'silu_multiply',
-          'down_weight',
-          'mlp_output_linear',
-        ],
-      };
-      const parentByNode = Object.entries(clusterNodes).reduce((acc, [parent, ids]) => {
-        ids.forEach((id) => { acc[id] = parent; });
-        return acc;
-      }, {});
-      nodes.forEach((node) => {
-        if (parentByNode[node.id]) node.parent = parentByNode[node.id];
-      });
 
       const edges = [
-        { source: 'input_tokens', target: 'token_embedding', tag: 'ACT', edgeType: 'activation' },
-        { source: 'token_embedding_weight', target: 'token_embedding', tag: 'Parameter', edgeType: 'parameter', dashed: true },
-        { source: 'token_embedding', target: 'hidden_states', tag: 'H', edgeType: 'activation' },
-        { source: 'hidden_states', target: 'attn_norm', tag: 'ACT', edgeType: 'activation' },
-        { source: 'attn_norm_gamma', target: 'attn_norm', tag: 'Parameter', edgeType: 'parameter', dashed: true },
-        { source: 'qkv_weight', target: 'qkv_linear', tag: 'Parameter', edgeType: 'parameter', dashed: true },
-        { source: 'attn_norm', target: 'qkv_linear', tag: 'QKV', edgeType: 'parameter' },
-        { source: 'rope_cache', target: 'rotary_apply', tag: 'State', edgeType: 'state', dashed: true },
-        { source: 'qkv_linear', target: 'rotary_apply', tag: 'ROPE', edgeType: 'state' },
-        { source: 'kv_cache', target: 'scaled_attention', tag: 'State', edgeType: 'cache', dashed: true },
-        { source: 'rotary_apply', target: 'scaled_attention', tag: 'KV', edgeType: 'cache' },
-        { source: 'scaled_attention', target: 'attn_output_linear', tag: 'ACT', edgeType: 'activation' },
-        { source: 'attn_out_weight', target: 'attn_output_linear', tag: 'Parameter', edgeType: 'parameter', dashed: true },
-        { source: 'attn_output_linear', target: 'mlp_norm', tag: 'RES', edgeType: 'activation' },
-        { source: 'mlp_norm_gamma', target: 'mlp_norm', tag: 'Parameter', edgeType: 'parameter', dashed: true },
-        { source: 'gate_weight', target: 'mlp_gate_linear', tag: 'Parameter', edgeType: 'parameter', dashed: true },
-        { source: 'mlp_norm', target: 'mlp_gate_linear', tag: 'W1', edgeType: 'parameter', curve: 'vertical', sourceAnchor: { side: 'bottom', dx: -62 }, targetAnchor: { side: 'top' } },
-        { source: 'up_weight', target: 'mlp_up_linear', tag: 'Parameter', edgeType: 'parameter', dashed: true },
-        { source: 'mlp_norm', target: 'mlp_up_linear', tag: 'W2', edgeType: 'parameter', curve: 'vertical', sourceAnchor: { side: 'bottom', dx: 62 }, targetAnchor: { side: 'top' } },
-        { source: 'mlp_gate_linear', target: 'silu_multiply', tag: 'GATE', edgeType: 'activation', curve: 'vertical', sourceAnchor: { side: 'bottom' }, targetAnchor: { side: 'top', dx: -62 } },
-        { source: 'mlp_up_linear', target: 'silu_multiply', tag: 'UP', edgeType: 'activation', curve: 'vertical', sourceAnchor: { side: 'bottom' }, targetAnchor: { side: 'top', dx: 62 } },
-        { source: 'silu_multiply', target: 'mlp_output_linear', tag: 'W', edgeType: 'parameter' },
-        { source: 'down_weight', target: 'mlp_output_linear', tag: 'Parameter', edgeType: 'parameter', dashed: true },
-        { source: 'mlp_output_linear', target: 'decoder_output', tag: 'ACT', edgeType: 'activation' },
-        { source: 'decoder_output', target: 'final_norm', tag: 'ACT', edgeType: 'activation' },
-        { source: 'final_norm_gamma', target: 'final_norm', tag: 'Parameter', edgeType: 'parameter', dashed: true },
-        { source: 'shared_lm_weight', target: 'lm_head', tag: 'Parameter', edgeType: 'parameter', dashed: true },
-        { source: 'final_norm', target: 'lm_head', tag: 'W', edgeType: 'parameter' },
-        { source: 'lm_head', target: 'logits', tag: 'LOSS', edgeType: 'gradient' },
-      ];
+        ['token_ids', 'embedding', 'ACT', 'activation'],
+        ['embedding', 'dense_block', 'ACT', 'activation'],
+        ['dense_block', 'attention', 'ACT', 'activation'],
+        ['attention', 'moe_norm', 'ACT', 'activation'],
+        ['moe_norm', 'router', 'ACT', 'activation'],
+        ['router', 'dispatch', 'dispatch', 'communication'],
+        ['dispatch', 'experts', 'TOKENS', 'communication'],
+        ['moe_norm', 'shared_expert', 'ACT', 'activation'],
+        ['shared_expert', 'combine', 'ACT', 'activation'],
+        ['experts', 'combine', 'combine', 'communication'],
+        ['combine', 'final_norm', 'ACT', 'activation'],
+        ['final_norm', 'lm_head', 'ACT', 'activation'],
+        ['lm_head', 'logits', 'LOGITS', 'gradient'],
+      ].map(([source, target, tag, edgeType]) => ({ source, target, tag, edgeType }));
 
-      const evidence = {
-        input_tokens: evidenceItem('data', `SEQ_LENGTH ${config.seq}`, '训练样本首先被切成 token ids；序列长度决定后续每层要处理的 token 数。', [
-          `${config.seq} 是单样本上下文长度，直接影响激活显存和 attention 计算量。`,
-          '微批次 MBS 与 GBS 决定一次前后向覆盖多少 token。',
-        ], '如果首轮就 OOM，优先缩短 SEQ_LENGTH 或开启重算。', ['token_embedding']),
-        token_embedding: evidenceItem('source / parameter', `hidden ${config.hidden}`, 'Embedding 把 token id 映射到 hidden states，是模型数据流的入口。', [
-          `hidden size=${config.hidden} 会沿着 Attention、MLP、RMSNorm 和 LM Head 传播。`,
-          '词表维度影响 embedding 与最终 vocab projection 的权重规模。',
-        ], '检查 tokenizer 路径、词表大小和权重转换是否一致。', ['input_tokens', 'token_embedding_weight', 'attn_norm']),
-        token_embedding_weight: evidenceItem('parameter tensor', 'embedding.weight', 'Embedding Weight 是 token id 查表时读取的参数张量，不是 config 或 README 文件。', [
-          'config.json 提供 vocab_size、hidden_size 这类形状证据；safetensors index 提供权重 shard 证据。',
-        ], '在图里把它作为 Parameter 输入接到 Embedding Lookup。', ['token_embedding'], ['config.json', 'safetensors.index']),
-        hidden_states: evidenceItem('tensor', `hidden ${config.hidden}`, 'Hidden States 是 embedding 之后真正进入 decoder layer 的激活张量。', [
-          '它不是源码文件，而是训练中每一层反复读写、保存或重算的激活。',
-        ], '讲训练链路时，优先沿着 tensor 流向解释，而不是沿着文件名解释。', ['token_embedding', 'attn_norm']),
-        scaled_attention: evidenceItem('compute / memory', 'Attention', 'Attention 让当前 token 读取上下文重点，是序列长度最敏感的训练节点。', [
-          `${config.layers} layers、${config.heads} heads、${config.parallel} 共同决定 attention 的切分和通信域。`,
-          '长上下文会放大 QK^T、softmax、KV cache/激活保存和重算压力。',
-        ], '观察 MFU、HBM 与通信等待；若 MFU 低且 HBM 高，优先看重算和 TP 切分。', ['qkv_weight', 'qkv_linear', 'rope_cache', 'kv_cache', 'rotary_apply', 'attn_output_linear']),
-        qkv_weight: evidenceItem('parameter tensor', 'q_proj/k_proj/v_proj', 'QKV Weight 是 Attention 线性投影读取的权重输入。', [
-          'modeling_qwen.py 证明 Q/K/V 投影的源码路径；config.json 给出 head 和 hidden 的形状约束。',
-        ], '排查 attention 显存或通信时，把 QKV 权重和 QKV 激活分开看。', ['qkv_linear'], ['modeling_qwen.py', 'config.json']),
-        rope_cache: evidenceItem('state tensor', 'RoPE cache', 'RoPE Cache 是位置编码状态，用于把位置信息注入 Q/K。', [
-          '它来自模型实现和序列长度约束，不是独立源码文件节点。',
-        ], '长上下文异常时，联查 RoPE 形状、seq_length 和 attention kernel。', ['rotary_apply'], ['modeling_qwen.py']),
-        kv_cache: evidenceItem('state tensor', 'KV cache / activation', '训练图中 KV Cache 表示 attention 路径上需要保存或重算的 K/V 状态。', [
-          '它帮助解释长上下文为什么会放大 HBM 和重算压力。',
-        ], '用 profiling 区分 KV/激活压力和参数权重读取压力。', ['scaled_attention'], ['profiling summary']),
-        silu_multiply: evidenceItem('compute', `intermediate ${config.intermediate}`, 'SwiGLU MLP 执行 Gate/Up 投影和 SiLU 乘法，是 Dense decoder 的主要算力消耗之一。', [
-          `intermediate size=${config.intermediate} 解释了 MLP 为什么比 hidden size 宽很多。`,
-          'MLP 对矩阵乘吞吐敏感，和 tensor parallel 的切分策略强相关。',
-        ], '如果 attention 正常但 MFU 偏低，检查 MLP fusion、TP 切分和重算粒度。', ['mlp_norm_gamma', 'gate_weight', 'up_weight', 'mlp_gate_linear', 'mlp_up_linear', 'down_weight', 'mlp_output_linear']),
-        gate_weight: evidenceItem('parameter tensor', 'mlp.w1 / gate_proj', 'Gate Weight 是 SwiGLU 门控分支的参数输入。', [
-          `intermediate size=${config.intermediate} 主要体现在 Gate/Up/Down 三组 MLP 权重上。`,
-        ], '把 MLP 算力问题映射到 Gate/Up/Down 三条参数输入。', ['mlp_gate_linear'], ['modeling_qwen.py', 'safetensors.index']),
-        up_weight: evidenceItem('parameter tensor', 'mlp.w2 / up_proj', 'Up Weight 是 SwiGLU 上投影分支的参数输入。', [
-          '它和 Gate Weight 一起决定 SiLU Multiply 前的宽激活。',
-        ], '若 MLP kernel 利用率低，优先看这两条上投影是否被正确切分。', ['mlp_up_linear'], ['modeling_qwen.py', 'safetensors.index']),
-        down_weight: evidenceItem('parameter tensor', 'mlp.c_proj / down_proj', 'Down Weight 把 intermediate 激活投回 hidden size。', [
-          '它是 MLP 分支回到主干 hidden states 的参数边界。',
-        ], '检查 TP 切分和输出投影融合是否匹配脚本配置。', ['mlp_output_linear'], ['modeling_qwen.py', 'safetensors.index']),
-        decoder_output: evidenceItem('tensor', 'layer output', 'Layer Output 表示一个 decoder layer 结束后的 hidden states，会进入下一层或最终 RMSNorm。', [
-          '训练时它通常对应残差后的激活保存、重算和梯度回传边界。',
-        ], '解释收敛或显存问题时，把它当作层间张量边界来看。', ['mlp_output_linear', 'final_norm']),
-        lm_head: evidenceItem('loss / backward', 'logits', 'LM Head 把 hidden states 投影到词表 logits，随后进入 loss、反向传播和优化器更新。', [
-          '词表越大，logits、cross entropy 和梯度路径越容易变成显存压力点。',
-          `${config.batch} 会改变 logits/loss 的统计稳定性和梯度累积节奏。`,
-        ], '遇到 loss spike 时同时看 logits、梯度范数和最后投影的通信/显存。', ['shared_lm_weight', 'logits', 'final_norm']),
-        shared_lm_weight: evidenceItem('parameter tensor', 'lm_head.weight', 'Shared LM Weight 是输出词表投影读取的参数张量。', [
-          'generation_config 只解释采样侧 top_p/eos；训练前向里真正输入 LM Head 的是权重 tensor。',
-        ], '不要把 generation_config 画成 logits 的输入节点。', ['lm_head', 'logits'], ['generation_config.json', 'safetensors.index']),
-      };
+      edges.push(
+        { source: 'embedding_weight', target: 'embedding', tag: 'W', edgeType: 'parameter', dashed: true },
+        { source: 'attention_weights', target: 'attention', tag: 'W', edgeType: 'parameter', dashed: true },
+        { source: 'router_weight', target: 'router', tag: 'W', edgeType: 'parameter', dashed: true },
+        { source: 'dispatch_buffer', target: 'dispatch', tag: 'state', edgeType: 'state', dashed: true },
+        { source: 'expert_weights', target: 'experts', tag: 'W', edgeType: 'parameter', dashed: true },
+        { source: 'shared_weights', target: 'shared_expert', tag: 'W', edgeType: 'parameter', dashed: true },
+        { source: 'norm_gamma', target: 'moe_norm', tag: 'gamma', edgeType: 'parameter', dashed: true },
+        { source: 'lm_head_weight', target: 'lm_head', tag: 'W', edgeType: 'parameter', dashed: true }
+      );
 
       return {
-        width: 1120,
-        height: 1360,
+        width: 1280,
+        height: 1340,
         clusters: [
-          {
-            id: 'transformer',
-            label: `${config.name} Transformer`,
-            x: mainX - 284,
-            y: 92,
-            width: 568,
-            height: 1234,
-            colorKey: 'module:transformer',
-            nodes: clusterNodes.transformer,
-            children: ['decoder_layer'],
-          },
-          {
-            id: 'decoder_layer',
-            label: `Decoder Layer × ${config.layers}`,
-            x: mainX - 238,
-            y: 256,
-            width: 476,
-            height: 818,
-            repeat: config.layers,
-            badge: `repeat 0-${config.layers - 1}, count ${config.layers}`,
-            colorKey: 'module:decoder',
-            parent: 'transformer',
-            nodes: clusterNodes.decoder_layer,
-            children: ['attention_box', 'mlp_box'],
-          },
-          {
-            id: 'attention_box',
-            label: 'Self Attention',
-            x: mainX - 196,
-            y: 350,
-            width: 392,
-            height: 306,
-            colorKey: 'module:attention',
-            parent: 'decoder_layer',
-            nodes: clusterNodes.attention_box,
-          },
-          {
-            id: 'mlp_box',
-            label: 'SwiGLU MLP',
-            x: mainX - 216,
-            y: 666,
-            width: 432,
-            height: 332,
-            colorKey: 'module:mlp',
-            parent: 'decoder_layer',
-            nodes: clusterNodes.mlp_box,
-          },
+          { id: 'model', label: 'Pangu MoE', x: 60, y: 132, width: 1130, height: 1170, colorKey: 'module:model' },
+          { id: 'decoder', label: '50 decoder layers', x: 410, y: 246, width: 460, height: 770, colorKey: 'module:decoder', repeat: true },
+          { id: 'moe', label: 'MoE FFN', x: 430, y: 570, width: 610, height: 420, colorKey: 'sem:moe', repeat: true },
         ],
         nodes,
         edges,
-        trainingEvidence: evidence,
+        trainingEvidence: {
+          embedding_weight: evidenceItem(null, 'parameter tensor', 'embedding.weight', [
+            'Embedding Weight 是输入侧参数，不是运行态 state。',
+            '它和 vocab/hidden 共同决定 token ids 到 hidden states 的映射。',
+          ], '先确认词表、hidden size 和 shard 规则，再进入 dense/MoE 主干。', ['embedding'], ['config', 'weights index']),
+          attention_weights: evidenceItem(null, 'parameter tensor', 'attention weights', [
+            'Attention Weights 属于 decoder attention 的参数输入。',
+            '训练解释里它应该保持在左侧 weight lane，而不是和 cache/state 混在一起。',
+          ], '分析 attention 低效时，把参数读取、激活流和 state/cache 分开看。', ['attention'], ['model source']),
+          norm_gamma: evidenceItem(null, 'parameter tensor', 'rms norm gamma', [
+            'Norm Gamma 是 MoE RMSNorm 的参数输入。',
+            '它和 router 之前的 hidden-state 归一化绑定。',
+          ], '定位 router 分布异常时，同时检查 norm 输入和 router weight。', ['moe_norm', 'router'], ['model source']),
+          router_weight: evidenceItem(null, 'parameter tensor', 'router.weight', [
+            'Router Weight 为 token 生成专家打分，是 MoE 训练瓶颈分析的入口。',
+            'top-8 与专家并行规模需要一起解释。',
+          ], '观察 expert load、token drop、all-to-all wait 和 straggler rank。', ['router', 'dispatch'], ['MoE config']),
+          expert_weights: evidenceItem(null, 'parameter tensor', 'expert weights', [
+            'Expert Weights 是 routed experts 的参数输入。',
+            '它们数量多，但仍属于左侧 weight lane。',
+          ], '专家耗时异常时，先区分 matmul、dispatch 和负载不均。', ['experts'], ['weights index']),
+          shared_weights: evidenceItem(null, 'parameter tensor', 'shared expert weights', [
+            'Shared Weights 输入右侧 Shared Expert 模块。',
+            '权重本身仍在左侧输入 lane，模块节点才在右侧辅助分支。',
+          ], '解释共享专家时保持 weights 与 module 的语义分离。', ['shared_expert'], ['model source']),
+          lm_head_weight: evidenceItem(null, 'parameter tensor', 'lm_head.weight', [
+            'LM Head Weight 把 final hidden states 投影到 logits。',
+            '输出侧参数仍属于 weight lane。',
+          ], 'loss 或 logits 异常时，沿 final_norm、lm_head、logits 逐层看。', ['lm_head', 'logits'], ['config', 'weights index']),
+          router: evidenceItem('P1', 'MoE routing', 'top-8 / 80 experts', [
+            'Router Gate 为每个 token 选择 routed experts。',
+            '训练风险通常从单算子算力转向负载均衡、通信等待和 token 分布。',
+          ], '把 router logits、TopK、dispatch 和专家负载作为一个链路观察。', ['router_weight', 'dispatch', 'experts']),
+          dispatch: evidenceItem('P1', 'communication', 'all-to-all dispatch', [
+            'All-to-All Dispatch 是 expert parallel 的关键通信面。',
+            'MFU 下降但专家 matmul 不慢时，瓶颈经常在这里。',
+          ], '联查 rank 间 token 分布、all-to-all overlap 和 straggler。', ['router', 'dispatch_buffer', 'experts', 'combine']),
+          dispatch_buffer: evidenceItem(null, 'runtime state', 'dispatch buffer', [
+            'Dispatch Buffer 是 token 按专家分组后的运行态状态。',
+            '它不属于模型权重，因此放在右侧 state lane。',
+          ], '通信等待升高时，结合 dispatch buffer 和专家负载一起看。', ['dispatch', 'experts'], ['profiling trace']),
+          experts: evidenceItem('P1', 'expert compute', 'routed expert pool', [
+            'Routed Expert Pool 承接按 token 路由后的主要 MoE 计算。',
+            '专家权重、token 分布和 EP 通信共同决定训练效率。',
+          ], '专家耗时长时同时看 expert_weights、dispatch 和 combine。', ['expert_weights', 'dispatch', 'combine']),
+          shared_expert: evidenceItem('P2', 'shared branch', 'shared expert', [
+            'Shared Expert 是右侧辅助专家分支，不是参数节点。',
+            '它与 routed experts 一起汇入 combine。',
+          ], '保持共享专家模块在右侧，shared weights 在左侧。', ['shared_weights', 'combine']),
+          combine: evidenceItem('P2', 'MoE output', 'weighted combine', [
+            'All-to-All Combine 把专家输出合并回主干 hidden states。',
+            '这里是 MoE 分支回到 dense 流的同步点。',
+          ], 'combine 等待升高时，优先判断通信拓扑还是专家负载不均。', ['experts', 'shared_expert', 'final_norm']),
+          lm_head: evidenceItem('P2', 'output projection', 'logits path', [
+            'LM Head 生成 logits，是训练 loss 前的最后投影。',
+            '它依赖 final_norm 激活和 lm_head_weight 参数。',
+          ], '排查 loss spike 时从 logits 回溯到 LM Head 和 MoE combine。', ['lm_head_weight', 'logits']),
+        },
       };
     }
 
-    const phaseMap = {
-      embedding: { nodeId: 'token_embedding', relatedNodeIds: ['token_embedding_weight'] },
-      attention: { nodeId: 'scaled_attention', relatedNodeIds: ['hidden_states', 'attn_norm_gamma', 'qkv_weight', 'qkv_linear', 'rope_cache', 'kv_cache', 'rotary_apply', 'attn_out_weight', 'attn_output_linear'] },
-      mlp: { nodeId: 'silu_multiply', relatedNodeIds: ['mlp_norm_gamma', 'mlp_gate_linear', 'gate_weight', 'mlp_up_linear', 'up_weight', 'down_weight', 'mlp_output_linear'] },
-      logits: { nodeId: 'lm_head', relatedNodeIds: ['shared_lm_weight', 'logits'] },
-    };
+    function setSelectedPhase(phaseId) {
+      const phase = PHASES[phaseId] || PHASES.router;
+      activePhase = PHASES[phaseId] ? phaseId : 'router';
+      document.querySelectorAll('[data-phase]').forEach((button) => {
+        button.classList.toggle('is-selected', button.dataset.phase === activePhase);
+      });
+      document.getElementById('statusText').textContent = `${phase.label} phase selected.`;
+      controller?.setPhase?.({
+        nodeId: phase.nodeId,
+        relatedNodeIds: phase.relatedNodeIds,
+      });
+    }
 
-    const stage = document.getElementById('previewStage');
-    const controller = window.PtoModelTrainingGraphvizPattern.render(stage, makeQwen7BTrainingGraph(), {
-      ariaLabel: 'Qwen7B training architecture graph',
-      viewportPadding: 18,
-    });
+    function renderGraph() {
+      const stage = document.getElementById('previewStage');
+      const graph = makePanguMoETrainingGraph();
+      if (controller) controller.destroy();
+      controller = window.PtoModelTrainingGraphvizPattern.render(stage, graph, {
+        ariaLabel: 'Pangu MoE training graph',
+        className: 'pto-model-architecture-stage',
+        reportOverlays: false,
+        viewportPadding: 32,
+        fitMode: 'readable',
+        minReadableZoom: 0.58,
+        autoFit: true,
+        colormap: window.PtoModelGraphvizPattern.modelArchitectureColormap(graph),
+        activeNodeId: PHASES[activePhase].nodeId,
+        activeRelatedNodeIds: PHASES[activePhase].relatedNodeIds,
+        interaction: {
+          panZoom: true,
+          selectable: true,
+          selectableClusters: false,
+          relatedHighlight: true,
+        },
+        overlays: {
+          evidence: true,
+          edgeTags: true,
+        },
+      });
+      document.getElementById('factRow').innerHTML = FACTS.map((fact) => `<span class="training-chip">${fact}</span>`).join('');
+      setSelectedPhase(activePhase);
+    }
 
     document.querySelectorAll('[data-phase]').forEach((button) => {
-      button.addEventListener('click', () => {
-        const phase = phaseMap[button.dataset.phase];
-        if (!phase || !controller) return;
-        document.querySelectorAll('[data-phase]').forEach((item) => item.classList.remove('is-selected'));
-        button.classList.add('is-selected');
-        controller.setPhase(phase);
-      });
+      button.addEventListener('click', () => setSelectedPhase(button.dataset.phase));
     });
+    document.querySelector('[data-action="fit"]')?.addEventListener('click', () => controller?.fit?.());
+    renderGraph();
   </script>
 </body>
 </html>

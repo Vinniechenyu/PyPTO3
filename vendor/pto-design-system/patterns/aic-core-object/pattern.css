@@ -86,7 +86,7 @@
   border: 1px solid var(--pto-aic-badge-border);
   background: var(--pto-aic-badge-bg);
   color: var(--pto-aic-badge-fg);
-  font: 10px/1.2 var(--text-mono, ui-monospace, monospace);
+  font: 11px/1.2 var(--font-mono, ui-monospace, monospace);
 }
 
 .pto-aic-core-pattern-chip {
@@ -209,7 +209,7 @@
   background: #ffdf1f;
   border: 1px solid #ffdf1f;
   color: #111111;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   line-height: 1;
   box-sizing: border-box;

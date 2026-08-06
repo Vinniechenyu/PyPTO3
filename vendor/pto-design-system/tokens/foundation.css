@@ -20,6 +20,7 @@
   --font-size-title-sm:   16px;
   --font-size-body-md:    14px;
   --font-size-body-sm:    12px;
+  --font-size-label-sm:   12px;
   --font-size-label-xs:   11px;
 
   --font-weight-bold:     700;
@@ -27,8 +28,10 @@
   --font-weight-medium:   500;
 
   --line-height-display:  1.25;
+  --line-height-title:    1.3;
   --line-height-body:     1.5;
   --line-height-label:    1.2;
+  --line-height-mono:     1.4;
 
   --letter-spacing-body:  0;
   --letter-spacing-label: 0.5px;

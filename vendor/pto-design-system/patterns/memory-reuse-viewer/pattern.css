@@ -70,12 +70,12 @@
 
 .pto-memory-reuse-viewer__title strong {
   color: var(--foreground);
-  font: var(--text-title-2);
+  font: var(--type-title-2);
 }
 
 .pto-memory-reuse-viewer__title span {
   color: var(--foreground-muted);
-  font: var(--text-body-sm);
+  font: var(--type-body-sm);
   letter-spacing: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -109,7 +109,7 @@
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--surface-2) 90%, transparent);
   color: var(--foreground-secondary);
-  font: var(--text-body-sm);
+  font: var(--type-body-sm);
 }
 
 .pto-memory-reuse-viewer__select {
@@ -179,7 +179,7 @@
 
 .pto-memory-reuse-viewer__option-label {
   color: var(--foreground-muted);
-  font: var(--text-label);
+  font: var(--type-label);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -212,7 +212,7 @@
   border: 1px solid var(--border-subtle);
   background: color-mix(in srgb, var(--surface-1) 88%, transparent);
   color: var(--foreground-muted);
-  font: var(--text-label);
+  font: var(--type-label);
   letter-spacing: 0;
 }
 
@@ -264,7 +264,7 @@
   background: color-mix(in srgb, var(--background-elevated) 96%, transparent);
   box-shadow: var(--shadow-lg);
   color: var(--foreground-secondary);
-  font: var(--text-body-sm);
+  font: var(--type-body-sm);
 }
 
 .pto-memory-reuse-viewer__tip-name {
@@ -304,12 +304,12 @@
   display: block;
   margin-bottom: 6px;
   color: var(--foreground);
-  font: var(--text-title-3);
+  font: var(--type-title-3);
 }
 
 .pto-memory-reuse-viewer__info-popover p {
   margin: 0;
-  font: var(--text-body-sm);
+  font: var(--type-body-sm);
 }
 
 .pto-memory-reuse-viewer__detail-popover {
@@ -341,12 +341,12 @@
 
 .pto-memory-reuse-viewer__detail-head strong {
   color: var(--foreground);
-  font: var(--text-title-3);
+  font: var(--type-title-3);
 }
 
 .pto-memory-reuse-viewer__detail-head span {
   color: var(--foreground-muted);
-  font: var(--text-label);
+  font: var(--type-label);
   letter-spacing: 0;
 }
 
@@ -384,7 +384,7 @@
 .pto-memory-reuse-viewer__section h3 {
   margin: 0 0 8px;
   color: var(--foreground-muted);
-  font: var(--text-label);
+  font: var(--type-label);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -392,7 +392,7 @@
 .pto-memory-reuse-viewer__hint {
   margin: 0;
   color: var(--foreground-secondary);
-  font: var(--text-body-sm);
+  font: var(--type-body-sm);
 }
 
 .pto-memory-reuse-viewer__legend {
@@ -401,7 +401,7 @@
   gap: 8px;
   margin-top: 8px;
   color: var(--foreground-muted);
-  font: var(--text-label);
+  font: var(--type-label);
   letter-spacing: 0;
 }
 
@@ -430,7 +430,7 @@
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--surface-1) 88%, transparent);
   color: var(--foreground-muted);
-  font: var(--text-label);
+  font: var(--type-label);
   letter-spacing: 0;
   cursor: pointer;
 }
@@ -444,14 +444,14 @@
 
 .pto-memory-reuse-viewer__empty {
   color: var(--foreground-muted);
-  font: var(--text-body-sm);
+  font: var(--type-body-sm);
 }
 
 .pto-memory-reuse-viewer__kv {
   display: grid;
   grid-template-columns: 78px minmax(0, 1fr);
   gap: 5px 8px;
-  font: var(--text-body-sm);
+  font: var(--type-body-sm);
 }
 
 .pto-memory-reuse-viewer__kv dt {
@@ -482,14 +482,14 @@
   border: 1px solid color-mix(in srgb, var(--success) 42%, transparent);
   background: color-mix(in srgb, var(--success) 12%, transparent);
   color: var(--success);
-  font: var(--text-label);
+  font: var(--type-label);
   letter-spacing: 0;
 }
 
 .pto-memory-reuse-viewer__code-label {
   margin: 0 0 5px;
   color: var(--foreground-muted);
-  font: var(--text-label);
+  font: var(--type-label);
   letter-spacing: 0;
 }
 

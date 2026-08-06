@@ -51,7 +51,7 @@
   --ide-frame-pane-border: var(--border-subtle);
   --ide-frame-header-height: 32px;
   --ide-frame-title-font: 600 12.5px / 1.2 var(--font-sans);
-  --ide-frame-meta-font: 500 11px / 1.35 var(--font-mono);
+  --ide-frame-meta-font: 500 var(--font-size-body-sm) / 1.35 var(--font-mono);
   --ide-frame-icon-stroke: #ffffff;
   --ide-frame-icon-stroke-inverse: #101010;
   --ide-frame-icon-opacity-strong: 0.90;
@@ -130,7 +130,7 @@
 
 .pto-ide-frame-preview h1 {
   margin: 0;
-  font: var(--text-display);
+  font: var(--type-display);
   letter-spacing: 0;
 }
 
@@ -138,7 +138,7 @@
   max-width: 920px;
   margin: 0;
   color: var(--foreground-secondary);
-  font: var(--text-body);
+  font: var(--type-body);
 }
 
 .pto-ide-frame-preview__stack {
@@ -149,7 +149,7 @@
 
 .pto-ide-frame-preview__label {
   color: var(--foreground-muted);
-  font: var(--text-mono);
+  font: var(--type-mono);
 }
 
 .pto-ide-frame {
@@ -171,6 +171,31 @@
   box-shadow:
     0 18px 54px rgba(0, 0, 0, 0.32),
     inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+
+/*
+ * Solid surface mode keeps the IDE frame contract while opting out of glass
+ * compositing. Product pages select it with data-surface="solid" instead of
+ * overriding pane internals one selector at a time.
+ */
+.pto-ide-frame[data-surface="solid"] {
+  --ide-frame-pane-fill: var(--ide-frame-pane-bg);
+  --ide-frame-pane-header-fill: var(--ide-frame-pane-bg);
+  --ide-frame-pane-backdrop-filter: none;
+  --ide-frame-pane-shadow: none;
+  --ide-frame-control-bg: var(--surface-2);
+  --ide-frame-control-border: var(--border-subtle);
+  --ide-frame-control-shadow: none;
+  --ide-frame-selected-bg: var(--surface-3);
+  --ide-frame-selected-border: var(--border-subtle);
+  --ide-frame-selected-shadow: none;
+  --surface-backdrop-filter: none;
+  --surface-backdrop-filter-soft: none;
+  --surface-backdrop-filter-strong: none;
+}
+
+.pto-ide-frame[data-surface="solid"] .pto-ide-frame__terminal {
+  background: var(--ide-frame-pane-bg);
 }
 
 .pto-ide-frame::before,
@@ -763,7 +788,7 @@
   overflow: auto;
   padding: 8px 12px 18px;
   color: var(--foreground-secondary);
-  font: var(--text-mono);
+  font: var(--type-mono);
 }
 
 .pto-ide-frame__terminal-line {

@@ -30,6 +30,7 @@ design-system-share/
 │   └── tokens.js                ← 生成产物，不手改
 ├── css/style.css                ← 真正的 class 实现
 ├── scripts/audit-theme.mjs      ← light/dark token、硬编码颜色、对比度检查
+├── scripts/audit-typography.mjs ← 14px 正文基线、token 完整性、data-viz 小字号例外检查
 ├── assets/                      ← pattern 运行时需要的 SVG 资源（例如 fx.svg）
 ├── swimlane/styles.css          ← swimlane 模块样式（预览页要用）
 └── patterns/                    ← 页面级 / 可视化级复用 pattern，优先级高于基础组件拼装
@@ -38,10 +39,19 @@ design-system-share/
     ├── workbench-shell/         ← 可拖拽分屏 resize kernel，只负责 split / gutter / localStorage
     ├── floating-playback-control/ ← 悬浮播放、step、scrubber 控制条
     ├── model-graphviz/          ← TorchVista / DeepSeek V3.2 Graphviz / Qwen-7B / openPangu-2.0-Flash model architecture / report overlay
+    ├── model-training-graphviz/ ← 模型训练 evidence、phase、edge tag overlay
+    ├── model-architecture-3d-deck/ ← openPangu 深度堆叠模型架构与平行标注
+    ├── model-parallel-rank-deck/ ← Three.js 模型到 Rank 的并行放置
+    ├── model-architecture-training-sidecar/ ← 模型架构训练语义与 telemetry sidecar
+    ├── training-metrics-chart/  ← 训练指标、异常、brush 和 step cursor SVG 图表
     ├── memory-architecture/     ← 910B / 950 内存架构图与 route overlay
+    ├── memory-reuse-viewer/     ← UB / L1 / L0C tensor lifetime 与复用检查器
+    ├── hardware-architecture-viewport/ ← 硬件架构 viewport、toolbar、zoom 和消息协议
     ├── aic-core-object/         ← AIC core object 可配置结构图
     ├── aiv-core-object/         ← AIV core object 可配置结构图
     ├── pass-ir-graph-node/      ← Pass-IR graph node 卡片和 compact/group 状态
+    ├── tensor-volume-canvas/    ← API Visualizer 风格的固定视角三维 Tensor Canvas renderer
+    ├── matrix-canvas/           ← 二维矩阵 Tensor Canvas，支持逐元素格与大矩阵聚合格
     └── swimlane-task/           ← 执行 trace / timeline 泳道任务条 canvas renderer
 ```
 
@@ -55,9 +65,18 @@ design-system-share/
 | `workbench-shell` | 任意需要拖拽调整大小的分屏 | `patterns/workbench-shell/pattern.js` |
 | `floating-playback-control` | step、播放、暂停、scrubber、回放控制 | `patterns/floating-playback-control/pattern.js` |
 | `model-graphviz` | TorchVista / 模型 Graphviz / Qwen-7B / openPangu-2.0-Flash 架构页 / 报告 overlay | `patterns/model-graphviz/pattern.html` |
+| `model-training-graphviz` | 在共享模型 Graphviz 上叠加训练 evidence、phase、edge tag 与相关节点强调 | `patterns/model-training-graphviz/pattern.js` |
+| `model-architecture-3d-deck` | openPangu 深度堆叠架构、iso/front/right 视图和平行标注 | `patterns/model-architecture-3d-deck/pattern.js` |
+| `model-parallel-rank-deck` | 将完整模型 Layer 编译到 Three.js Rank volumes 并检查并行归属 | `patterns/model-parallel-rank-deck/pattern.js` |
+| `model-architecture-training-sidecar` | 在 3D deck 右视图上增加训练流、梯度、loss、metric 与 Layer 下钻 | `patterns/model-architecture-training-sidecar/pattern.js` |
+| `training-metrics-chart` | 训练指标曲线、异常点、interest-window brush 和 step cursor | `patterns/training-metrics-chart/pattern.js` |
 | `memory-architecture` | 910B / 950 内存层级、MTE route、AIC/AIV 组合图、graph-only iframe、60% 默认缩放、拖拽和 Command-wheel 缩放 | `patterns/memory-architecture/pattern.js` |
+| `memory-reuse-viewer` | UB / L1 / L0C tensor lifetime、buffer offset、peak usage 与复用关系检查 | `patterns/memory-reuse-viewer/pattern.js` |
+| `hardware-architecture-viewport` | 架构图 toolbar、detail visibility、zoom readout、iframe readiness 和标准消息协议 | `patterns/hardware-architecture-viewport/pattern.js` |
 | `aic-core-object` / `aiv-core-object` | 单独渲染 AIC / AIV 内部结构 | `patterns/aic-core-object/pattern.js` / `patterns/aiv-core-object/pattern.js` |
 | `pass-ir-graph-node` | Pass-IR 节点卡、group node、compact node | `patterns/pass-ir-graph-node/pattern.js` |
+| `tensor-volume-canvas` | NCHW / A1 / Load3D / Conv / Tiling / Code Recovery 的固定视角三维 Tensor 体素渲染 | `patterns/tensor-volume-canvas/pattern.js` |
+| `matrix-canvas` | 二维矩阵 Tensor、Load3D A2 状态，以及业务可注入数量的缩略格概览 | `patterns/matrix-canvas/pattern.js` |
 | `swimlane-task` | 执行 trace / timeline 的泳道任务条 | `patterns/swimlane-task/pattern.js` |
 
 ## 在三种环境里加载
@@ -162,8 +181,17 @@ AI 应该先问清楚：
 | 可拖拽分屏 | `patterns/workbench-shell` |
 | 执行 trace / 时间线任务条 | `patterns/swimlane-task` |
 | Pass-IR graph 节点卡 | `patterns/pass-ir-graph-node` |
+| 固定视角三维 Tensor / Load3D 体素状态 | `patterns/tensor-volume-canvas`；页面将业务状态转换为 voxel 数据并直接调用共享 renderer |
+| 二维矩阵 Tensor / 大矩阵缩略概览 | `patterns/matrix-canvas`；页面保持源 shape，通过任意 span + summary 或目标缩略格行列数表达聚合区域 |
 | TorchVista / 模型 Graphviz / Qwen-7B / openPangu-2.0-Flash 架构页 / 报告 overlay | `patterns/model-graphviz` |
+| 模型训练 evidence / phase / edge tag overlay | `patterns/model-training-graphviz` |
+| 深度堆叠模型架构与平行标注 | `patterns/model-architecture-3d-deck` |
+| 模型到 Rank 的 Three.js 并行放置 | `patterns/model-parallel-rank-deck` |
+| 模型架构训练流、梯度、loss 与 Layer telemetry | `patterns/model-architecture-training-sidecar` |
+| 训练指标曲线、异常与 step cursor | `patterns/training-metrics-chart` |
 | AIC / AIV / 950B 内存架构图 | `patterns/memory-architecture`、`patterns/aic-core-object`、`patterns/aiv-core-object`；iframe/inspector 嵌入默认 graph-only，使用 `createZoomController` 的 60% zoom、拖拽和 Command-wheel 缩放 |
+| 硬件架构 viewport toolbar、zoom 和消息同步 | `patterns/hardware-architecture-viewport` |
+| UB / L1 / L0C tensor lifetime 与复用检查 | `patterns/memory-reuse-viewer` |
 | 底部播放和 step 控制 | `patterns/floating-playback-control` |
 
 如果一个 pattern 已经有完整运行环境，比如 Graphviz overlay 原页面仍然负责 DOT 生成、D3 zoom、popup、展开折叠，那么 pattern 预览可以用 iframe 保持一致；如果是在新页面里消费同一套视觉和渲染逻辑，则直接加载对应 `pattern.css` / `pattern.js` 并调用 `window.Pto*Pattern` 或 `window.Pto*` API。

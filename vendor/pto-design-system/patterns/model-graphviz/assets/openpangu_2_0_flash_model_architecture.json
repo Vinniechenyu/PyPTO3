@@ -209,7 +209,7 @@
       "label": "Input RMSNorm",
       "op_type": "RMSNorm",
       "attrs": {
-        "eps": 1e-05
+        "eps": 0.00001
       },
       "provenance": [
         {
@@ -265,7 +265,8 @@
       "op_type": "CausalConv1D",
       "attrs": {
         "kernel_width_symbol": "W_router",
-        "path": "MoME Q stream"
+        "path": "MoME Q stream",
+        "residual_connection": "fused_in_mome_conv"
       },
       "provenance": [
         {
@@ -277,29 +278,12 @@
       ]
     },
     {
-      "id": "q_residual_add",
-      "kind": "op",
-      "label": "Q Add",
-      "op_type": "Add",
-      "attrs": {
-        "residual_connection": true
-      },
-      "provenance": [
-        {
-          "source": "attention_impl",
-          "fact": "MoME causal conv custom op supports residual_connection",
-          "confidence": "confirmed",
-          "line": 1715
-        }
-      ]
-    },
-    {
       "id": "q_a_norm",
       "kind": "op",
       "label": "Q LayerNorm",
       "op_type": "RMSNorm",
       "attrs": {
-        "eps": 1e-05
+        "eps": 0.00001
       },
       "provenance": [
         {
@@ -351,7 +335,8 @@
       "op_type": "CausalConv1D",
       "attrs": {
         "kernel_width_symbol": "W_router",
-        "path": "MoME KV stream"
+        "path": "MoME KV stream",
+        "residual_connection": "fused_in_mome_conv"
       },
       "provenance": [
         {
@@ -363,29 +348,12 @@
       ]
     },
     {
-      "id": "kv_residual_add",
-      "kind": "op",
-      "label": "KV Add",
-      "op_type": "Add",
-      "attrs": {
-        "residual_connection": true
-      },
-      "provenance": [
-        {
-          "source": "attention_impl",
-          "fact": "MoME causal conv custom op supports residual_connection",
-          "confidence": "confirmed",
-          "line": 1715
-        }
-      ]
-    },
-    {
       "id": "kv_a_norm",
       "kind": "op",
       "label": "KV LayerNorm",
       "op_type": "RMSNorm",
       "attrs": {
-        "eps": 1e-05
+        "eps": 0.00001
       },
       "provenance": [
         {
@@ -477,7 +445,8 @@
       "op_type": "CausalConv1D",
       "attrs": {
         "kernel_width_symbol": "W_router",
-        "path": "MoME output stream"
+        "path": "MoME output stream",
+        "residual_connection": "fused_in_mome_conv"
       },
       "provenance": [
         {
@@ -485,23 +454,6 @@
           "fact": "NPUPanguSparseAttention creates o_conv for MoME",
           "confidence": "confirmed",
           "line": 1023
-        }
-      ]
-    },
-    {
-      "id": "o_residual_add",
-      "kind": "op",
-      "label": "Output Add",
-      "op_type": "Add",
-      "attrs": {
-        "residual_connection": true
-      },
-      "provenance": [
-        {
-          "source": "attention_impl",
-          "fact": "Attention output can pass through output-side MoME before projection",
-          "confidence": "confirmed",
-          "line": 2144
         }
       ]
     },
@@ -528,7 +480,7 @@
       "label": "Post Attention RMSNorm",
       "op_type": "RMSNorm",
       "attrs": {
-        "eps": 1e-05
+        "eps": 0.00001
       },
       "provenance": [
         {
@@ -562,7 +514,7 @@
       "label": "Pre MLP RMSNorm",
       "op_type": "RMSNorm",
       "attrs": {
-        "eps": 1e-05
+        "eps": 0.00001
       },
       "provenance": [
         {
@@ -771,7 +723,7 @@
       "label": "Post MLP RMSNorm",
       "op_type": "RMSNorm",
       "attrs": {
-        "eps": 1e-05
+        "eps": 0.00001
       },
       "provenance": [
         {
@@ -815,7 +767,7 @@
       "label": "Final RMSNorm",
       "op_type": "RMSNorm",
       "attrs": {
-        "eps": 1e-05
+        "eps": 0.00001
       },
       "provenance": [
         {
@@ -1046,6 +998,175 @@
           "line": 297
         }
       ]
+    },
+    {
+      "id": "embedding_weight",
+      "kind": "state",
+      "label": "Embedding Weight",
+      "state_type": "parameter",
+      "role": "vocabulary embedding parameter tensor",
+      "attrs": {
+        "parameter_of": "token_embedding",
+        "shape": "[V,H]",
+        "dtype": "bf16"
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "NPUVocabParallelEmbedding owns token embedding weights",
+          "confidence": "confirmed",
+          "line": 1990
+        }
+      ]
+    },
+    {
+      "id": "attention_projection_weights",
+      "kind": "state",
+      "label": "Attention Projection Weights",
+      "state_type": "parameter",
+      "role": "MLA q/kv/o projection parameter tensors",
+      "attrs": {
+        "parameter_of": [
+          "q_a_proj",
+          "q_b_proj",
+          "kv_a_proj",
+          "kv_b_proj",
+          "o_proj"
+        ],
+        "dtype": "bf16"
+      },
+      "provenance": [
+        {
+          "source": "attention_impl",
+          "fact": "NPUPanguSparseAttention creates q_a/q_b/kv_a/kv_b/o projection layers",
+          "confidence": "confirmed",
+          "line": 781
+        }
+      ]
+    },
+    {
+      "id": "dense_mlp_weights",
+      "kind": "state",
+      "label": "Dense MLP Weights",
+      "state_type": "parameter",
+      "role": "dense FFN gate/up/down parameter tensors",
+      "attrs": {
+        "parameter_of": [
+          "dense_gate_up",
+          "dense_down"
+        ],
+        "dtype": "bf16"
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "OpenPanguV2MLP owns gate_up_proj and down_proj weights",
+          "confidence": "confirmed",
+          "line": 151
+        }
+      ]
+    },
+    {
+      "id": "router_weight",
+      "kind": "state",
+      "label": "Router Weight",
+      "state_type": "parameter",
+      "role": "MoE router gate parameter tensor",
+      "attrs": {
+        "parameter_of": "router_gate",
+        "shape": "[H,E]",
+        "dtype": "fp32/bf16"
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "OpenPanguV2MOE creates replicated router gate",
+          "confidence": "confirmed",
+          "line": 234
+        }
+      ]
+    },
+    {
+      "id": "expert_bank_weights",
+      "kind": "state",
+      "label": "Routed Expert Weights",
+      "state_type": "parameter",
+      "role": "fused routed expert parameter bank",
+      "attrs": {
+        "parameter_of": "routed_expert_bank",
+        "routed_experts_symbol": "E",
+        "expert_intermediate_symbol": "I_moe",
+        "dtype": "bf16"
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "OpenPanguV2MOE creates NPUSharedFusedMoE routed expert bank",
+          "confidence": "confirmed",
+          "line": 275
+        }
+      ]
+    },
+    {
+      "id": "shared_expert_weights",
+      "kind": "state",
+      "label": "Shared Expert Weights",
+      "state_type": "parameter",
+      "role": "shared expert MLP parameter tensors",
+      "attrs": {
+        "parameter_of": "shared_expert_mlp",
+        "shared_experts_symbol": "E_shared",
+        "dtype": "bf16"
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "OpenPanguV2MOE creates shared_experts with OpenPanguV2MLP",
+          "confidence": "confirmed",
+          "line": 250
+        }
+      ]
+    },
+    {
+      "id": "lm_head_weight",
+      "kind": "state",
+      "label": "LM Head Weight",
+      "state_type": "parameter",
+      "role": "vocabulary output projection parameter tensor",
+      "attrs": {
+        "parameter_of": "lm_head",
+        "shape": "[H,V]",
+        "dtype": "bf16",
+        "tie_word_embeddings": false
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "OpenPanguV2ForCausalLM creates NPUParallelLMHead",
+          "confidence": "confirmed",
+          "line": 2195
+        }
+      ]
+    },
+    {
+      "id": "mtp_head_weight",
+      "kind": "state",
+      "label": "MTP Head Weight",
+      "state_type": "parameter",
+      "role": "multi-token predictor shared head parameter tensor",
+      "attrs": {
+        "parameter_of": "mtp_shared_head",
+        "shape": "[H,V]",
+        "dtype": "bf16"
+      },
+      "provenance": [
+        {
+          "source": "mtp_impl",
+          "fact": "SharedHead contains NPUParallelLMHead for MTP logits",
+          "confidence": "confirmed",
+          "line": 36
+        }
+      ]
     }
   ],
   "edges": [
@@ -1203,63 +1324,6 @@
       ]
     },
     {
-      "id": "e_qa_skip_to_qadd",
-      "source": "q_a_proj",
-      "target": "q_residual_add",
-      "tensor": {
-        "name": "q_lora_residual",
-        "shape": "[B,T,R_q]",
-        "dtype": "bf16"
-      },
-      "provenance": [
-        {
-          "source": "attention_impl",
-          "fact": "q_a_proj feeds q_residual_add with q_lora_residual",
-          "confidence": "confirmed",
-          "line": 1715
-        }
-      ]
-    },
-    {
-      "id": "e_qconv_to_qadd",
-      "source": "q_causal_conv",
-      "target": "q_residual_add",
-      "tensor": {
-        "name": "q_local_context",
-        "shape": "[B,T,R_q]",
-        "dtype": "bf16",
-        "constraints": [
-          "W_router=3"
-        ]
-      },
-      "provenance": [
-        {
-          "source": "attention_impl",
-          "fact": "q_causal_conv feeds q_residual_add with q_local_context",
-          "confidence": "confirmed",
-          "line": 1715
-        }
-      ]
-    },
-    {
-      "id": "e_qadd_to_qnorm",
-      "source": "q_residual_add",
-      "target": "q_a_norm",
-      "tensor": {
-        "name": "q_lora",
-        "shape": "[B,T,R_q]",
-        "dtype": "bf16"
-      },
-      "provenance": [
-        {
-          "source": "attention_impl",
-          "fact": "q_residual_add feeds q_a_norm with q_lora",
-          "confidence": "confirmed",
-          "line": 2024
-        }
-      ]
-    },
-    {
       "id": "e_qnorm_to_qb",
       "source": "q_a_norm",
       "target": "q_b_proj",
@@ -1310,63 +1374,6 @@
           "fact": "kv_a_proj feeds kv_causal_conv with kv_lora",
           "confidence": "confirmed",
           "line": 2068
-        }
-      ]
-    },
-    {
-      "id": "e_kva_skip_to_kvadd",
-      "source": "kv_a_proj",
-      "target": "kv_residual_add",
-      "tensor": {
-        "name": "kv_lora_residual",
-        "shape": "[B,T,R_kv+D_rope]",
-        "dtype": "bf16"
-      },
-      "provenance": [
-        {
-          "source": "attention_impl",
-          "fact": "kv_a_proj feeds kv_residual_add with kv_lora_residual",
-          "confidence": "confirmed",
-          "line": 2082
-        }
-      ]
-    },
-    {
-      "id": "e_kvconv_to_kvadd",
-      "source": "kv_causal_conv",
-      "target": "kv_residual_add",
-      "tensor": {
-        "name": "kv_local_context",
-        "shape": "[B,T,R_kv]",
-        "dtype": "bf16",
-        "constraints": [
-          "W_router=3"
-        ]
-      },
-      "provenance": [
-        {
-          "source": "attention_impl",
-          "fact": "kv_causal_conv feeds kv_residual_add with kv_local_context",
-          "confidence": "confirmed",
-          "line": 2082
-        }
-      ]
-    },
-    {
-      "id": "e_kvadd_to_kvnorm",
-      "source": "kv_residual_add",
-      "target": "kv_a_norm",
-      "tensor": {
-        "name": "kv_lora_plus_rope",
-        "shape": "[B,T,R_kv+D_rope]",
-        "dtype": "bf16"
-      },
-      "provenance": [
-        {
-          "source": "attention_impl",
-          "fact": "kv_residual_add feeds kv_a_norm with kv_lora_plus_rope",
-          "confidence": "confirmed",
-          "line": 2092
         }
       ]
     },
@@ -1580,63 +1587,6 @@
           "fact": "attention_core feeds o_causal_conv with attn_output",
           "confidence": "confirmed",
           "line": 2137
-        }
-      ]
-    },
-    {
-      "id": "e_core_skip_to_oadd",
-      "source": "attention_core",
-      "target": "o_residual_add",
-      "tensor": {
-        "name": "attn_output_residual",
-        "shape": "[B,T,N_h,D_v]",
-        "dtype": "bf16"
-      },
-      "provenance": [
-        {
-          "source": "attention_impl",
-          "fact": "attention_core feeds o_residual_add with attn_output_residual",
-          "confidence": "confirmed",
-          "line": 2144
-        }
-      ]
-    },
-    {
-      "id": "e_oconv_to_oadd",
-      "source": "o_causal_conv",
-      "target": "o_residual_add",
-      "tensor": {
-        "name": "attn_local_context",
-        "shape": "[B,T,N_h,D_v]",
-        "dtype": "bf16",
-        "constraints": [
-          "W_router=3"
-        ]
-      },
-      "provenance": [
-        {
-          "source": "attention_impl",
-          "fact": "o_causal_conv feeds o_residual_add with attn_local_context",
-          "confidence": "confirmed",
-          "line": 2144
-        }
-      ]
-    },
-    {
-      "id": "e_oadd_to_o",
-      "source": "o_residual_add",
-      "target": "o_proj",
-      "tensor": {
-        "name": "attn_output",
-        "shape": "[B,T,N_h,D_v]",
-        "dtype": "bf16"
-      },
-      "provenance": [
-        {
-          "source": "attention_impl",
-          "fact": "o_residual_add feeds o_proj with attn_output",
-          "confidence": "confirmed",
-          "line": 849
         }
       ]
     },
@@ -2190,6 +2140,201 @@
           "line": 203
         }
       ]
+    },
+    {
+      "id": "e_embedding_weight_to_embedding",
+      "source": "embedding_weight",
+      "target": "token_embedding",
+      "tensor": {
+        "name": "embedding.weight",
+        "shape": "[V,H]",
+        "dtype": "bf16",
+        "role": "parameter"
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "embedding_weight parameterizes token_embedding",
+          "confidence": "confirmed"
+        }
+      ]
+    },
+    {
+      "id": "e_attention_weights_to_q_a",
+      "source": "attention_projection_weights",
+      "target": "q_a_proj",
+      "tensor": {
+        "name": "mla_projection_weights",
+        "shape": "q/kv/o projection tensors",
+        "dtype": "bf16",
+        "role": "parameter"
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "attention_projection_weights parameterizes q_a_proj",
+          "confidence": "confirmed"
+        }
+      ]
+    },
+    {
+      "id": "e_dense_weights_to_gateup",
+      "source": "dense_mlp_weights",
+      "target": "dense_gate_up",
+      "tensor": {
+        "name": "dense_mlp_weights",
+        "shape": "gate/up/down tensors",
+        "dtype": "bf16",
+        "role": "parameter"
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "dense_mlp_weights parameterizes dense_gate_up",
+          "confidence": "confirmed"
+        }
+      ]
+    },
+    {
+      "id": "e_router_weight_to_gate",
+      "source": "router_weight",
+      "target": "router_gate",
+      "tensor": {
+        "name": "router.weight",
+        "shape": "[H,E]",
+        "dtype": "bf16",
+        "role": "parameter"
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "router_weight parameterizes router_gate",
+          "confidence": "confirmed"
+        }
+      ]
+    },
+    {
+      "id": "e_expert_weights_to_bank",
+      "source": "expert_bank_weights",
+      "target": "routed_expert_bank",
+      "tensor": {
+        "name": "expert_bank.weights",
+        "shape": "[E,H,I_moe]",
+        "dtype": "bf16",
+        "role": "parameter"
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "expert_bank_weights parameterizes routed_expert_bank",
+          "confidence": "confirmed"
+        }
+      ]
+    },
+    {
+      "id": "e_shared_weights_to_mlp",
+      "source": "shared_expert_weights",
+      "target": "shared_expert_mlp",
+      "tensor": {
+        "name": "shared_expert.weights",
+        "shape": "[E_shared,H,I_dense]",
+        "dtype": "bf16",
+        "role": "parameter"
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "shared_expert_weights parameterizes shared_expert_mlp",
+          "confidence": "confirmed"
+        }
+      ]
+    },
+    {
+      "id": "e_lm_head_weight_to_head",
+      "source": "lm_head_weight",
+      "target": "lm_head",
+      "tensor": {
+        "name": "lm_head.weight",
+        "shape": "[H,V]",
+        "dtype": "bf16",
+        "role": "parameter"
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "lm_head_weight parameterizes lm_head",
+          "confidence": "confirmed"
+        }
+      ]
+    },
+    {
+      "id": "e_mtp_head_weight_to_head",
+      "source": "mtp_head_weight",
+      "target": "mtp_shared_head",
+      "tensor": {
+        "name": "mtp_head.weight",
+        "shape": "[H,V]",
+        "dtype": "bf16",
+        "role": "parameter"
+      },
+      "provenance": [
+        {
+          "source": "model_impl",
+          "fact": "mtp_head_weight parameterizes mtp_shared_head",
+          "confidence": "confirmed"
+        }
+      ]
+    },
+    {
+      "id": "e_qconv_to_qnorm",
+      "source": "q_causal_conv",
+      "target": "q_a_norm",
+      "tensor": {
+        "name": "q_lora_after_mome",
+        "shape": "[B,T,R_q]",
+        "dtype": "bf16"
+      },
+      "provenance": [
+        {
+          "source": "attention_impl",
+          "fact": "MoME causal conv is fused with residual_connection=1 and returns the stream tensor for the next op",
+          "confidence": "confirmed"
+        }
+      ]
+    },
+    {
+      "id": "e_kvconv_to_kvnorm",
+      "source": "kv_causal_conv",
+      "target": "kv_a_norm",
+      "tensor": {
+        "name": "kv_lora_plus_rope_after_mome",
+        "shape": "[B,T,R_kv+D_rope]",
+        "dtype": "bf16"
+      },
+      "provenance": [
+        {
+          "source": "attention_impl",
+          "fact": "MoME causal conv is fused with residual_connection=1 and returns the stream tensor for the next op",
+          "confidence": "confirmed"
+        }
+      ]
+    },
+    {
+      "id": "e_oconv_to_o",
+      "source": "o_causal_conv",
+      "target": "o_proj",
+      "tensor": {
+        "name": "attn_output_after_mome",
+        "shape": "[B,T,N_h,D_v]",
+        "dtype": "bf16"
+      },
+      "provenance": [
+        {
+          "source": "attention_impl",
+          "fact": "MoME causal conv is fused with residual_connection=1 and returns the stream tensor for the next op",
+          "confidence": "confirmed"
+        }
+      ]
     }
   ],
   "repeats": [
@@ -2340,7 +2485,9 @@
           "token_embedding",
           "final_norm",
           "lm_head",
-          "logits"
+          "logits",
+          "embedding_weight",
+          "lm_head_weight"
         ],
         "children": [
           "decoder-stack",
@@ -2372,24 +2519,22 @@
         "nodes": [
           "q_a_proj",
           "q_causal_conv",
-          "q_residual_add",
           "q_a_norm",
           "q_b_proj",
           "kv_a_proj",
           "kv_causal_conv",
-          "kv_residual_add",
           "kv_a_norm",
           "kv_b_proj",
           "rope_apply",
           "dsa_indexer",
           "attention_core",
           "o_causal_conv",
-          "o_residual_add",
           "o_proj",
           "rope_cache",
           "kv_cache",
           "param_sink_state",
-          "mome_state"
+          "mome_state",
+          "attention_projection_weights"
         ],
         "children": [],
         "badge": "MLA + MoME local context",
@@ -2404,7 +2549,8 @@
           "dense_silu",
           "dense_down",
           "moe_ffn",
-          "post_mlp_norm"
+          "post_mlp_norm",
+          "dense_mlp_weights"
         ],
         "children": [
           "moe-block"
@@ -2421,7 +2567,10 @@
           "routed_expert_bank",
           "shared_expert_mlp",
           "moe_combine",
-          "expert_parallel_state"
+          "expert_parallel_state",
+          "router_weight",
+          "expert_bank_weights",
+          "shared_expert_weights"
         ],
         "children": [],
         "badge": "routed + shared",
@@ -2435,7 +2584,8 @@
           "mtp_eh_proj",
           "mtp_decoder_layer",
           "mtp_shared_head",
-          "mtp_logits"
+          "mtp_logits",
+          "mtp_head_weight"
         ],
         "children": [],
         "badge": "next-token draft branch",
@@ -2445,6 +2595,7 @@
   },
   "warnings": [
     "The local checkout intentionally skips full safetensors weights.",
-    "swa_layers includes indices 46-48, which align with the three MTP layers rather than main decoder layers."
+    "swa_layers includes indices 46-48, which align with the three MTP layers rather than main decoder layers.",
+    "Parameter/weight tensor nodes are explicit graph nodes, but full safetensors payloads are still local Git LFS pointers."
   ]
 }

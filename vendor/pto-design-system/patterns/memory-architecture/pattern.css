@@ -88,14 +88,14 @@
 }
 
 .pto-pattern-memory-arch__focus-chip strong {
-  font: var(--text-body-sm);
+  font: var(--type-body-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--foreground);
 }
 
 .pto-pattern-memory-arch__focus-chip span {
   color: var(--foreground-muted);
-  font: var(--text-label);
+  font: var(--type-label);
   letter-spacing: 0;
 }
 
@@ -108,7 +108,7 @@
   border: 1px solid var(--comp-tag-border);
   background: var(--comp-tag-bg);
   color: var(--comp-tag-fg);
-  font: 10px/1.2 var(--text-mono, ui-monospace, monospace);
+  font: 11px/1.2 var(--font-mono, ui-monospace, monospace);
 }
 
 .pto-pattern-memory-arch__stage {
@@ -350,19 +350,19 @@ html[data-embed-preview='true'] .pto-pattern-memory-arch__stage {
 
 .pto-mem950__engine-kicker {
   color: var(--foreground-muted);
-  font: var(--text-label);
+  font: var(--type-label);
   letter-spacing: 0;
 }
 
 .pto-mem950__engine-title {
   color: var(--foreground);
-  font: var(--text-title-2);
+  font: var(--type-title-2);
   letter-spacing: 0;
 }
 
 .pto-mem950__engine-subtitle {
   color: var(--foreground-muted);
-  font: var(--text-label);
+  font: var(--type-label);
   letter-spacing: 0;
 }
 
@@ -371,7 +371,7 @@ html[data-embed-preview='true'] .pto-pattern-memory-arch__stage {
   z-index: 1;
   margin: var(--space-2) 0 0;
   color: var(--foreground-secondary);
-  font: var(--text-body-sm);
+  font: var(--type-body);
 }
 
 .pto-mem950__core-mount {
@@ -455,7 +455,7 @@ html[data-embed-preview='true'] .pto-pattern-memory-arch__stage {
   border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--border-default));
   background: color-mix(in srgb, var(--warning) 10%, var(--surface-1));
   color: var(--foreground-secondary);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1.15;
   white-space: nowrap;

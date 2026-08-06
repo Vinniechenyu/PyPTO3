@@ -4,6 +4,7 @@
   "type": "hybrid",
   "description": "Shared PTO shell and controller for architecture-map host controls: architecture selection, path filters, detail visibility, compact zoom readout, iframe readiness, size sync, root-level dotted viewport background, transparent fixed-height borderless title toolbar, and hardware postMessage protocol.",
   "source": {
+    "patternHtml": "patterns/hardware-architecture-viewport/pattern.html",
     "patternCss": "patterns/hardware-architecture-viewport/pattern.css",
     "renderScript": "patterns/hardware-architecture-viewport/pattern.js",
     "dependsOn": [
@@ -37,5 +38,6 @@
     "hard-coding page-specific architecture title/header heights instead of using --pto-hw-viewport-toolbar-height",
     "adding architecture-header metadata chips such as pattern, preset, source, no-iframe, or selected path readouts",
     "sending custom iframe message names for standard hardware-ready, hardware-size, hardware-details, hardware-focus, or hardware-arch-change events"
-  ]
+  ],
+  "agentReuseRule": "Load pattern.css and pattern.js, then call window.PtoHardwareArchitectureViewport.mount for the architecture toolbar, detail visibility, zoom readout, iframe readiness, size synchronization, and standard hardware message protocol. Supply architecture presets and product callbacks as data; do not fork the dotted viewport, toolbar grammar, zoom controls, or hardware-ready, hardware-size, hardware-details, hardware-focus, and hardware-arch-change messages."
 }

@@ -1,0 +1,7 @@
+# Local development state
+.codex_work/
+.claude/settings.local.json
+.local-server.*.log
+
+# Recoverable local backups
+vendor/pto-design-system.backup-*/

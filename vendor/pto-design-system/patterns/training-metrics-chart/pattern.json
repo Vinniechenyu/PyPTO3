@@ -3,6 +3,14 @@
   "name": "Training Metrics Chart",
   "type": "svg",
   "description": "Self-drawn SVG numeric time-series line chart for training metrics (loss, val, eval, grad norm, load-balance, MFU, any per-step series). Supports multi-series, dual axis, anomaly-spike highlight, interest-window brushing, and a step cursor. Dependency-free. Series lines use viz highlight ramps; anomaly uses semantic danger; brush uses primary selection; axes/grid use border tokens.",
+  "typography": {
+    "bodyMinimumPx": 14,
+    "uiMinimumPx": 12,
+    "microLabelMinimumPx": 11,
+    "dataVizMinimumPx": 10,
+    "dataVizExceptionReason": "Axis ticks and cursor chips are dense SVG chart marks, not body or control text.",
+    "dataVizFallback": "The chart tooltip and step cursor expose exact values with 12px UI text."
+  },
   "source": {
     "renderScript": "patterns/training-metrics-chart/pattern.js",
     "patternHtml": "patterns/training-metrics-chart/pattern.html",

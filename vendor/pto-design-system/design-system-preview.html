@@ -1745,12 +1745,32 @@
       height: 220px !important;
     }
 
+    #pattern-previews .preview-embed-frame[data-pattern-preview='tensor-volume-canvas'] {
+      height: 980px !important;
+    }
+
+    #pattern-previews .preview-embed-frame[data-pattern-preview='memory-reuse-viewer'] {
+      height: 720px !important;
+    }
+
     #pattern-previews .preview-embed-frame[data-pattern-preview='memory-architecture'] {
       height: 720px !important;
     }
 
     #pattern-previews .preview-embed-frame[data-pattern-preview='hardware-architecture-viewport'] {
       height: 960px !important;
+    }
+
+    #pattern-previews .preview-embed-frame[data-pattern-preview='model-architecture-3d-deck'] {
+      height: 680px !important;
+    }
+
+    #pattern-previews .preview-embed-frame[data-pattern-preview='model-parallel-rank-deck'] {
+      height: 760px !important;
+    }
+
+    #pattern-previews .preview-embed-frame[data-pattern-preview='model-architecture-training-sidecar'] {
+      height: 1400px !important;
     }
 
     #pattern-previews .preview-embed-frame[data-pattern-preview='aic-core-object'] {
@@ -1782,27 +1802,22 @@
       height: 320px !important;
     }
 
-    #pattern-previews .preview-embed-frame[data-pattern-preview='model-graphviz'] {
-      height: 1180px !important;
+    .model-architecture-card {
+      scroll-margin-top: 104px;
     }
 
-    #pattern-previews .preview-embed-frame[data-pattern-preview='model-training-graphviz'] {
-      height: 860px !important;
-    }
-
-    #model-architecture-gallery.preview-section {
+    .model-architecture-card .preview-stage {
+      align-items: stretch;
       padding: 0;
-      border-radius: 16px;
-      border: 0;
-      background: var(--preview-section-bg);
-      box-shadow: none;
     }
 
     .model-architecture-floor {
       display: flex;
       flex-direction: column;
       gap: 14px;
-      padding: 18px;
+      width: 100%;
+      min-width: 0;
+      padding: 0;
     }
 
     .model-architecture-toolbar {
@@ -1816,7 +1831,7 @@
     .model-architecture-tabs {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       min-width: 0;
       overflow-x: auto;
     }
@@ -1826,26 +1841,29 @@
       align-items: center;
       justify-content: center;
       min-width: max-content;
-      height: 32px;
-      padding: 0 10px;
+      height: 36px;
+      padding: 0 14px;
       border-radius: 6px;
-      border: 1px solid var(--border-default);
-      background: transparent;
-      color: var(--foreground-secondary);
-      font: 600 12px / 1 var(--font-sans);
+      border: 1px solid color-mix(in srgb, var(--foreground) 16%, transparent);
+      background: color-mix(in srgb, var(--panel-shell-bg) 82%, transparent);
+      color: var(--foreground-muted);
+      font: 650 13px / 1 var(--font-sans);
+      letter-spacing: 0;
+      white-space: nowrap;
       cursor: pointer;
     }
 
     .model-architecture-tab:hover,
     .model-architecture-tab:focus-visible {
       color: var(--foreground);
-      background: var(--state-hover);
+      border-color: color-mix(in srgb, var(--foreground) 26%, transparent);
+      background: color-mix(in srgb, var(--foreground) 7%, var(--panel-shell-bg));
     }
 
     .model-architecture-tab.is-active {
       color: var(--foreground);
-      border-color: color-mix(in srgb, var(--foreground) 36%, transparent);
-      background: color-mix(in srgb, var(--foreground) 10%, transparent);
+      border-color: color-mix(in srgb, var(--foreground) 42%, transparent);
+      background: color-mix(in srgb, var(--foreground) 12%, var(--panel-shell-bg));
     }
 
     .model-architecture-panel {
@@ -1900,6 +1918,11 @@
 
     .model-architecture-frame[data-model-frame='openpangu-2-0-flash'] {
       height: 1120px;
+    }
+
+    .model-architecture-frame[data-model-frame='openpangu-r-72b'],
+    .model-architecture-frame[data-model-frame='pangu-pro-moe-72ba16b'] {
+      height: 980px;
     }
 
     .model-architecture-schema {
@@ -2004,7 +2027,9 @@
 
       .model-architecture-frame,
       .model-architecture-frame[data-model-frame='deepseek-v32'],
-      .model-architecture-frame[data-model-frame='openpangu-2-0-flash'] {
+      .model-architecture-frame[data-model-frame='openpangu-2-0-flash'],
+      .model-architecture-frame[data-model-frame='openpangu-r-72b'],
+      .model-architecture-frame[data-model-frame='pangu-pro-moe-72ba16b'] {
         height: 820px;
       }
     }
@@ -2017,7 +2042,6 @@
       <span class="toolbar-sep" aria-hidden="true"></span>
       <nav class="blocks-nav" aria-label="Primary">
         <a class="is-active" href="./design-system-preview.html">组件</a>
-        <a href="#model-architecture-gallery">模型架构</a>
         <a href="#pattern-previews">模式</a>
         <a href="./DESIGN.md">Design.md</a>
       </nav>
@@ -2147,15 +2171,21 @@
             <table class="agent-table">
               <tr><td>Stable entry</td><td>Every pattern must expose a stable consumer entry. Static visual primitives use documented CSS classes; DOM/SVG/canvas generation, drag behavior, zoom, routing, persistence, or synchronized state must go through a <code>window.Pto*Pattern</code> or <code>window.Pto*</code> helper. Business pages must not copy generated DOM or restyle internal pattern classes.</td></tr>
               <tr><td><code>swimlane-task-bar</code></td><td>Use <code>patterns/swimlane-task/pattern.js</code> and call <code>window.PtoSwimlaneTaskPattern.drawTaskBar</code>, <code>createTaskColormap</code>, and <code>initHoverTooltip</code>. The canonical task bar is canvas-rendered, sourced from <code>pypto-swimlane-perf-tool/js/swimlane.js</code>, and the hover tip mirrors the PMU swimlane <code>.sl-tooltip</code> interaction. Do not rebuild it with DOM/CSS or rewrite segment math, colormap selection, or hover tip behavior locally.</td></tr>
+              <tr><td><code>tensor-volume-canvas</code></td><td>Load <code>patterns/tensor-volume-canvas/pattern.css</code> and <code>pattern.js</code>, then call <code>window.PtoTensorVolumeCanvas.render</code> with a business-neutral <code>extent</code>, <code>axes</code>, and <code>voxels</code> scene. Voxels default to <code>neutral</code>; semantic tones are opt-in for explicit interaction state or semantic emphasis, not object identity alone. Use the returned <code>update</code>, <code>resize</code>, and <code>destroy</code> lifecycle. Do not rewrite projection, depth sorting, DPR, or ResizeObserver logic; do not add iframe embedding, camera interaction, a private palette, or product chrome.</td></tr>
               <tr><td><code>memory-architecture-layout</code></td><td>Use <code>patterns/memory-architecture/pattern.js</code>. Call <code>window.PtoMemoryArchitecturePattern.renderArchitecture</code> to build the stage, <code>createRouteOverlay</code> for MTE routes, <code>attachHoverInteractions</code> for hardware tips, and <code>attachPathFocusInteractions</code> or <code>setPathFocus</code> / <code>clearPathFocus</code> for <code>ascend-hardware-map-v3</code>-style flow-step hover. Extend preset data for 910B/950; do not copy raw <code>mem_viewer</code> HTML, redraw route geometry locally, reimplement <code>is-path-focused</code> route glow, or change route <code>stroke-width</code> for hover/playback focus.</td></tr>
+              <tr><td><code>memory-reuse-viewer</code></td><td>Load <code>patterns/memory-reuse-viewer/pattern.css</code> and <code>pattern.js</code>, then call <code>window.PtoMemoryReuseViewer.render</code> with Memory.txt-derived buffer, tensor lifetime, source, and CCE data. Keep the returned <code>resize</code> and <code>destroy</code> lifecycle attached to an unscaled panel. Do not mount it inside the architecture pan/zoom canvas, copy the lifetime renderer, mutate generated rectangles, or add a second bordered frame.</td></tr>
               <tr><td><code>hardware-architecture-viewport</code></td><td>Use <code>patterns/hardware-architecture-viewport/pattern.css</code> and <code>pattern.js</code>, then call <code>window.PtoHardwareArchitectureViewport.mount</code> for architecture-map host controls, detail visibility, zoom readout, iframe readiness, size sync, and the standard hardware postMessage protocol. Do not replace the shared dotted viewport, title toolbar, zoom cluster, or standard <code>hardware-ready</code> / <code>hardware-size</code> / <code>hardware-focus</code> messages with page-local variants.</td></tr>
+              <tr><td><code>model-architecture-3d-deck</code></td><td>Use <code>patterns/model-architecture-3d-deck/pattern.css</code> and <code>pattern.js</code>, then call <code>window.PtoModelArchitecture3dDeck.render</code>. The shared hybrid renderer preserves the source openPangu 46-layer Dense/MoE/Sparse MLA/mHC/MTP architecture and owns dark/light switching, iso/front/right transforms, drag rotate/direct pan, wheel zoom, projected PP stage wireframes, DP/PP/TP/EP badges, and right-view operator labels. Pass model data and callbacks only; do not simplify the model graph, copy projection math, or hand-position labels in product CSS.</td></tr>
+              <tr><td><code>model-parallel-rank-deck</code></td><td>Load it after <code>model-architecture-3d-deck</code>, supply the pinned local Three.js module, and call <code>window.PtoModelParallelRankDeck.render</code>. The canonical demo compiles every original Layer Node, Cluster, and Edge into GPU batches inside 128 transparent Rank volumes for TP2 × PP4 × CP1 × EP8 × EDP2. Do not substitute glyphs, screenshots, representative Layers, or consumer-owned Layer styles.</td></tr>
+              <tr><td><code>model-architecture-training-sidecar</code></td><td>Load it after <code>model-architecture-3d-deck</code> and call <code>window.PtoModelArchitectureTrainingSidecar.render</code>. It preserves the canonical right view as an immutable baseline and adds sibling overlays for forward hidden state, backward activation gradients, local parameter gradients, optimizer state, metric strips, mock context, and selectable Layer focus. Extend Layer internals only through <code>renderLayerDetail</code>; do not mutate or restyle the base deck.</td></tr>
               <tr><td><code>aic-core-object</code></td><td>Use <code>patterns/aic-core-object/pattern.js</code> and call <code>window.PtoAicCorePattern.render</code>. The shell is config-driven from the design draft; extend the preset data for 950B instead of cloning the generated DOM or restyling the chrome locally.</td></tr>
               <tr><td><code>aiv-core-object</code></td><td>Use <code>patterns/aiv-core-object/pattern.js</code> and call <code>window.PtoAivCorePattern.render</code> with <code>ascend910b</code> or <code>ascend950b</code>. The 910B preset is the simplified Scalar + UB + Vector object; the 950B preset keeps DCache, ICache, ND-DMA Cache, SIMT, SIMD, and Vector topology. Extend preset data instead of copying generated DOM or changing card geometry locally.</td></tr>
               <tr><td><code>pass-ir-graph-node</code></td><td>Use <code>patterns/pass-ir-graph-node/pattern.js</code> and build cards through <code>window.PtoPassIrGraphNodePattern</code>. The shared contract owns full/compact op, tensor, incast/outcast, selected, and JS-generated group cards. Do not rewrite node chrome or group shell geometry in page-local CSS/HTML.</td></tr>
+              <tr><td><code>matrix-canvas</code></td><td>Use <code>patterns/matrix-canvas/pattern.css</code> and <code>pattern.js</code>, then call <code>window.PtoMatrixCanvas.render</code>. Cells and <code>createAggregatedCells</code> output default to <code>neutral</code>; semantic tones are opt-in for explicit interaction state or semantic emphasis, not object identity alone. For large matrices, keep the source extent and represent regions with arbitrary <code>rowSpan</code> / <code>columnSpan</code>, or let <code>createAggregatedCells</code> generate a requested <code>thumbnailRows</code> × <code>thumbnailColumns</code> grid. Aggregate cells use one centered summary marker. Wheel scrolls vertically; horizontal trackpad gestures or Shift-wheel scroll horizontally; both axes stop at matrix bounds. Control/Command-wheel zooms; drag-to-pan is intentionally absent.</td></tr>
               <tr><td><code>workbench-shell</code></td><td>Resize kernel only. Use <code>patterns/workbench-shell/pattern.css</code> and <code>patterns/workbench-shell/pattern.js</code>, then call <code>window.PtoWorkbenchShell.initResizablePanes</code>, <code>createSplitGutter</code>, or <code>initNestedResizablePanes</code> for horizontal / vertical / nested splits. Do not put page chrome, pane fills, topbars, titles, canvas controls, or IDE typography into this pattern.</td></tr>
               <tr><td><code>ide-frame</code></td><td>IDE framework shell. Use <code>patterns/ide-frame/pattern.css</code>, <code>patterns/ide-frame/pattern.js</code>, <code>patterns/floating-playback-control/pattern.css</code>, <code>patterns/floating-playback-control/pattern.js</code>, and optional <code>patterns/ide-frame/vscode.css</code>. Set <code>data-host="standalone"</code> or <code>data-host="vscode-webview"</code>. It owns IDE chrome, pane headers, pane-local preview tabs, generic slots, floating playback mounting, split initialization, and the standalone IDE skin: 100% multi-point gradient/aura background, 80% translucent blurred pane fill, pane header fill, pane shadow, and transparent top chrome. It must not ship business sample data, must not recreate playback chrome, must not locally replace the shared IDE skin, and must not override <code>.pto-workbench-shell__*</code> internals.</td></tr>
               <tr><td><code>floating-playback-control</code></td><td>Use <code>patterns/floating-playback-control/pattern.css</code> and <code>patterns/floating-playback-control/pattern.js</code>. Pages should use <code>.pto-floating-playback*</code> classes or call <code>window.PtoFloatingPlaybackControl.createControl</code>, then call <code>init</code> and <code>initScrubberHover</code>. Business pages own playback data and button handlers, but must not copy floating-shell chrome, collapse synchronization, or scrubber hover behavior locally.</td></tr>
-              <tr><td><code>model-graphviz</code></td><td>Use <code>patterns/model-graphviz/pattern.html</code> for parity preview; it iframes the real DeepSeek V3.2 Graphviz page directly. Bundled source/config schema assets include DeepSeek V3.2, Qwen-7B, Gemma, and <code>openpangu_2_0_flash_modelviz.html</code>. For new lightweight examples, use <code>patterns/model-graphviz/pattern.js</code> and call <code>window.PtoModelGraphvizPattern.render</code>. The contract preserves the DeepSeek V3.2 rules: default depth-2 folding, full-pill module/op nodes, rounded-rect tensor nodes for Input/Output/MTP/Constant/Parameter/Tensor, graph stage, graph edges, semantic-first colormap defaults for common op roles with unknown keys expanded through the shared palette, stronger light-mode node-fill opacity, 10% white expanded-cluster fill for every container (including repeated layer templates), <code>--radius-xl</code> (16px) cluster corners, vertically centered node label+type stacks, strict semantic module hierarchy, explicit <code>sem:*</code> op colors before parent fallback, folded representative edge dedupe, stable expand/collapse viewport anchoring, top-right corner fold controls, right-inset expand controls, no graph shadows, and no-border clicked-operator preview cards. New model graph pages additionally derive cluster boxes from their visible-child bounding boxes (so collapse reflows and shrinks the parent), lay the decoder chain out as a single top-to-bottom column (Gate/Up the only parallel pair), use transform-based cursor-anchored pan/zoom, show a single white selection stroke with no browser focus ring, and place the repeat-count badge at the cluster top-left under the title; <code>qwen7b_modelviz.html</code> is the reference implementation. Node fill colors are the only data-viz color exception; all other UI styling must remain token-derived. Do not render tensor nodes as ellipses or full pills, drift fold icons away from the cluster top-right corner anchor, use colored expanded-cluster fills, add graph shadows or operator-card borders, hard-code non-node UI styles, recenter/refit the whole graph after expand/collapse, or duplicate an expanded parent as a standalone node.</td></tr>
+              <tr><td><code>model-graphviz</code></td><td>Use <code>patterns/model-graphviz/pattern.html</code> for parity preview; it iframes the real DeepSeek V3.2 Graphviz page directly. Bundled source/config schema assets include DeepSeek V3.2, Qwen-7B, <code>openpangu_2_0_flash_modelviz.html</code>, and local Pangu MoE previews. For new lightweight examples, use <code>patterns/model-graphviz/pattern.js</code> and call <code>window.PtoModelGraphvizPattern.render</code>. The contract preserves the DeepSeek V3.2 rules: default depth-2 folding, full-pill module/op nodes, rounded-rect tensor nodes for Input/Output/MTP/Constant/Parameter/Tensor, graph stage, graph edges, semantic-first colormap defaults for common op roles with communication operators in a blue-green lane and unknown keys expanded through the shared palette, stronger light-mode node-fill opacity, transparent expanded parent containers, <code>--radius-xl</code> (16px) cluster corners, vertically centered node label+type stacks, strict semantic module hierarchy, explicit <code>sem:*</code> op colors before parent fallback, folded representative edge dedupe, stable expand/collapse viewport anchoring, top-right corner fold controls, right-inset expand controls, no graph shadows, and no-border clicked-operator preview cards. New model graph pages additionally derive cluster boxes from their visible-child bounding boxes (so collapse reflows and shrinks the parent), lay the decoder chain out as a single top-to-bottom column (Gate/Up the only parallel pair), use transform-based cursor-anchored pan/zoom, show a single white selection stroke with no browser focus ring, add <code>.pto-model-architecture-stage</code> for the shared model-architecture gallery treatment, and place the repeat-count badge at the cluster top-left under the title; <code>qwen7b_modelviz.html</code> is the reference implementation. Node fill colors are the only data-viz color exception; all other UI styling must remain token-derived. Do not render tensor nodes as ellipses or full pills, drift fold icons away from the cluster top-right corner anchor, use colored or translucent expanded-cluster fills, add graph shadows or operator-card borders, hard-code non-node UI styles, recenter/refit the whole graph after expand/collapse, or duplicate an expanded parent as a standalone node.</td></tr>
               <tr><td><code>model-training-graphviz</code></td><td>Use <code>patterns/model-training-graphviz/pattern.js</code> after loading <code>model-graphviz</code>. Call <code>window.PtoModelTrainingGraphvizPattern.render</code> with graph, edge tags, and <code>trainingEvidence</code>; use <code>controller.setPhase({ nodeId, relatedNodeIds })</code> for training-step linkage. It owns hover evidence panels, edge type tags, selected/related emphasis, drag pan, and Command-wheel zoom. Do not iframe a second page shell, recenter the graph when phases advance, dim non-selected operators, create native title tooltips, draw source-file evidence columns inside the graph, or use saturated light-mode selection borders.</td></tr>
               <tr><td><code>training-metrics-chart</code></td><td>Use <code>patterns/training-metrics-chart/pattern.css</code> and <code>pattern.js</code>, then call <code>window.PtoTrainingMetricsChart.render</code> for SVG metric series, dual axis, anomaly spikes, interest-window brushing, and step cursors. Series colors must come from viz highlight ramps; anomaly uses <code>--danger</code> and brush uses <code>--primary</code>. Do not rebuild line, axis, brush, or cursor geometry locally.</td></tr>
               <tr><td>Preview rule</td><td>Preview pages may wrap a pattern for layout, but must not redefine the pattern's internal class styles.</td></tr>
@@ -2213,7 +2243,6 @@
     <aside class="preview-nav" aria-label="Component categories">
       <div class="preview-nav-title">PTO UI Kit</div>
       <a class="preview-nav-link is-active" href="#overview" data-filter="featured">精选</a>
-      <a class="preview-nav-link" href="#model-architecture-gallery" data-filter="models">模型架构</a>
       <a class="preview-nav-link" href="#pattern-previews" data-filter="patterns">模式库</a>
       <a class="preview-nav-link" href="#color-palette" data-filter="foundations">基础色板</a>
       <a class="preview-nav-link" href="#buttons" data-filter="actions">操作按钮</a>
@@ -2431,108 +2460,6 @@
       </div>
     </section>
 
-    <section class="preview-section block-card" id="model-architecture-gallery" data-categories="featured patterns visualization models">
-      <h2 class="preview-section-title">模型架构</h2>
-      <div class="model-architecture-floor">
-        <div class="model-architecture-toolbar">
-          <div class="model-architecture-tabs" role="tablist" aria-label="Model architecture tabs">
-            <button class="model-architecture-tab is-active" type="button" role="tab" id="model-architecture-tab-deepseek-v32" aria-selected="true" aria-controls="model-architecture-panel-deepseek-v32" data-model-architecture-tab="deepseek-v32">DeepSeek V3.2</button>
-            <button class="model-architecture-tab" type="button" role="tab" id="model-architecture-tab-qwen7b" aria-selected="false" aria-controls="model-architecture-panel-qwen7b" data-model-architecture-tab="qwen7b">Qwen-7B</button>
-            <button class="model-architecture-tab" type="button" role="tab" id="model-architecture-tab-gemma" aria-selected="false" aria-controls="model-architecture-panel-gemma" data-model-architecture-tab="gemma">Gemma</button>
-            <button class="model-architecture-tab" type="button" role="tab" id="model-architecture-tab-openpangu-2-0-flash" aria-selected="false" aria-controls="model-architecture-panel-openpangu-2-0-flash" data-model-architecture-tab="openpangu-2-0-flash">openPangu-2.0-Flash</button>
-          </div>
-          <div class="preview-meta">
-            <span class="token-badge">pattern id: model-graphviz</span>
-            <span class="token-badge">assets: index.json</span>
-            <span class="state-badge">Rendered Pattern</span>
-          </div>
-        </div>
-
-        <article class="model-architecture-panel is-active" id="model-architecture-panel-deepseek-v32" role="tabpanel" aria-labelledby="model-architecture-tab-deepseek-v32" data-model-architecture-panel="deepseek-v32">
-          <div class="model-architecture-summary">
-            <div class="model-architecture-summary-main">
-              <span class="token-badge">nodes: 26</span>
-              <span class="token-badge">edges: 28</span>
-              <span class="token-badge">main layers: 61</span>
-              <span class="token-badge">dense 0-2 / MoE 3-60</span>
-            </div>
-            <a class="btn btn-ghost" href="./patterns/model-graphviz/assets/deepseek_v32_modelviz.html?theme=dark&amp;embed=1&amp;v=model-gallery-v1">查看完整示例</a>
-          </div>
-          <div class="model-architecture-frame-shell">
-            <iframe class="model-architecture-frame" data-pattern-preview="model-architecture-deepseek-v32" data-model-frame="deepseek-v32" data-sync-theme-param="true" data-src="./patterns/model-graphviz/assets/deepseek_v32_modelviz.html?embed=1&amp;v=model-gallery-v1" src="about:blank" title="DeepSeek V3.2 Model Architecture" loading="lazy"></iframe>
-          </div>
-        </article>
-
-        <article class="model-architecture-panel" id="model-architecture-panel-qwen7b" role="tabpanel" aria-labelledby="model-architecture-tab-qwen7b" data-model-architecture-panel="qwen7b" hidden>
-          <div class="model-architecture-summary">
-            <div class="model-architecture-summary-main">
-              <span class="token-badge">nodes: 22</span>
-              <span class="token-badge">edges: 22</span>
-              <span class="token-badge">main layers: 32</span>
-              <span class="token-badge">schema: qwen7b_model_architecture.json</span>
-            </div>
-            <a class="btn btn-ghost" href="./patterns/model-graphviz/assets/qwen7b_modelviz.html?theme=dark&amp;embed=1&amp;v=model-gallery-v1">查看完整示例</a>
-          </div>
-          <div class="model-architecture-frame-shell">
-            <iframe class="model-architecture-frame" data-pattern-preview="model-architecture-qwen7b" data-model-frame="qwen7b" data-sync-theme-param="true" data-src="./patterns/model-graphviz/assets/qwen7b_modelviz.html?embed=1&amp;v=model-gallery-v1" src="about:blank" title="Qwen-7B Model Architecture" loading="lazy"></iframe>
-          </div>
-        </article>
-
-        <article class="model-architecture-panel" id="model-architecture-panel-gemma" role="tabpanel" aria-labelledby="model-architecture-tab-gemma" data-model-architecture-panel="gemma" hidden>
-          <div class="model-architecture-summary">
-            <div class="model-architecture-summary-main">
-              <span class="token-badge">nodes: 37</span>
-              <span class="token-badge">edges: 37</span>
-              <span class="token-badge">main layers: 30</span>
-              <span class="token-badge">schema-only asset</span>
-            </div>
-            <a class="btn btn-ghost" href="./patterns/model-graphviz/assets/gemma_model_architecture.json">打开 Schema JSON</a>
-          </div>
-          <div class="model-architecture-schema" aria-label="Gemma architecture schema summary">
-            <h3 class="model-architecture-schema-title">Gemma-4-26B-A4B Text Decoder</h3>
-            <p class="model-architecture-schema-copy">Clean text-decoder source/config architecture schema with folded attention, MLP, and MoE structure. This asset currently ships as canonical JSON for renderer ingestion.</p>
-            <dl class="model-architecture-schema-grid">
-              <div>
-                <dt>Nodes</dt>
-                <dd>37</dd>
-              </div>
-              <div>
-                <dt>Tensor Edges</dt>
-                <dd>37</dd>
-              </div>
-              <div>
-                <dt>Main Layers</dt>
-                <dd>30</dd>
-              </div>
-              <div>
-                <dt>Repeats</dt>
-                <dd>4</dd>
-              </div>
-              <div>
-                <dt>Branches</dt>
-                <dd>2</dd>
-              </div>
-            </dl>
-          </div>
-        </article>
-
-        <article class="model-architecture-panel" id="model-architecture-panel-openpangu-2-0-flash" role="tabpanel" aria-labelledby="model-architecture-tab-openpangu-2-0-flash" data-model-architecture-panel="openpangu-2-0-flash" hidden>
-          <div class="model-architecture-summary">
-            <div class="model-architecture-summary-main">
-              <span class="token-badge">nodes: 55</span>
-              <span class="token-badge">edges: 60</span>
-              <span class="token-badge">main layers: 46</span>
-              <span class="token-badge">MTP: 3 layers</span>
-            </div>
-            <a class="btn btn-ghost" href="./patterns/model-graphviz/assets/openpangu_2_0_flash_modelviz.html?theme=dark&amp;v=model-gallery-v1">查看完整示例</a>
-          </div>
-          <div class="model-architecture-frame-shell">
-            <iframe class="model-architecture-frame" data-pattern-preview="model-architecture-openpangu-2-0-flash" data-model-frame="openpangu-2-0-flash" data-sync-theme-param="true" data-src="./patterns/model-graphviz/assets/openpangu_2_0_flash_modelviz.html?v=model-gallery-v1" src="about:blank" title="openPangu-2.0-Flash Model Architecture" loading="lazy"></iframe>
-          </div>
-        </article>
-      </div>
-    </section>
-
     <section class="preview-section block-card" id="pattern-previews" data-categories="featured patterns layout visualization">
       <h2 class="preview-section-title">模式库</h2>
       <div class="preview-grid">
@@ -2555,6 +2482,48 @@
             <span class="token-badge">source: patterns/swimlane-task/pattern.js</span>
             <span class="token-badge">contract: canvas renderer + hover tip</span>
             <span class="state-badge">Pattern</span>
+          </div>
+        </article>
+
+        <article class="preview-card preview-card-full-row">
+          <div class="preview-card-head">
+            <h3 class="preview-card-title">Tensor Volume Canvas Pattern</h3>
+            <div class="preview-card-class">固定视角 Canvas：NCHW / A1 / Load3D 体素状态；共享投影与 DPR，无相机交互</div>
+          </div>
+          <div class="preview-stage preview-stack">
+            <div class="preview-inline">
+              <a class="btn btn-ghost" href="./patterns/tensor-volume-canvas/pattern.html">查看完整示例</a>
+            </div>
+            <div class="preview-embed">
+              <iframe class="preview-embed-frame" data-pattern-preview="tensor-volume-canvas" data-src="./patterns/tensor-volume-canvas/pattern.html?embed=1" src="about:blank" title="Tensor Volume Canvas Pattern Preview" loading="lazy"></iframe>
+            </div>
+          </div>
+          <div class="preview-meta">
+            <span class="token-badge">pattern id: tensor-volume-canvas</span>
+            <span class="token-badge">source: patterns/tensor-volume-canvas/pattern.js</span>
+            <span class="token-badge">contract: fixed projection + voxel state protocol + responsive DPR</span>
+            <span class="state-badge">Canvas Pattern</span>
+          </div>
+        </article>
+
+        <article class="preview-card preview-card-full-row">
+          <div class="preview-card-head">
+            <h3 class="preview-card-title">Memory Reuse Viewer Pattern</h3>
+            <div class="preview-card-class">UB / L1 / L0C：tensor lifetime、buffer offset、peak usage、reuse links、source 与 CCE 关联检查</div>
+          </div>
+          <div class="preview-stage preview-stack">
+            <div class="preview-inline">
+              <a class="btn btn-ghost" href="./patterns/memory-reuse-viewer/pattern.html">查看完整示例</a>
+            </div>
+            <div class="preview-embed">
+              <iframe class="preview-embed-frame" data-pattern-preview="memory-reuse-viewer" data-src="./patterns/memory-reuse-viewer/pattern.html?embed=1" src="about:blank" title="Memory Reuse Viewer Pattern Preview" loading="lazy"></iframe>
+            </div>
+          </div>
+          <div class="preview-meta">
+            <span class="token-badge">pattern id: memory-reuse-viewer</span>
+            <span class="token-badge">source: patterns/memory-reuse-viewer/pattern.js</span>
+            <span class="token-badge">contract: tensor lifetime canvas + detail inspector + direct embedding</span>
+            <span class="state-badge">Hybrid Pattern</span>
           </div>
         </article>
 
@@ -2581,6 +2550,48 @@
 
         <article class="preview-card preview-card-full-row">
           <div class="preview-card-head">
+            <h3 class="preview-card-title">模型并行 Rank Three.js Deck Pattern</h3>
+            <div class="preview-card-class">TP2 × PP4 × EP8 × EDP2：128 个透明 Rank 内编译 1472 个完整 Layer 载荷，支持并行拓扑变换、关系选中与双击进入 Rank</div>
+          </div>
+          <div class="preview-stage preview-stack">
+            <div class="preview-inline">
+              <a class="btn btn-ghost" href="./patterns/model-parallel-rank-deck/pattern.html?v=rank-packing-v1">查看完整示例</a>
+            </div>
+            <div class="preview-embed">
+              <iframe class="preview-embed-frame" data-pattern-preview="model-parallel-rank-deck" data-sync-theme-param="true" data-src="./patterns/model-parallel-rank-deck/pattern.html?embed=1&amp;v=rank-packing-v1" src="about:blank" title="Model Parallel Rank Three.js Deck Pattern Preview" loading="lazy"></iframe>
+            </div>
+          </div>
+          <div class="preview-meta">
+            <span class="token-badge">pattern id: model-parallel-rank-deck</span>
+            <span class="token-badge">payload: complete GPU scene records</span>
+            <span class="token-badge">topology: 128-rank demo</span>
+            <span class="state-badge">Three.js Hybrid Pattern</span>
+          </div>
+        </article>
+
+        <article class="preview-card preview-card-full-row">
+          <div class="preview-card-head">
+            <h3 class="preview-card-title">模型训练语义 Sidecar Pattern</h3>
+            <div class="preview-card-class">不修改原侧视图：叠加 Forward hidden state、Backward activation gradient、参数/优化器状态、指标热条与可展开 Layer focus lens</div>
+          </div>
+          <div class="preview-stage preview-stack">
+            <div class="preview-inline">
+              <a class="btn btn-ghost" href="./patterns/model-architecture-training-sidecar/pattern.html?view=right&amp;parallel=pp&amp;v=pp-boundary-detail-v17">查看完整示例</a>
+            </div>
+            <div class="preview-embed">
+              <iframe class="preview-embed-frame" data-pattern-preview="model-architecture-training-sidecar" data-sync-theme-param="true" data-src="./patterns/model-architecture-training-sidecar/pattern.html?embed=1&amp;view=right&amp;parallel=pp&amp;v=pp-boundary-detail-v17" src="about:blank" title="Model Architecture Training Sidecar Pattern Preview" loading="lazy"></iframe>
+            </div>
+          </div>
+          <div class="preview-meta">
+            <span class="token-badge">pattern id: model-architecture-training-sidecar</span>
+            <span class="token-badge">source: patterns/model-architecture-training-sidecar/pattern.js</span>
+            <span class="token-badge">contract: immutable base deck + projected training-semantics overlay + Layer detail slot</span>
+            <span class="state-badge">Hybrid Pattern</span>
+          </div>
+        </article>
+
+        <article class="preview-card preview-card-full-row">
+          <div class="preview-card-head">
             <h3 class="preview-card-title">硬件架构视口 Pattern</h3>
             <div class="preview-card-class">architecture-map 宿主控件 + 真实 910B/950B 架构图：架构切换 / detail / zoom / pan</div>
           </div>
@@ -2597,6 +2608,27 @@
             <span class="token-badge">source: patterns/hardware-architecture-viewport/pattern.js</span>
             <span class="token-badge">contract: viewport toolbar + 910B/950B switch + memory architecture renderer</span>
             <span class="state-badge">Pattern</span>
+          </div>
+        </article>
+
+        <article class="preview-card preview-card-full-row">
+          <div class="preview-card-head">
+            <h3 class="preview-card-title">模型架构 3D Deck Pattern</h3>
+            <div class="preview-card-class">源页 openPangu 46 层完整架构：深浅模式、3D / 正视 / 侧视切换、PP 分区投影、DP / PP / TP / EP 标注与侧视算子标签</div>
+          </div>
+          <div class="preview-stage preview-stack">
+            <div class="preview-inline">
+              <a class="btn btn-ghost" href="./patterns/model-architecture-3d-deck/pattern.html?v=parallel-tabs-v2">查看完整示例</a>
+            </div>
+            <div class="preview-embed">
+              <iframe class="preview-embed-frame" data-pattern-preview="model-architecture-3d-deck" data-sync-theme-param="true" data-src="./patterns/model-architecture-3d-deck/pattern.html?embed=1&amp;v=parallel-tabs-v2" src="about:blank" title="Model Architecture 3D Deck Pattern Preview" loading="lazy"></iframe>
+            </div>
+          </div>
+          <div class="preview-meta">
+            <span class="token-badge">pattern id: model-architecture-3d-deck</span>
+            <span class="token-badge">source: patterns/model-architecture-3d-deck/pattern.js</span>
+            <span class="token-badge">contract: source-parity CSS 3D + dark/light + projected parallel annotations + multi-view controller</span>
+            <span class="state-badge">Hybrid Pattern</span>
           </div>
         </article>
 
@@ -2726,10 +2758,10 @@
           </div>
         </article>
 
-        <article class="preview-card preview-card-full-row">
+        <article class="preview-card preview-card-full-row" hidden data-preview-hidden="covered-by-model-architecture-gallery">
           <div class="preview-card-head">
             <h3 class="preview-card-title">Model Graphviz Pattern</h3>
-            <div class="preview-card-class">torchvista graphviz：DeepSeek / Qwen / Gemma / openPangu 模型图 SVG 渲染样式</div>
+            <div class="preview-card-class">torchvista graphviz：DeepSeek / Qwen / openPangu / Pangu MoE 模型图 SVG 渲染样式</div>
           </div>
           <div class="preview-stage preview-stack">
             <div class="preview-inline">
@@ -2747,17 +2779,126 @@
           </div>
         </article>
 
-        <article class="preview-card preview-card-full-row">
+
+        <article class="preview-card preview-card-full-row model-architecture-card" id="model-architecture-gallery">
+          <div class="preview-card-head">
+            <h3 class="preview-card-title">模型架构</h3>
+            <div class="preview-card-class">model-graphviz assets：DeepSeek / Qwen / openPangu / Pangu MoE 架构图 tab 预览</div>
+          </div>
+          <div class="preview-stage preview-stack">
+            <div class="model-architecture-floor">
+              <div class="model-architecture-toolbar">
+                <div class="model-architecture-tabs" role="tablist" aria-label="Model architecture tabs">
+                  <button class="model-architecture-tab is-active" type="button" role="tab" id="model-architecture-tab-deepseek-v32" aria-selected="true" aria-controls="model-architecture-panel-deepseek-v32" data-model-architecture-tab="deepseek-v32">DeepSeek V3.2</button>
+                  <button class="model-architecture-tab" type="button" role="tab" id="model-architecture-tab-qwen7b" aria-selected="false" aria-controls="model-architecture-panel-qwen7b" data-model-architecture-tab="qwen7b">Qwen-7B</button>
+                  <button class="model-architecture-tab" type="button" role="tab" id="model-architecture-tab-openpangu-2-0-flash" aria-selected="false" aria-controls="model-architecture-panel-openpangu-2-0-flash" data-model-architecture-tab="openpangu-2-0-flash">openPangu-2.0-Flash</button>
+                  <button class="model-architecture-tab" type="button" role="tab" id="model-architecture-tab-openpangu-r-72b" aria-selected="false" aria-controls="model-architecture-panel-openpangu-r-72b" data-model-architecture-tab="openpangu-r-72b">openPangu-R 72B</button>
+                  <button class="model-architecture-tab" type="button" role="tab" id="model-architecture-tab-pangu-pro-moe-72ba16b" aria-selected="false" aria-controls="model-architecture-panel-pangu-pro-moe-72ba16b" data-model-architecture-tab="pangu-pro-moe-72ba16b">Pangu Pro MoE 72BA16B</button>
+                </div>
+              </div>
+
+              <article class="model-architecture-panel is-active" id="model-architecture-panel-deepseek-v32" role="tabpanel" aria-labelledby="model-architecture-tab-deepseek-v32" data-model-architecture-panel="deepseek-v32">
+                <div class="model-architecture-summary">
+                  <div class="model-architecture-summary-main">
+                    <span class="token-badge">source graph baseline</span>
+                    <span class="token-badge">side inputs: weights/state</span>
+                    <span class="token-badge">main layers: 61</span>
+                    <span class="token-badge">dense 0-2 / MoE 3-60</span>
+                    <span class="token-badge">business badges: off</span>
+                  </div>
+                  <a class="btn btn-ghost" href="./patterns/model-graphviz/assets/deepseek_v32_gallery_modelviz.html?theme=dark&amp;v=model-capsule-7">查看完整示例</a>
+                </div>
+                <div class="model-architecture-frame-shell">
+                  <iframe class="model-architecture-frame" data-pattern-preview="model-architecture-deepseek-v32" data-model-frame="deepseek-v32" data-sync-theme-param="true" data-src="./patterns/model-graphviz/assets/deepseek_v32_gallery_modelviz.html?embed=1&amp;v=model-capsule-7" src="about:blank" title="DeepSeek V3.2 Model Architecture" loading="lazy"></iframe>
+                </div>
+              </article>
+
+              <article class="model-architecture-panel" id="model-architecture-panel-qwen7b" role="tabpanel" aria-labelledby="model-architecture-tab-qwen7b" data-model-architecture-panel="qwen7b" hidden>
+                <div class="model-architecture-summary">
+                  <div class="model-architecture-summary-main">
+                    <span class="token-badge">nodes: 26</span>
+                    <span class="token-badge">edges: 22</span>
+                    <span class="token-badge">main layers: 32</span>
+                    <span class="token-badge">parameter nodes: 4</span>
+                    <span class="token-badge">parent fill: transparent</span>
+                  </div>
+                  <a class="btn btn-ghost" href="./patterns/model-graphviz/assets/qwen7b_modelviz.html?theme=dark&amp;embed=1&amp;v=model-capsule-7">查看完整示例</a>
+                </div>
+                <div class="model-architecture-frame-shell">
+                  <iframe class="model-architecture-frame" data-pattern-preview="model-architecture-qwen7b" data-model-frame="qwen7b" data-sync-theme-param="true" data-src="./patterns/model-graphviz/assets/qwen7b_modelviz.html?embed=1&amp;v=model-capsule-7" src="about:blank" title="Qwen-7B Model Architecture" loading="lazy"></iframe>
+                </div>
+              </article>
+
+              <article class="model-architecture-panel" id="model-architecture-panel-openpangu-2-0-flash" role="tabpanel" aria-labelledby="model-architecture-tab-openpangu-2-0-flash" data-model-architecture-panel="openpangu-2-0-flash" hidden>
+                <div class="model-architecture-summary">
+                  <div class="model-architecture-summary-main">
+                    <span class="token-badge">nodes: 63</span>
+                    <span class="token-badge">edges: 68</span>
+                    <span class="token-badge">main layers: 46</span>
+                    <span class="token-badge">parameter nodes: 8</span>
+                    <span class="token-badge">MTP: 3 layers</span>
+                  </div>
+                  <a class="btn btn-ghost" href="./patterns/model-graphviz/assets/openpangu_2_0_flash_modelviz.html?theme=dark&amp;v=model-capsule-7">查看完整示例</a>
+                </div>
+                <div class="model-architecture-frame-shell">
+                  <iframe class="model-architecture-frame" data-pattern-preview="model-architecture-openpangu-2-0-flash" data-model-frame="openpangu-2-0-flash" data-sync-theme-param="true" data-src="./patterns/model-graphviz/assets/openpangu_2_0_flash_modelviz.html?embed=1&amp;v=model-capsule-7" src="about:blank" title="openPangu-2.0-Flash Model Architecture" loading="lazy"></iframe>
+                </div>
+              </article>
+
+              <article class="model-architecture-panel" id="model-architecture-panel-openpangu-r-72b" role="tabpanel" aria-labelledby="model-architecture-tab-openpangu-r-72b" data-model-architecture-panel="openpangu-r-72b" hidden>
+                <div class="model-architecture-summary">
+                  <div class="model-architecture-summary-main">
+                    <span class="token-badge">nodes: 24</span>
+                    <span class="token-badge">edges: 24</span>
+                    <span class="token-badge">main layers: 50</span>
+                    <span class="token-badge">dense 0-3 / MoE 4-49</span>
+                    <span class="token-badge">parameter nodes: 7</span>
+                    <span class="token-badge">80 routed experts</span>
+                  </div>
+                  <a class="btn btn-ghost" href="./patterns/model-graphviz/assets/pangu_moe_modelviz.html?variant=r72b&amp;theme=dark&amp;v=model-capsule-7">查看完整示例</a>
+                </div>
+                <div class="model-architecture-frame-shell">
+                  <iframe class="model-architecture-frame" data-pattern-preview="model-architecture-openpangu-r-72b" data-model-frame="openpangu-r-72b" data-sync-theme-param="true" data-src="./patterns/model-graphviz/assets/pangu_moe_modelviz.html?variant=r72b&amp;embed=1&amp;v=model-capsule-7" src="about:blank" title="openPangu-R 72B Model Architecture" loading="lazy"></iframe>
+                </div>
+              </article>
+
+              <article class="model-architecture-panel" id="model-architecture-panel-pangu-pro-moe-72ba16b" role="tabpanel" aria-labelledby="model-architecture-tab-pangu-pro-moe-72ba16b" data-model-architecture-panel="pangu-pro-moe-72ba16b" hidden>
+                <div class="model-architecture-summary">
+                  <div class="model-architecture-summary-main">
+                    <span class="token-badge">nodes: 22</span>
+                    <span class="token-badge">edges: 21</span>
+                    <span class="token-badge">71.99B total / 16.50B active</span>
+                    <span class="token-badge">48 MoGE layers</span>
+                    <span class="token-badge">parameter nodes: 10</span>
+                    <span class="token-badge">64 routed + 4 shared</span>
+                  </div>
+                  <a class="btn btn-ghost" href="./patterns/model-graphviz/assets/pangu_moe_modelviz.html?variant=pro72ba16b&amp;theme=dark&amp;v=model-capsule-7">查看完整示例</a>
+                </div>
+                <div class="model-architecture-frame-shell">
+                  <iframe class="model-architecture-frame" data-pattern-preview="model-architecture-pangu-pro-moe-72ba16b" data-model-frame="pangu-pro-moe-72ba16b" data-sync-theme-param="true" data-src="./patterns/model-graphviz/assets/pangu_moe_modelviz.html?variant=pro72ba16b&amp;embed=1&amp;v=model-capsule-7" src="about:blank" title="Pangu Pro MoE 72BA16B Model Architecture" loading="lazy"></iframe>
+                </div>
+              </article>
+            </div>
+          </div>
+          <div class="preview-meta">
+            <span class="token-badge">pattern id: model-graphviz</span>
+            <span class="token-badge">source: patterns/model-graphviz/assets</span>
+            <span class="token-badge">contract: tabbed model architecture floor</span>
+            <span class="state-badge">Pattern</span>
+          </div>
+        </article>
+
+        <article class="preview-card preview-card-full-row" hidden data-preview-hidden="covered-by-model-architecture-gallery">
           <div class="preview-card-head">
             <h3 class="preview-card-title">Model Training Graphviz Pattern</h3>
             <div class="preview-card-class">train 模块：模型架构图 + 训练证据 hover + 阶段高亮联动</div>
           </div>
           <div class="preview-stage preview-stack">
             <div class="preview-inline">
-              <a class="btn btn-ghost" href="./patterns/model-training-graphviz/pattern.html">查看完整示例</a>
+              <a class="btn btn-ghost" href="./patterns/model-training-graphviz/pattern.html?v=training-gallery-align-3">查看完整示例</a>
             </div>
             <div class="preview-embed">
-              <iframe class="preview-embed-frame" data-pattern-preview="model-training-graphviz" data-src="./patterns/model-training-graphviz/pattern.html?embed=1&amp;v=cmd-wheel-v1" src="about:blank" title="Model Training Graphviz Pattern Preview" loading="lazy"></iframe>
+              <iframe class="preview-embed-frame" data-pattern-preview="model-training-graphviz" data-src="./patterns/model-training-graphviz/pattern.html?embed=1&amp;v=training-gallery-align-3" src="about:blank" title="Model Training Graphviz Pattern Preview" loading="lazy"></iframe>
             </div>
           </div>
           <div class="preview-meta">
@@ -3375,8 +3516,13 @@
       const modelArchitecturePanels = Array.from(document.querySelectorAll('[data-model-architecture-panel]'));
       const fixedPatternPreviewIds = new Set([
         'swimlane-task',
+        'tensor-volume-canvas',
+        'memory-reuse-viewer',
         'memory-architecture',
         'hardware-architecture-viewport',
+        'model-architecture-3d-deck',
+        'model-parallel-rank-deck',
+        'model-architecture-training-sidecar',
         'aic-core-object',
         'aiv-core-object',
         'pass-ir-graph-node',
@@ -3384,11 +3530,11 @@
         'workbench-shell',
         'ide-frame',
         'floating-playback-control',
-        'model-graphviz',
-        'model-training-graphviz',
         'model-architecture-deepseek-v32',
         'model-architecture-qwen7b',
         'model-architecture-openpangu-2-0-flash',
+        'model-architecture-openpangu-r-72b',
+        'model-architecture-pangu-pro-moe-72ba16b',
       ]);
       let accentScope = 'accent';
 

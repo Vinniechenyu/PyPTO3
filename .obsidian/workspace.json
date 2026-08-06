@@ -4,21 +4,21 @@
     "type": "split",
     "children": [
       {
-        "id": "295f91c096866de4",
+        "id": "63831a72e4263b41",
         "type": "tabs",
         "children": [
           {
-            "id": "9a07ca88f7d157a9",
+            "id": "0c4452cf167e25a6",
             "type": "leaf",
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Insight/pypto_ux_insights_zh.md",
+                "file": "Product_Planning/模型推理相关访谈洞察.md",
                 "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "pypto_ux_insights_zh"
+              "title": "模型推理相关访谈洞察"
             }
           }
         ]
@@ -41,7 +41,9 @@
               "type": "file-explorer",
               "state": {
                 "sortOrder": "alphabetical",
-                "autoReveal": false
+                "autoReveal": false,
+                "showSearch": false,
+                "searchQuery": ""
               },
               "icon": "lucide-folder-closed",
               "title": "文件列表"
@@ -94,7 +96,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "Insight/pypto_ux_insights_zh.md",
+                "file": "Product_Planning/PyPTO3.0_Toolkit_产品功能规划.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,7 +106,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "pypto_ux_insights_zh 的反向链接列表"
+              "title": "PyPTO3.0_Toolkit_产品功能规划 的反向链接列表"
             }
           },
           {
@@ -113,12 +115,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "Insight/pypto_ux_insights_zh.md",
+                "file": "Product_Planning/PyPTO3.0_Toolkit_产品功能规划.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "pypto_ux_insights_zh 的出链列表"
+              "title": "PyPTO3.0_Toolkit_产品功能规划 的出链列表"
             }
           },
           {
@@ -156,13 +158,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "Insight/pypto_ux_insights_zh.md",
+                "file": "Product_Planning/PyPTO3.0_Toolkit_产品功能规划.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "pypto_ux_insights_zh 的大纲"
+              "title": "PyPTO3.0_Toolkit_产品功能规划 的大纲"
             }
           }
         ]
@@ -183,6 +185,51 @@
       "bases:新建数据库": false
     }
   },
-  "active": "9a07ca88f7d157a9",
-  "lastOpenFiles": []
+  "active": "0c4452cf167e25a6",
+  "lastOpenFiles": [
+    "vendor/pto-design-system/patterns/patterns.json",
+    "vendor/pto-design-system/patterns/model-graphviz/pattern.json",
+    "vendor/pto-design-system/patterns/model-graphviz/pattern.js",
+    "vendor/pto-design-system/patterns/model-graphviz/pattern.html",
+    "vendor/pto-design-system/patterns/model-graphviz/pattern.css",
+    "vendor/pto-design-system/README.md",
+    "vendor/pto-design-system/tokens/foundation.css",
+    "vendor/pto-design-system/tokens/tokens.json",
+    "vendor/pto-design-system/tokens/tokens.js",
+    "vendor/pto-design-system/tokens/semantic.css",
+    "vendor/pto-design-system/tokens/generate_tokens.py",
+    "vendor/pto-design-system/tokens/components.css",
+    "vendor/pto-design-system/references/quick-reference.md",
+    "vendor/pto-design-system/references/retrofit-container-audit.md",
+    "vendor/pto-design-system/references/pto-design-system-map.md",
+    "vendor/pto-design-system/references/preview-gate.md",
+    "vendor/pto-design-system/references/DESIGN.md",
+    "vendor/pto-design-system/patterns/model-parallel-rank-deck/THREEJS_RANK_PACKING_SPEC.md",
+    "vendor/pto-design-system/patterns/tensor-volume-canvas/tensor-volume-canvas-使用说明.md",
+    "vendor/pto-design-system/patterns/swimlane-task/README.md",
+    "vendor/pto-design-system/patterns/model-graphviz/graphviz/img/jsoneditor-icons.svg",
+    "vendor/pto-design-system/patterns/model-graphviz/assets/img/jsoneditor-icons.svg",
+    "vendor/pto-design-system/patterns/model-graphviz/assets/openpangu_ultramoe_718b_model_architecture_validation.md",
+    "vendor/pto-design-system/patterns/model-graphviz/assets/openpangu_2_0_flash_model_architecture_validation.md",
+    "vendor/pto-design-system/patterns/model-architecture-3d-deck/CSS3D_RANK_PACKING_SPEC.md",
+    "vendor/pto-design-system/patterns/matrix-canvas/matrix-canvas-使用说明.md",
+    "vendor/pto-design-system/assets/fx.svg",
+    "vendor/pto-design-system/SKILL.md",
+    "vendor/pto-design-system.backup-20260806-115127/patterns/model-graphviz/graphviz/img/jsoneditor-icons.svg",
+    "vendor/pto-design-system.backup-20260806-115127/patterns/model-graphviz/assets/img/jsoneditor-icons.svg",
+    "vendor/pto-design-system.backup-20260806-115127/patterns/model-graphviz/assets/openpangu_2_0_flash_model_architecture_validation.md",
+    "vendor/pto-design-system.backup-20260806-115127/patterns/swimlane-task/README.md",
+    "vendor/pto-design-system.backup-20260806-115127/references/retrofit-container-audit.md",
+    "vendor/pto-design-system.backup-20260806-115127/references/quick-reference.md",
+    "vendor/pto-design-system.backup-20260806-115127/references/pto-design-system-map.md",
+    "vendor/pto-design-system.backup-20260806-115127/references/DESIGN.md",
+    "vendor/pto-design-system.backup-20260806-115127/references/preview-gate.md",
+    "vendor/pto-design-system.backup-20260806-115127/assets/fx.svg",
+    "vendor/pto-design-system.backup-20260806-115127/SKILL.md",
+    "vendor/pto-design-system.backup-20260806-115127/README.md",
+    "Product_Planning/PyPTO3.0_Toolkit_产品功能规划.md",
+    "Product_Planning/模型推理相关访谈洞察.md",
+    "Design/assets/toolkit-studio.png",
+    "Design/assets/memory-viz-demo.png"
+  ]
 }

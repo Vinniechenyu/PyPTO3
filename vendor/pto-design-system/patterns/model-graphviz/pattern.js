@@ -5,29 +5,69 @@
   const CORE_COLORS = [
     '#14B8A6',
     '#06B6D4',
-    '#EC4899',
-    '#A855F7',
+    '#0EA5E9',
     '#3B82F6',
-    '#8B5CF6',
+    '#4F46E5',
+    '#7C3AED',
+    '#A855F7',
     '#F59E0B',
-    '#F97316',
-    '#22D3EE',
+    '#EA580C',
   ];
   const SEMANTIC_COLOR_DEFAULTS = {
     'sem:embedding': '#14B8A6',
-    'sem:norm': '#06B6D4',
-    'sem:attention': '#EC4899',
+    'sem:norm': '#0EA5E9',
+    'sem:attention': '#3B82F6',
     'sem:position': '#A855F7',
     'sem:rope': '#A855F7',
     'sem:qknorm': '#0EA5E9',
-    'sem:linear': '#3B82F6',
-    'sem:head': '#3B82F6',
-    'sem:mlp': '#8B5CF6',
+    'sem:linear': '#4F46E5',
+    'sem:head': '#7C3AED',
+    'sem:mlp': '#A855F7',
     'sem:act': '#8B5CF6',
+    'sem:activation': '#8B5CF6',
     'sem:gate': '#F59E0B',
-    'sem:moe': '#F97316',
-    'sem:comm': '#22D3EE',
+    'sem:moe': '#EA580C',
+    'sem:comm': '#06B6D4',
   };
+  const MODEL_ARCHITECTURE_NEUTRAL = '#D1D1D1';
+  const MODEL_ARCHITECTURE_LIGHT_HSL = Object.freeze({ hue: 2, saturation: 79, lightness: 76 });
+  const MODEL_ARCHITECTURE_COLOR_KEY_ALIASES = Object.freeze({
+    'sem:embedding': 'opv:embedding',
+    'sem:norm': 'opv:norm',
+    'sem:attention': 'opv:attention',
+    'sem:position': 'opv:rope',
+    'sem:rope': 'opv:rope',
+    'sem:qknorm': 'opv:norm',
+    'sem:linear': 'opv:linear',
+    'sem:head': 'opv:head',
+    'sem:mlp': 'opv:mlp',
+    'sem:act': 'opv:act',
+    'sem:activation': 'opv:act',
+    'sem:gate': 'opv:gate',
+    'sem:moe': 'opv:moe',
+    'sem:comm': 'opv:comm',
+    'module:model': 'opv:model',
+    'module:decoder': 'opv:decoder',
+    'module:mhc': 'opv:attention',
+    'module:ffn': 'opv:mlp',
+    'module:mtp': 'opv:linear',
+  });
+  const MODEL_ARCHITECTURE_BASE_COLORS = Object.freeze({
+    'opv:act': '#8B5CF6',
+    'opv:attention': '#3B82F6',
+    'opv:comm': '#06B6D4',
+    'opv:decoder': '#0D9488',
+    'opv:embedding': '#14B8A6',
+    'opv:gate': '#F59E0B',
+    'opv:head': '#7C3AED',
+    'opv:linear': '#4F46E5',
+    'opv:mlp': '#A855F7',
+    'opv:model': '#475569',
+    'opv:moe': '#EA580C',
+    'opv:norm': '#38BDF8',
+    'opv:op': '#14B8A6',
+    'opv:rope': '#A855F7',
+  });
   const STANDARD_IO_COLORS = {
     input: '#A855F7',
     activation: '#14B8A6',
@@ -247,8 +287,33 @@
     return String(edge?.tag || edge?.edgeTypeLabel || edge?.edgeType || '').trim();
   }
 
-  function edgeTagWidth(label) {
-    return Math.max(38, Math.min(94, String(label || '').length * 5.7 + 18));
+  function edgeTagFontSize(edge, options) {
+    const value = Number(edge?.tagFontSize ?? options?.edgeTagFontSize);
+    return Number.isFinite(value) ? Math.max(8, Math.min(18, value)) : 9.5;
+  }
+
+  function edgeTagHeight(edge, options) {
+    const value = Number(edge?.tagHeight ?? options?.edgeTagHeight);
+    return Number.isFinite(value) ? Math.max(16, Math.min(32, value)) : 18;
+  }
+
+  function edgeTagAngle(edge) {
+    const value = Number(edge?.tagAngle ?? edge?.tagRotation ?? 0);
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function edgeTagWidth(label, fontSize = 9.5, paddingX = 9) {
+    return Math.max(38, Math.min(132, String(label || '').length * fontSize * 0.6 + paddingX * 2));
+  }
+
+  function rotatedTagSize(width, height, angle) {
+    const radians = Math.abs(angle) * Math.PI / 180;
+    const cos = Math.abs(Math.cos(radians));
+    const sin = Math.abs(Math.sin(radians));
+    return {
+      width: width * cos + height * sin,
+      height: width * sin + height * cos,
+    };
   }
 
   function classToken(value) {
@@ -287,6 +352,57 @@
       info?.description ? `<p>${esc(info.description)}</p>` : '',
       lines ? `<ul>${lines}</ul>` : '',
       info?.action ? `<p><b>${esc(actionLabel)}</b> ${esc(info.action)}</p>` : '',
+      sources ? `<div class="pto-model-graphviz-hover-source">${sources}</div>` : '',
+    ].filter(Boolean).join('');
+  }
+
+  function edgeHasHover(edge) {
+    const info = edge?.hover || edge || {};
+    return Boolean(
+      info.title
+      || info.what
+      || info.description
+      || info.object
+      || info.tensor
+      || (Array.isArray(info.evidence) && info.evidence.length)
+      || (Array.isArray(info.lines) && info.lines.length)
+      || (Array.isArray(info.sources) && info.sources.length)
+    );
+  }
+
+  function edgeHoverHtml(edge, options) {
+    if (typeof options?.renderEdgeHover === 'function') {
+      return options.renderEdgeHover(edge);
+    }
+    const info = edge?.hover || edge || {};
+    const tensor = info.tensor || edge?.tensor || null;
+    const title = info.title || info.label || edgeTagText(edge) || 'Edge object';
+    const chips = [
+      edgeTagText(edge),
+      info.object,
+      tensor?.name,
+      tensor?.shape,
+      tensor?.dtype,
+      edge?.edgeType || edge?.type,
+    ].filter(Boolean).map((item) => `<span>${esc(item)}</span>`).join('');
+    const lines = (info.evidence || info.lines || []).slice(0, 4)
+      .map((line) => `<li>${esc(line)}</li>`)
+      .join('');
+    const sources = (info.sources || []).slice(0, 3)
+      .map((item) => `<span>${esc(item)}</span>`)
+      .join('');
+
+    return [
+      '<div class="pto-model-graphviz-hover-title">',
+        '<div>',
+          `<small>${esc(edge?.source || '')} -> ${esc(edge?.target || '')}</small>`,
+          `<strong>${esc(title)}</strong>`,
+        '</div>',
+      '</div>',
+      chips ? `<div class="pto-model-graphviz-hover-chips">${chips}</div>` : '',
+      info.what ? `<p>${esc(info.what)}</p>` : '',
+      info.description ? `<p>${esc(info.description)}</p>` : '',
+      lines ? `<ul>${lines}</ul>` : '',
       sources ? `<div class="pto-model-graphviz-hover-source">${sources}</div>` : '',
     ].filter(Boolean).join('');
   }
@@ -464,6 +580,10 @@
         ...STANDARD_IO_COLORS,
         ...(colormap.ioColors || {}),
       },
+      semanticColors: {
+        ...SEMANTIC_COLOR_DEFAULTS,
+        ...(colormap.semanticColors || {}),
+      },
     };
   }
 
@@ -488,6 +608,69 @@
       return normalizeColormapColor(value.color || fallback, options);
     }
     return normalizeColormapColor(value || fallback, options);
+  }
+
+  function modelArchitectureLightColor(baseHex, lightHsl) {
+    const base = hexToHsl(baseHex);
+    const hue = base.h + (Number(lightHsl.hue) || 0) / 360;
+    const saturation = (Number(lightHsl.saturation) || MODEL_ARCHITECTURE_LIGHT_HSL.saturation) / 100;
+    const lightness = (Number(lightHsl.lightness) || MODEL_ARCHITECTURE_LIGHT_HSL.lightness) / 100;
+    return hslToHex(hue, saturation, lightness);
+  }
+
+  function normalizeModelArchitectureKey(key) {
+    const normalized = String(key || '');
+    if (!normalized || normalized.startsWith('io:')) return normalized;
+    if (MODEL_ARCHITECTURE_COLOR_KEY_ALIASES[normalized]) return MODEL_ARCHITECTURE_COLOR_KEY_ALIASES[normalized];
+    if (MODEL_ARCHITECTURE_BASE_COLORS[normalized]) return normalized;
+    return 'opv:op';
+  }
+
+  function modelArchitectureColormap(graph, options = {}) {
+    const theme = options.theme || global.document?.documentElement?.dataset?.theme || 'dark';
+    const lightHsl = {
+      ...MODEL_ARCHITECTURE_LIGHT_HSL,
+      ...(options.lightHsl || {}),
+    };
+    const semanticColors = {};
+    const allKeys = new Set([
+      ...Object.keys(SEMANTIC_COLOR_DEFAULTS),
+      ...Object.keys(MODEL_ARCHITECTURE_COLOR_KEY_ALIASES),
+      ...Object.values(MODEL_ARCHITECTURE_COLOR_KEY_ALIASES),
+      ...Object.keys(MODEL_ARCHITECTURE_BASE_COLORS),
+      ...collectColorKeys(graph || {}),
+    ]);
+
+    allKeys.forEach((sourceKey) => {
+      if (!sourceKey || String(sourceKey).startsWith('io:')) return;
+      const profileKey = normalizeModelArchitectureKey(sourceKey);
+      const baseColor = MODEL_ARCHITECTURE_BASE_COLORS[profileKey] || MODEL_ARCHITECTURE_BASE_COLORS['opv:op'];
+      semanticColors[sourceKey] = theme === 'light'
+        ? modelArchitectureLightColor(baseColor, lightHsl)
+        : baseColor;
+    });
+
+    const profileKeys = Array.from(new Set(Array.from(allKeys).map(normalizeModelArchitectureKey)))
+      .filter((key) => key && !key.startsWith('io:'));
+    const coreColors = profileKeys.map((key) => {
+      const baseColor = MODEL_ARCHITECTURE_BASE_COLORS[key] || MODEL_ARCHITECTURE_BASE_COLORS['opv:op'];
+      return theme === 'light' ? modelArchitectureLightColor(baseColor, lightHsl) : baseColor;
+    });
+
+    return {
+      coreColors,
+      saturation: theme === 'light' ? lightHsl.saturation / 100 : COLORMAP_SATURATION,
+      lightness: theme === 'light' ? lightHsl.lightness / 100 : COLORMAP_LIGHTNESS,
+      ioColors: theme === 'light' ? {
+        input: { raw: MODEL_ARCHITECTURE_NEUTRAL },
+        activation: { raw: MODEL_ARCHITECTURE_NEUTRAL },
+        state: { raw: MODEL_ARCHITECTURE_NEUTRAL },
+        output: { raw: MODEL_ARCHITECTURE_NEUTRAL },
+        parameter: { raw: MODEL_ARCHITECTURE_NEUTRAL },
+        constant: { raw: MODEL_ARCHITECTURE_NEUTRAL },
+      } : { ...STANDARD_IO_COLORS },
+      semanticColors,
+    };
   }
 
   function expandPalette(baseHexes, targetCount, options) {
@@ -543,7 +726,7 @@
     const resolved = resolvedColormapOptions(options);
     const unique = Array.from(new Set(keys || []));
     const semanticKeys = unique.filter((key) => !String(key).startsWith('io:')).sort();
-    const generatedKeys = semanticKeys.filter((key) => !SEMANTIC_COLOR_DEFAULTS[key]);
+    const generatedKeys = semanticKeys.filter((key) => !resolved.semanticColors[key]);
     const colors = expandPalette(resolved.coreColors, Math.max(semanticKeys.length, resolved.coreColors.length), resolved);
     const map = new Map();
     map.set('io:input', resolveColormapColor(resolved.ioColors.input, '#A855F7', resolved));
@@ -552,8 +735,8 @@
     map.set('io:output', resolveColormapColor(resolved.ioColors.output, '#38BDF8', resolved));
     map.set('io:constant', resolveColormapColor(resolved.ioColors.constant, '#64748B', resolved));
     map.set('io:parameter', resolveColormapColor(resolved.ioColors.parameter, '#3B82F6', resolved));
-    Object.entries(SEMANTIC_COLOR_DEFAULTS).forEach(([key, color]) => {
-      if (unique.includes(key)) map.set(key, normalizeColormapColor(color, resolved));
+    Object.entries(resolved.semanticColors).forEach(([key, color]) => {
+      if (unique.includes(key)) map.set(key, resolveColormapColor(color, color, resolved));
     });
     generatedKeys.forEach((key, index) => map.set(key, colors[index]));
     return map;
@@ -626,6 +809,69 @@
     };
   }
 
+  function roundedRoutePath(points, radius) {
+    const cleanPoints = points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+    if (cleanPoints.length < 2) return '';
+    const cornerRadius = Math.max(0, Number(radius) || 0);
+    const parts = [`M ${cleanPoints[0].x} ${cleanPoints[0].y}`];
+    if (cleanPoints.length === 2 || cornerRadius === 0) {
+      cleanPoints.slice(1).forEach((point) => parts.push(`L ${point.x} ${point.y}`));
+      return parts.join(' ');
+    }
+
+    function pointAtDistance(from, to, distance) {
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const length = Math.hypot(dx, dy);
+      if (!length) return { ...from };
+      const ratio = Math.min(1, Math.max(0, distance / length));
+      return { x: from.x + dx * ratio, y: from.y + dy * ratio };
+    }
+
+    for (let index = 1; index < cleanPoints.length - 1; index += 1) {
+      const prev = cleanPoints[index - 1];
+      const point = cleanPoints[index];
+      const next = cleanPoints[index + 1];
+      const inLength = Math.hypot(point.x - prev.x, point.y - prev.y);
+      const outLength = Math.hypot(next.x - point.x, next.y - point.y);
+      const r = Math.min(cornerRadius, inLength / 2, outLength / 2);
+      if (r <= 0.5) {
+        parts.push(`L ${point.x} ${point.y}`);
+        continue;
+      }
+      const before = pointAtDistance(point, prev, r);
+      const after = pointAtDistance(point, next, r);
+      parts.push(`L ${before.x} ${before.y}`);
+      parts.push(`Q ${point.x} ${point.y} ${after.x} ${after.y}`);
+    }
+    const last = cleanPoints[cleanPoints.length - 1];
+    parts.push(`L ${last.x} ${last.y}`);
+    return parts.join(' ');
+  }
+
+  function smoothRoutePath(points, tension) {
+    const cleanPoints = points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+    if (cleanPoints.length < 2) return '';
+    const t = Math.max(0.05, Math.min(0.5, Number(tension) || 0.18));
+    const parts = [`M ${cleanPoints[0].x} ${cleanPoints[0].y}`];
+    for (let index = 0; index < cleanPoints.length - 1; index += 1) {
+      const p0 = cleanPoints[index - 1] || cleanPoints[index];
+      const p1 = cleanPoints[index];
+      const p2 = cleanPoints[index + 1];
+      const p3 = cleanPoints[index + 2] || p2;
+      const c1 = {
+        x: p1.x + (p2.x - p0.x) * t,
+        y: p1.y + (p2.y - p0.y) * t,
+      };
+      const c2 = {
+        x: p2.x - (p3.x - p1.x) * t,
+        y: p2.y - (p3.y - p1.y) * t,
+      };
+      parts.push(`C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p2.x} ${p2.y}`);
+    }
+    return parts.join(' ');
+  }
+
   function edgePath(source, target, edge) {
     const vertical = Math.abs(source.y - target.y) >= Math.abs(source.x - target.x);
     const sourceAnchor = edge?.sourceAnchor || (vertical
@@ -634,9 +880,28 @@
     const targetAnchor = edge?.targetAnchor || (vertical
       ? source.y < target.y ? 'top' : 'bottom'
       : source.x < target.x ? 'left' : 'right');
-    const start = nodeAnchor(source, sourceAnchor);
-    const end = nodeAnchor(target, targetAnchor);
+    const start = edge?.sourcePoint
+      ? { x: Number(edge.sourcePoint.x), y: Number(edge.sourcePoint.y) }
+      : nodeAnchor(source, sourceAnchor);
+    const end = edge?.targetPoint
+      ? { x: Number(edge.targetPoint.x), y: Number(edge.targetPoint.y) }
+      : nodeAnchor(target, targetAnchor);
+    if (Array.isArray(edge?.waypoints) && edge.waypoints.length) {
+      const points = [
+        start,
+        ...edge.waypoints.map((point) => ({ x: Number(point.x), y: Number(point.y) })),
+        end,
+      ];
+      if (edge.route === 'smooth' || edge.curve === 'smooth') {
+        return smoothRoutePath(points, edge.tension);
+      }
+      return roundedRoutePath(points, edge.cornerRadius ?? 32);
+    }
     const curve = edge?.curve || (vertical ? 'vertical' : 'horizontal');
+
+    if (curve === 'straight' || curve === 'line') {
+      return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
+    }
 
     if (curve === 'vertical') {
       const midY = (start.y + end.y) / 2;
@@ -678,8 +943,8 @@
       height: cluster.height,
       rx: radius,
       ry: radius,
-      fill: '#FFFFFF',
-      'fill-opacity': '0.10',
+      fill: 'transparent',
+      'fill-opacity': '0',
       stroke: isRepeat ? LINE_COLOR : 'var(--model-graphviz-line-soft)',
       'stroke-width': isRepeat ? '1.2' : '1.6',
       'stroke-dasharray': isRepeat ? '3 2' : null,
@@ -896,9 +1161,148 @@
     return group;
   }
 
+  function nodeRect(node, padding = 0) {
+    return {
+      left: node.x - node.width / 2 - padding,
+      top: node.y - node.height / 2 - padding,
+      right: node.x + node.width / 2 + padding,
+      bottom: node.y + node.height / 2 + padding,
+    };
+  }
+
+  function clusterBoundaryRects(cluster, padding = 0) {
+    const left = cluster.x - padding;
+    const top = cluster.y - padding;
+    const right = cluster.x + cluster.width + padding;
+    const bottom = cluster.y + cluster.height + padding;
+    const band = Math.max(8, padding * 2);
+    const titleBand = Math.max(38, padding * 3);
+    return [
+      { left, top, right, bottom: top + titleBand },
+      { left, top: bottom - band, right, bottom },
+      { left, top, right: left + band, bottom },
+      { left: right - band, top, right, bottom },
+    ];
+  }
+
+  function rectsOverlap(a, b) {
+    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  }
+
+  function tagRectAt(point, width, height) {
+    return {
+      left: point.x - width / 2,
+      top: point.y - height / 2,
+      right: point.x + width / 2,
+      bottom: point.y + height / 2,
+    };
+  }
+
+  function uniqueTagPositions(basePosition) {
+    const base = Math.min(0.92, Math.max(0.08, Number.isFinite(basePosition) ? basePosition : 0.52));
+    const candidates = [
+      base,
+      base - 0.16,
+      base + 0.16,
+      base - 0.28,
+      base + 0.28,
+      0.22,
+      0.34,
+      0.66,
+      0.78,
+    ];
+    const seen = new Set();
+    return candidates
+      .map((value) => Math.min(0.92, Math.max(0.08, value)))
+      .filter((value) => {
+        const key = value.toFixed(3);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
+  function edgeTagOverlapsNode(point, width, height, entry, padding) {
+    const tagRect = tagRectAt(point, width, height);
+    return (entry.avoidNodes || [entry.sourceNode, entry.targetNode])
+      .filter(Boolean)
+      .some((node) => rectsOverlap(tagRect, nodeRect(node, padding)));
+  }
+
+  function edgeTagOverlapsCluster(point, width, height, entry, padding) {
+    const tagRect = tagRectAt(point, width, height);
+    return (entry.avoidClusters || [])
+      .filter(Boolean)
+      .some((cluster) => clusterBoundaryRects(cluster, padding).some((rect) => rectsOverlap(tagRect, rect)));
+  }
+
+  function shiftedEdgeTagPoint(entry, length, distance, point, offset) {
+    if (!Number.isFinite(offset) || Math.abs(offset) < 0.5) return point;
+    const sample = Math.max(1, Math.min(8, length * 0.01));
+    const before = entry.el.getPointAtLength(Math.max(0, distance - sample));
+    const after = entry.el.getPointAtLength(Math.min(length, distance + sample));
+    const dx = after.x - before.x;
+    const dy = after.y - before.y;
+    const magnitude = Math.hypot(dx, dy);
+    if (!magnitude) return { x: point.x, y: point.y - offset };
+    return {
+      x: point.x + (-dy / magnitude) * offset,
+      y: point.y + (dx / magnitude) * offset,
+    };
+  }
+
+  function edgeTagOffsets(edge, opts) {
+    const explicitOffset = Number(edge?.tagOffset);
+    if (Number.isFinite(explicitOffset)) return [explicitOffset, 0];
+    if (Array.isArray(edge?.tagOffsets) && edge.tagOffsets.length) {
+      return [0, ...edge.tagOffsets.map(Number).filter(Number.isFinite)];
+    }
+    const explicitOptions = Array.isArray(opts.edgeTagOffsets)
+      ? opts.edgeTagOffsets.map(Number).filter(Number.isFinite)
+      : [];
+    if (explicitOptions.length) return [0, ...explicitOptions];
+    return normalizeEdgeType(edge) === 'parameter'
+      ? [0, -24, 24, -38, 38, -52, 52]
+      : [0];
+  }
+
+  function resolveEdgeTagPoint(entry, length, width, height, options) {
+    const opts = options || {};
+    const edge = entry.edge || {};
+    const explicitPosition = Number(edge.tagPosition);
+    const basePosition = Number.isFinite(explicitPosition) ? explicitPosition : 0.52;
+    const avoidNodes = edge.tagAvoidNodes !== false && opts.edgeTagAvoidNodes !== false;
+    const avoidClusters = normalizeEdgeType(edge) === 'parameter'
+      && edge.tagAvoidClusters !== false
+      && opts.edgeTagAvoidClusters !== false;
+    const endpointPadding = Number.isFinite(Number(opts.edgeTagNodePadding))
+      ? Number(opts.edgeTagNodePadding)
+      : 6;
+    const clusterPadding = Number.isFinite(Number(opts.edgeTagClusterPadding))
+      ? Number(opts.edgeTagClusterPadding)
+      : 12;
+
+    let fallbackPoint = null;
+    for (const position of uniqueTagPositions(basePosition)) {
+      const distance = length * position;
+      const basePoint = entry.el.getPointAtLength(distance);
+      if (!fallbackPoint) fallbackPoint = basePoint;
+      for (const offset of edgeTagOffsets(edge, opts)) {
+        const point = shiftedEdgeTagPoint(entry, length, distance, basePoint, offset);
+        const overlapsNode = avoidNodes && edgeTagOverlapsNode(point, width, height, entry, endpointPadding);
+        const overlapsCluster = avoidClusters && edgeTagOverlapsCluster(point, width, height, entry, clusterPadding);
+        if (!overlapsNode && !overlapsCluster) {
+          return point;
+        }
+      }
+    }
+    return fallbackPoint;
+  }
+
   function drawEdgeTags(svg, edgeEntries, options) {
-    const layerClass = options.edgeTagLayerClass || 'pto-model-graphviz-edge-tags';
-    const tagClass = options.edgeTagClass || 'pto-model-graphviz-edge-tag';
+    const opts = options || {};
+    const layerClass = opts.edgeTagLayerClass || 'pto-model-graphviz-edge-tags';
+    const tagClass = opts.edgeTagClass || 'pto-model-graphviz-edge-tag';
     const old = svg.querySelector(`.${layerClass}`);
     if (old) old.remove();
     const layer = createSvgElement('g', { class: layerClass });
@@ -911,37 +1315,44 @@
       try {
         const length = entry.el.getTotalLength();
         if (!length) return;
-        point = entry.el.getPointAtLength(length * (Number(edge.tagPosition) || 0.52));
+        const fontSize = edgeTagFontSize(edge, opts);
+        const paddingX = Number.isFinite(Number(edge.tagPaddingX)) ? Number(edge.tagPaddingX) : 9;
+        const width = edgeTagWidth(label, fontSize, paddingX);
+        const height = edgeTagHeight(edge, opts);
+        const angle = edgeTagAngle(edge);
+        const collisionSize = rotatedTagSize(width, height, angle);
+        point = resolveEdgeTagPoint(entry, length, collisionSize.width, collisionSize.height, opts);
+        if (!point) return;
+        const group = createSvgElement('g', {
+          class: tagClass,
+          transform: `translate(${point.x.toFixed(1)} ${point.y.toFixed(1)})${angle ? ` rotate(${angle})` : ''}`,
+          'data-edge-type': normalizeEdgeType(edge),
+          'data-source': edge.source || entry.source || null,
+          'data-target': edge.target || entry.target || null,
+          'aria-label': label,
+        });
+        group.appendChild(createSvgElement('rect', {
+          x: -width / 2,
+          y: -height / 2,
+          width,
+          height,
+          rx: height / 2,
+          ry: height / 2,
+        }));
+        const text = createSvgElement('text', {
+          x: 0,
+          y: 0.4,
+          'text-anchor': 'middle',
+          'dominant-baseline': 'central',
+          style: `font-size: ${fontSize}px;`,
+        });
+        text.textContent = label;
+        group.appendChild(text);
+        layer.appendChild(group);
+        entry.tagEl = group;
       } catch (_) {
         return;
       }
-
-      const width = edgeTagWidth(label);
-      const height = 18;
-      const group = createSvgElement('g', {
-        class: tagClass,
-        transform: `translate(${point.x.toFixed(1)} ${point.y.toFixed(1)})`,
-        'data-edge-type': normalizeEdgeType(edge),
-        'aria-label': label,
-      });
-      group.appendChild(createSvgElement('rect', {
-        x: -width / 2,
-        y: -height / 2,
-        width,
-        height,
-        rx: height / 2,
-        ry: height / 2,
-      }));
-      const text = createSvgElement('text', {
-        x: 0,
-        y: 0.4,
-        'text-anchor': 'middle',
-        'dominant-baseline': 'central',
-      });
-      text.textContent = label;
-      group.appendChild(text);
-      layer.appendChild(group);
-      entry.tagEl = group;
     });
 
     svg.appendChild(layer);
@@ -1008,9 +1419,13 @@
     const hierarchy = buildHierarchy(graph);
     const abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const panZoomEnabled = interaction.panZoom !== false && opts.panZoom !== false;
+    const wheelZoomWithoutModifier = interaction.wheelZoomWithoutModifier === true || opts.wheelZoomWithoutModifier === true;
     const selectable = interaction.selectable !== false && opts.selectable !== false;
     const hoverEnabled = overlays.evidence !== false && opts.evidence !== false && hasEvidence;
     const edgeTagsEnabled = overlays.edgeTags !== false && opts.edgeTags !== false;
+    const edgeHoverEnabled = overlays.edgeHover !== false
+      && opts.edgeHover !== false
+      && edgeEntries.some((entry) => edgeHasHover(entry.edge));
 
     let selectedItemId = null;
     let selectedRelated = { nodeIds: new Set(), clusterIds: new Set() };
@@ -1032,7 +1447,7 @@
       drawEdgeTags(svg, edgeEntries, opts);
     }
 
-    if (hoverEnabled) {
+    if (hoverEnabled || edgeHoverEnabled) {
       hover = createHover(stage, opts.hoverClassName);
     }
 
@@ -1149,6 +1564,14 @@
       placeHover(stage, hover, event);
     }
 
+    function showEdgeHover(edge, event) {
+      if (!hover || !edgeHasHover(edge)) return;
+      hover.innerHTML = edgeHoverHtml(edge, opts);
+      hover.classList.add('is-visible');
+      hover.setAttribute('aria-hidden', 'false');
+      placeHover(stage, hover, event);
+    }
+
     function hideHover() {
       if (!hover) return;
       hover.classList.remove('is-visible');
@@ -1183,6 +1606,21 @@
       }
     });
 
+    if (edgeHoverEnabled) {
+      edgeEntries.forEach((entry) => {
+        if (!edgeHasHover(entry.edge)) return;
+        const targets = [entry.el, entry.tagEl].filter(Boolean);
+        targets.forEach((el) => {
+          el.setAttribute('aria-label', edgeTagText(entry.edge) || entry.edge.title || 'edge object');
+          listen(el, 'pointerenter', (event) => showEdgeHover(entry.edge, event));
+          listen(el, 'pointermove', (event) => {
+            if (hover?.classList.contains('is-visible')) placeHover(stage, hover, event);
+          });
+          listen(el, 'pointerleave', hideHover);
+        });
+      });
+    }
+
     const selectableClusters = selectable && interaction.selectableClusters !== false && opts.selectableClusters !== false;
     clusterEntries.forEach(({ el, cluster }) => {
       el.setAttribute('tabindex', '0');
@@ -1206,7 +1644,7 @@
 
     if (panZoomEnabled) {
       listen(stage, 'wheel', (event) => {
-        if (!event.ctrlKey && !event.metaKey) {
+        if (!wheelZoomWithoutModifier && !event.ctrlKey && !event.metaKey) {
           if (global.parent && global.parent !== global) {
             global.parent.postMessage({
               type: 'pto-pattern-preview-wheel',
@@ -1231,7 +1669,7 @@
 
       listen(stage, 'pointerdown', (event) => {
         if (event.button !== 0) return;
-        if (event.target.closest('.pto-model-graphviz-node, .pto-model-graphviz-toggle')) return;
+        if (event.target.closest('.pto-model-graphviz-node, .pto-model-graphviz-toggle, .pto-model-graphviz-edge, .pto-model-graphviz-edge-tag')) return;
         suppressClick = false;
         pan = { id: event.pointerId, x: event.clientX, y: event.clientY, tx: transform.tx, ty: transform.ty, moved: false };
       });
@@ -1357,7 +1795,7 @@
         'data-target': edge.target,
       });
       svg.appendChild(el);
-      edgeEntries.push({ el, edge, source: edge.source, target: edge.target, tagEl: null });
+      edgeEntries.push({ el, edge, source: edge.source, target: edge.target, sourceNode: source, targetNode, avoidNodes: data.nodes, avoidClusters: data.clusters, tagEl: null });
     });
 
     (data.nodes || []).forEach((node) => {
@@ -1394,12 +1832,19 @@
     render,
     renderController,
     buildColorMap,
+    modelArchitectureColormap,
     buildHierarchy,
     relationForNode,
     drawEdgeTags,
     standardColormap: {
       coreColors: [...STANDARD_COLORMAP.coreColors],
       ioColors: { ...STANDARD_COLORMAP.ioColors },
+    },
+    modelArchitectureColorProfile: {
+      neutral: MODEL_ARCHITECTURE_NEUTRAL,
+      lightHsl: { ...MODEL_ARCHITECTURE_LIGHT_HSL },
+      keyAliases: { ...MODEL_ARCHITECTURE_COLOR_KEY_ALIASES },
+      baseColors: { ...MODEL_ARCHITECTURE_BASE_COLORS },
     },
     reportPriorityColors: { ...REPORT_PRIORITY_COLORS },
     defaultDotLayout: { ...DEFAULT_DOT_LAYOUT },

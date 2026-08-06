@@ -21,7 +21,7 @@
   --button-padding-x-md: var(--space-3);
   --button-padding-x-lg: var(--space-4);
   --button-gap: 6px;
-  --button-font: 500 12px / 1 var(--font-sans);
+  --button-font: 500 var(--font-size-body-sm) / 1 var(--font-sans);
   --button-solid-bg:       var(--foreground);
   --button-solid-bg-hover: color-mix(in srgb, var(--foreground) 88%, transparent);
   --button-solid-bg-press: color-mix(in srgb, var(--foreground) 80%, transparent);
@@ -69,14 +69,26 @@
   --table-header-height: 36px;
   --table-border: var(--border-subtle);
 
-  /* Typography Composites — HarmonyOS dark aligned */
-  --text-display:  700 28px / 1.25 var(--font-sans);   /* 页面大标题 */
-  --text-title-1:  600 20px / 1.30 var(--font-sans);   /* 卡片/面板标题 */
-  --text-title-2:  600 16px / 1.30 var(--font-sans);   /* 分组标题 */
-  --text-body:     400 14px / 1.50 var(--font-sans);   /* 正文 */
-  --text-body-sm:  400 12px / 1.50 var(--font-sans);   /* 次要说明 */
-  --text-label:    500 11px / 1.20 var(--font-sans);   /* 标签/角标 */
-  --text-mono:     500 12px / 1.40 var(--font-mono);   /* 数字/代码 */
+  /* Typography Composites — role-based readable defaults */
+  --type-display:  var(--font-weight-bold) var(--font-size-display-lg) / var(--line-height-display) var(--font-sans);
+  --type-title-1:  var(--font-weight-semibold) var(--font-size-title-md) / var(--line-height-title) var(--font-sans);
+  --type-title-2:  var(--font-weight-semibold) var(--font-size-title-sm) / var(--line-height-title) var(--font-sans);
+  --type-title-3:  var(--font-weight-semibold) var(--font-size-body-md) / var(--line-height-title) var(--font-sans);
+  --type-body:     400 var(--font-size-body-md) / var(--line-height-body) var(--font-sans);
+  --type-body-sm:  400 var(--font-size-body-sm) / var(--line-height-body) var(--font-sans);
+  --type-label:    var(--font-weight-medium) var(--font-size-label-sm) / var(--line-height-label) var(--font-sans);
+  --type-micro:    var(--font-weight-medium) var(--font-size-label-xs) / var(--line-height-label) var(--font-sans);
+  --type-mono:     var(--font-weight-medium) var(--font-size-body-sm) / var(--line-height-mono) var(--font-mono);
+
+  /* Deprecated typography aliases. Keep for downstream compatibility. */
+  --text-display: var(--type-display);
+  --text-title-1: var(--type-title-1);
+  --text-title-2: var(--type-title-2);
+  --text-title-3: var(--type-title-3);
+  --text-body: var(--type-body);
+  --text-body-sm: var(--type-body-sm);
+  --text-label: var(--type-label);
+  --text-mono: var(--type-mono);
 
   /* Badge / Tag */
   --tag-radius: var(--radius-pill);
@@ -144,7 +156,7 @@
   --ide-frame-selected-shadow: none;
   --ide-frame-header-height: 32px;
   --ide-frame-title-font: 600 12.5px / 1.2 var(--font-sans);
-  --ide-frame-meta-font: 500 11px / 1.35 var(--font-mono);
+  --ide-frame-meta-font: 500 var(--font-size-body-sm) / 1.35 var(--font-mono);
 
   /* Floating Playback */
   --floating-playback-bg: color-mix(in srgb, var(--background) 96%, black);

@@ -2,37 +2,48 @@
   "id": "model-training-graphviz",
   "name": "Model Training Graphviz",
   "type": "hybrid",
-  "description": "Training-time preset for model architecture evidence overlays. The pattern is now a thin wrapper around model-graphviz renderController: model-graphviz owns evidence hover panels, edge type tags, phase/focus-driven node selection, related-node emphasis, hierarchy-aware focus, and drag pan / Command-wheel zoom without viewport jumping. This wrapper maps trainingEvidence and controller.setPhase() onto the shared base controller while preserving the training preview and product API.",
+  "description": "Training-time wrapper for model architecture graphs. The shell is DOM/CSS, while SVG geometry, hierarchy, node color, edge tags, hover evidence, pan/zoom, selected/related emphasis, and phase focus are delegated to patterns/model-graphviz/pattern.js. The standalone preview now uses a compact Pangu MoE training graph aligned with the model-architecture gallery style: neutral IO/weight tensors, parameters on the left input lane, runtime state/cache on the right auxiliary lane, and module/operator colors from modelArchitectureColormap().",
+  "typography": {
+    "bodyMinimumPx": 14,
+    "uiMinimumPx": 12,
+    "microLabelMinimumPx": 11,
+    "dataVizMinimumPx": 9,
+    "dataVizExceptionReason": "Training edge tags are SVG marks coupled to the zoomable base graph geometry.",
+    "dataVizFallback": "Command-wheel zoom and hover evidence panels expose the full edge meaning at a readable scale."
+  },
   "source": {
     "visualContract": [
-      "Profiling_Insight_and_Tool/AI_Profiling_Tool/graph-evidence-workbench.html",
-      "Profiling_Insight_and_Tool/AI_Profiling_Tool/js/graph-evidence/graph-stage.js",
-      "compute-graph-viewer/train/training-run-twin.js",
-      "compute-graph-viewer/train/training-run-twin.html",
       "patterns/model-graphviz/pattern.js",
+      "patterns/model-graphviz/pattern.css",
       "patterns/model-training-graphviz/pattern.html",
       "patterns/model-training-graphviz/pattern.css",
-      "patterns/model-training-graphviz/pattern.js"
+      "patterns/model-training-graphviz/pattern.js",
+      "patterns/model-graphviz/assets/openpangu_2_0_flash_modelviz.html",
+      "patterns/model-graphviz/assets/pangu_moe_modelviz.html",
+      "train/training-run-twin.html",
+      "train/training-run-twin.js",
+      "train/training-run-twin.css"
     ],
     "patternHtml": "patterns/model-training-graphviz/pattern.html",
     "patternCss": "patterns/model-training-graphviz/pattern.css",
     "renderScript": "patterns/model-training-graphviz/pattern.js",
     "basePattern": "patterns/model-graphviz/pattern.js",
-    "syncedProductPage": "compute-graph-viewer/train/training-run-twin.html",
-    "originalModule": "Profiling_Insight_and_Tool/AI_Profiling_Tool/graph-evidence-workbench.html"
+    "syncedProductPage": "train/training-run-twin.html",
+    "originalModule": "train/training-run-twin.js"
   },
   "examples": [
     {
-      "id": "training-run-twin-qwen7b",
+      "id": "pangu-moe-training-preset",
       "preview": "patterns/model-training-graphviz/pattern.html",
-      "model": "Qwen7B",
-      "notes": "Canonical preview synchronized from compute-graph-viewer/train/training-run-twin.js. It uses the real Qwen7B training architecture graph, parameter/state tensor inputs, edge tags, hover evidence, and phase-linked selection used by Training Run Explainable Twin."
+      "model": "openPangu-R-72B MoE",
+      "notes": "Standalone design-system preview for training evidence overlays. It uses the same compact Pangu MoE graph silhouette as the model architecture gallery, then adds phase tabs, edge tags, and hover evidence through PtoModelTrainingGraphvizPattern."
     }
   ],
-  "classification": "hybrid-pattern preset: DOM shell remains in the preview, while SVG graph geometry, hover panel rendering, edge tags, pan/zoom, and focus interaction math are owned by model-graphviz/pattern.js.",
+  "classification": "hybrid-pattern: DOM preview shell plus renderer-driven SVG graph. model-training-graphviz must stay a thin wrapper around model-graphviz renderController; it must not fork the base graph controller or geometry math.",
   "requiredApis": [
     "window.PtoModelGraphvizPattern.render(container, graph, options)",
     "window.PtoModelGraphvizPattern.renderController(container, graph, options)",
+    "window.PtoModelGraphvizPattern.modelArchitectureColormap(graph, options)",
     "window.PtoModelTrainingGraphvizPattern.render(container, graph, options)"
   ],
   "dataContract": {
@@ -42,18 +53,27 @@
         "dimension": "training dimension label",
         "metric": "metric or config field",
         "what": "node explanation",
-        "evidence": ["source/config/profiling evidence lines"],
+        "evidence": [
+          "source/config/profiling evidence line"
+        ],
         "action": "operator-facing next action",
-        "relatedNodeIds": ["node ids to keep highlighted with this node"]
+        "relatedNodeIds": [
+          "node ids to keep highlighted with this node"
+        ],
+        "sources": [
+          "source labels"
+        ]
       }
     },
+    "laneSemantics": "Weight/Parameter tensors belong on the left input lane. Runtime State/Cache tensors belong on the right auxiliary lane. Modules or operators may branch right when they are alternative compute paths, but their weights stay on the left.",
     "hierarchy": "Clusters may define parent, children, and nodes arrays; nodes may define parent. The shared model-graphviz controller uses these relationships for drill-down selection and ancestor/descendant emphasis.",
-    "edgeTags": "Edges may define tag, edgeType, edgeTypeLabel to render compact evidence labels through model-graphviz. Edges may also define sourceAnchor, targetAnchor, curve, and tagPosition when a fork/join needs stable branch routing."
+    "edgeTags": "Edges may define tag, edgeType, edgeTypeLabel to render compact evidence labels through model-graphviz. Edges may also define sourceAnchor, targetAnchor, curve, and tagPosition when a fork/join needs stable branch routing.",
+    "phaseMap": "Training pages call controller.setPhase({ nodeId, relatedNodeIds }) when a workflow phase changes. Phase changes must not refit or pan the viewport."
   },
   "useWhen": [
     "showing how a training phase maps to architecture nodes without moving the graph viewport",
-    "overlaying source/config/profiling evidence in hover panels or side evidence while graph nodes stay tensor/module/operator based",
-    "connecting right-side run steps, loss/MFU curves, or hardware evidence to architecture nodes",
+    "overlaying source/config/profiling evidence in hover panels while graph nodes stay tensor/module/operator based",
+    "connecting training run steps, loss/MFU curves, or hardware evidence to architecture nodes",
     "teaching Dense, MoE, MLA, DSA, router, expert, and LM Head training bottlenecks"
   ],
   "allowedOverrides": [
@@ -75,7 +95,8 @@
     "using saturated blue borders as the main selected state in light mode",
     "creating native title tooltips in addition to the custom hover panel",
     "drawing edge tags or evidence badges from static HTML rather than model-graphviz renderer output",
-    "reintroducing a second local graph controller for hover, edge tags, pan/zoom, or related-node emphasis inside model-training-graphviz"
+    "reintroducing a second local graph controller for hover, edge tags, pan/zoom, or related-node emphasis inside model-training-graphviz",
+    "placing Parameter/Weight tensors on the right auxiliary lane unless the actual graph semantics make them runtime state"
   ],
-  "agentReuseRule": "Load model-graphviz/pattern.css and pattern.js first, then model-training-graphviz/pattern.css and pattern.js. Call PtoModelTrainingGraphvizPattern.render with a model-graphviz graph object plus trainingEvidence. The wrapper delegates to PtoModelGraphvizPattern.renderController and preserves controller.setPhase({nodeId, relatedNodeIds}) for training-step linkage. Do not refit or pan the graph when phases change, and do not duplicate base controller behavior locally."
+  "agentReuseRule": "Load model-graphviz/pattern.css and pattern.js first, then model-training-graphviz/pattern.css and pattern.js. Call PtoModelTrainingGraphvizPattern.render with a model-graphviz graph object plus trainingEvidence. Prefer PtoModelGraphvizPattern.modelArchitectureColormap(graph) for model architecture visuals. Preserve controller.setPhase({ nodeId, relatedNodeIds }) for training-step linkage. Do not refit or pan the graph when phases change, and do not duplicate base controller behavior locally."
 }

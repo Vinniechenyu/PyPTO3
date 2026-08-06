@@ -76,7 +76,7 @@
   border: 1px solid var(--pto-aiv-badge-border);
   background: var(--pto-aiv-badge-bg);
   color: var(--pto-aiv-badge-fg);
-  font: 10px/1.2 var(--text-mono, ui-monospace, monospace);
+  font: 11px/1.2 var(--font-mono, ui-monospace, monospace);
 }
 
 .pto-aiv-core-pattern-stage {

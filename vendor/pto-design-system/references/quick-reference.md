@@ -61,17 +61,21 @@ All variables are defined in `tokens/foundation.css` and `tokens/semantic.css`. 
 
 ## Typography
 
-Use the body font stack (`--font-sans`) by default. Use `--font-mono` only for code, IDs, numeric readouts.
+Use the body font stack (`--font-sans`) by default. Use `--font-mono` only for code, IDs, numeric readouts. Body copy and explanatory text use 14px; dense UI and form labels use at least 12px. Reserve 11px for short micro labels, badges, and data-viz ticks.
 
-| Role | Size | Weight | Token |
+| Role | Size | Weight | Composite token |
 |---|---|---|---|
-| display | 28px | 700 | `--font-size-display-lg` |
-| title-1 | 20px | 600 | `--font-size-title-md` |
-| title-2 | 16px | 600 | `--font-size-title-sm` |
-| body | 14px | 400 | `--font-size-body-md` |
-| body-sm | 12px | 400 | `--font-size-body-sm` |
-| label | 11px | 500 | `--font-size-label-xs` + `--letter-spacing-label: 0.5px` |
-| mono | 12px | 500 | `--font-mono`, `--font-size-body-sm` |
+| display | 28px | 700 | `--type-display` |
+| title-1 | 20px | 600 | `--type-title-1` |
+| title-2 | 16px | 600 | `--type-title-2` |
+| title-3 | 14px | 600 | `--type-title-3` |
+| body | 14px | 400 | `--type-body` |
+| body-sm | 12px | 400 | `--type-body-sm` |
+| label | 12px | 500 | `--type-label` |
+| micro | 11px | 500 | `--type-micro` |
+| mono | 12px | 500 | `--type-mono` |
+
+Use the `--type-*` composite tokens with the `font` property. Use `--font-sans` and `--font-mono` only with `font-family`; use `--foreground`, `--foreground-secondary`, and `--foreground-muted` only for text color. Do not reuse one custom property across these categories.
 
 ---
 
@@ -118,6 +122,14 @@ When retrofitting an existing demo, remove legacy card frames that do not exist 
 - `workbench-shell` — resize kernel only. Use `PtoWorkbenchShell.initResizablePanes`, `createSplitGutter`, or `initNestedResizablePanes`; ratio sizes divide the space left after fixed gutters. Do not use it for page chrome, pane fill, pane titles, or canvas controls.
 - `ide-frame` — PTO IDE framework shell. Use `.pto-ide-frame*` classes, `data-host="standalone"` or `data-host="vscode-webview"`, and `PtoIdeFrame.init`; product pages fill the slots. The host window defaults to 4:3 and standalone explorer starts at 300px via `data-pixel-sizes`. Standalone host mode owns the PTO IDE skin: 100%-intensity multi-point gradient/aura background, 80% translucent pane fill, 72% pane-header fill, `blur(18px) saturate(1.18)` pane backdrop filtering, pane shadow, transparent borderless top chrome, and window controls. Preview tabs live inside the preview/editor pane, not in a separate top chrome band. Playback uses `floating-playback-control` through `data-ide-floating-playback`; do not recreate a footer playback bar. Do not put business sample data, placeholder tab names, placeholder code rows, or default textual slot content in the pattern and do not override `.pto-workbench-shell__*` internals. Do not locally replace the shared IDE gradient or pane blur; update `patterns/ide-frame` variables first.
 - `vscode.css` — maps VS Code `--vscode-*` variables and hides standalone chrome in webviews.
+- `tensor-volume-canvas` — load its `pattern.css` and `pattern.js`, then call `window.PtoTensorVolumeCanvas.render(canvas, scene, options)`. The page converts business state to `extent`, `axes`, and `voxels`, then uses the returned `update`, `resize`, and `destroy` lifecycle. Do not copy renderer math, depth sorting, DPR, or resize logic; do not use an iframe, camera controls, a private palette, or product chrome.
+- `memory-reuse-viewer` — call `PtoMemoryReuseViewer.render` with buffer and tensor lifetime data inside an unscaled panel. Keep `resize` and `destroy`; do not place it inside architecture pan/zoom, copy its Canvas renderer, mutate generated rectangles, or add a second frame.
+- `hardware-architecture-viewport` — call `PtoHardwareArchitectureViewport.mount` for the dotted architecture host, transparent toolbar, detail/zoom controls, iframe readiness, size sync, and standard hardware messages. Product pages supply presets and callbacks, not local toolbar or protocol variants.
+- `model-training-graphviz` — load after `model-graphviz`, call `PtoModelTrainingGraphvizPattern.render`, and drive phases through `controller.setPhase`. Do not add a second graph shell or recenter/dim the graph locally.
+- `model-architecture-3d-deck` — call `PtoModelArchitecture3dDeck.render` for the canonical openPangu depth stack, transforms, pan/zoom, projected PP stages, and parallel badges. Do not duplicate model semantics or projection math.
+- `model-parallel-rank-deck` — load after the 3D deck with pinned Three.js and call `PtoModelParallelRankDeck.render`. Preserve every Layer Node, Cluster, and Edge; do not replace Rank payloads with representative glyphs or screenshots.
+- `model-architecture-training-sidecar` — load after the 3D deck and call `PtoModelArchitectureTrainingSidecar.render`. Add training data and Layer details without mutating the base deck.
+- `training-metrics-chart` — call `PtoTrainingMetricsChart.render` for metric series, anomaly marks, brushing, and step cursors. Do not rebuild its SVG or interaction geometry locally.
 
 ### Navigation
 

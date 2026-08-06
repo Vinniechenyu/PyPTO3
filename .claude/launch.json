@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "model-inference-studio",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "http-server", ".", "-p", "4178", "-c-1", "--silent"],
+      "port": 4178,
+      "url": "http://localhost:4178/"
+    }
+  ]
+}

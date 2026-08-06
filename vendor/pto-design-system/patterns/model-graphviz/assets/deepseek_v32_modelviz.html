@@ -1,4 +1,8 @@
 <!-- Generated from /Users/yin/gitcode/deepseekv3.2源码 by generate_deepseek_v32_source_graph.py -->
+<link rel="stylesheet" href="../../pass-ir-graph-node/pattern.css?v=pass-ir-capsule-2">
+<link rel="stylesheet" href="../capsule.css?v=model-capsule-12">
+<script src="../../pass-ir-graph-node/pattern.js?v=pass-ir-capsule-2"></script>
+<script src="../capsule.js?v=model-capsule-12"></script>
 <script>
     (() => {
         const params = new URLSearchParams(window.location.search);
@@ -810,12 +814,12 @@
             pointer-events: none;
         }
         .modelviz-schema-group-title_8738e552-e764-4a57-839a-6321bc3ae7d3 {
-            font-size: 13px;
-            font-weight: 700;
+            font-size: 12px;
+            font-weight: 600;
             fill: var(--graphviz-text) !important;
         }
         .modelviz-schema-group-badge_8738e552-e764-4a57-839a-6321bc3ae7d3 {
-            font-size: 11px;
+            font-size: 10px;
             fill: var(--graphviz-muted-text) !important;
         }
 
@@ -1092,8 +1096,8 @@ function ptoNormalizeColormapColor(hex) {
 }
 
 const PTO_GRAPHVIZ_THEME = document.documentElement.dataset.theme || "dark";
-const PTO_COLORMAP_SATURATION = PTO_GRAPHVIZ_THEME === "light" ? 0.74 : 0.82;
-const PTO_COLORMAP_LIGHTNESS = PTO_GRAPHVIZ_THEME === "light" ? 0.60 : 0.40;
+const PTO_COLORMAP_SATURATION = PTO_GRAPHVIZ_THEME === "light" ? 0.79 : 0.82;
+const PTO_COLORMAP_LIGHTNESS = PTO_GRAPHVIZ_THEME === "light" ? 0.76 : 0.40;
 
 function ptoExpandPalette(baseHexes, targetCount) {
   const hues = baseHexes.map(c => ptoSnapToValidHue(ptoHexToHsl(c).h));
@@ -1181,6 +1185,7 @@ function ptoBuildColorMap(keys) {
     let vizInstance = null;
     let containerNodeCounts = {};
     let architectureColorMap = new Map();
+    let activeVisualLayoutNodes = new Map();
     let retainedZoomTransform = null;
     let retainedAnchorScreen = null;
 
@@ -1544,14 +1549,132 @@ function ptoBuildColorMap(keys) {
             }
         }
 
+        // Apply the architecture schema's lane contract after Dot has solved
+        // ranks. The legacy renderer uses Dot coordinates directly, so this
+        // explicit pass keeps the main spine on one x-axis and places
+        // Parameter/Weight and State/Cache nodes beside their consumers.
+        const mainLaneXs = Object.entries(result.nodes)
+            .filter(([nodeName]) => Math.abs((activeVisualLayoutNodes.get(nodeName)?.x ?? NaN) - 480) < 1)
+            .map(([, nodeData]) => nodeData.position.x)
+            .sort((left, right) => left - right);
+        const mainLaneX = mainLaneXs.length
+            ? mainLaneXs[Math.floor(mainLaneXs.length / 2)]
+            : null;
+        if (Number.isFinite(mainLaneX)) {
+            Object.entries(result.nodes).forEach(([nodeName, nodeData]) => {
+                if (Math.abs((activeVisualLayoutNodes.get(nodeName)?.x ?? NaN) - 480) < 1) {
+                    nodeData.position.x = mainLaneX;
+                }
+            });
+        }
+
+        // Dot may interleave nodes from outside an expanded cluster with its
+        // internal ranks. Preserve Dot's useful horizontal branch solution,
+        // but make schema y-ranks authoritative for the vertical reading
+        // order in both folded and drill-down states.
+        const visibleSchemaRanks = [...new Set(Object.keys(result.nodes)
+            .map((nodeName) => activeVisualLayoutNodes.get(nodeName)?.y)
+            .filter(Number.isFinite))]
+            .sort((left, right) => left - right);
+        const firstVisibleY = Math.min(...Object.values(result.nodes).map((node) => node.position.y));
+        const schemaRankY = new Map(visibleSchemaRanks.map((rank, index) => [rank, firstVisibleY + index * 124]));
+        Object.entries(result.nodes).forEach(([nodeName, nodeData]) => {
+            const rank = activeVisualLayoutNodes.get(nodeName)?.y;
+            if (schemaRankY.has(rank)) nodeData.position.y = schemaRankY.get(rank);
+        });
+
+        // Expanded MoE owns a centered sub-spine. The two expert branches sit
+        // symmetrically around it; their Parameter nodes are placed afterward.
+        const routedExpertNode = result.nodes.expert_mlp;
+        const sharedExpertNode = result.nodes.shared_expert;
+        const routerNode = result.nodes.router;
+        const topKExpertNode = result.nodes.topk_expert_select;
+        const combineNode = result.nodes.moe_combine;
+        if (Number.isFinite(mainLaneX) && routedExpertNode && sharedExpertNode && routerNode && topKExpertNode && combineNode) {
+            routerNode.position.x = mainLaneX;
+            topKExpertNode.position.x = mainLaneX;
+            combineNode.position.x = mainLaneX;
+            routedExpertNode.position.x = mainLaneX - 380;
+            sharedExpertNode.position.x = mainLaneX + 380;
+        }
+
+        Object.entries(result.nodes).forEach(([nodeName, nodeData]) => {
+            const nodeType = adj_list[nodeName]?.node_type;
+            if (nodeType !== "Parameter" && nodeType !== "State") return;
+            const targetName = (adj_list[nodeName]?.edges || [])
+                .map((edge) => edge.target)
+                .find((candidate) => result.nodes[candidate]);
+            const targetNode = result.nodes[targetName];
+            if (!targetNode) return;
+            const sideGap = 84;
+            const targetLayout = activeVisualLayoutNodes.get(targetName);
+            const parallelPeers = Object.entries(result.nodes)
+                .filter(([candidateName]) => {
+                    if (candidateName === targetName) return false;
+                    const candidateType = adj_list[candidateName]?.node_type;
+                    const candidateLayout = activeVisualLayoutNodes.get(candidateName);
+                    return (candidateType === "Module" || candidateType === "Operation") &&
+                        targetLayout && candidateLayout && Math.abs(candidateLayout.y - targetLayout.y) < 1;
+                })
+                .map(([, candidateNode]) => candidateNode);
+            const peerCenterX = parallelPeers.length
+                ? parallelPeers.reduce((sum, peer) => sum + peer.position.x, 0) / parallelPeers.length
+                : null;
+            const outwardSide = Number.isFinite(peerCenterX)
+                ? (targetNode.position.x <= peerCenterX ? -1 : 1)
+                : (nodeType === "State" ? 1 : -1);
+            const sameTargetAuxiliaries = Object.entries(result.nodes)
+                .filter(([candidateName]) => {
+                    const candidateType = adj_list[candidateName]?.node_type;
+                    return (candidateType === "Parameter" || candidateType === "State") &&
+                        (adj_list[candidateName]?.edges || []).some((edge) => edge.target === targetName);
+                })
+                .map(([candidateName]) => adj_list[candidateName]?.node_type);
+            const hasMixedAuxiliaries = sameTargetAuxiliaries.includes("Parameter") && sameTargetAuxiliaries.includes("State");
+            const side = hasMixedAuxiliaries && nodeType === "State" ? -outwardSide : outwardSide;
+            const processingRow = [targetNode, ...parallelPeers];
+            const anchorNode = hasMixedAuxiliaries && nodeType === "State"
+                ? processingRow.reduce((outermost, candidate) => {
+                    if (side < 0) return candidate.position.x < outermost.position.x ? candidate : outermost;
+                    return candidate.position.x > outermost.position.x ? candidate : outermost;
+                }, targetNode)
+                : targetNode;
+            nodeData.position.x = anchorNode.position.x + side * (
+                anchorNode.width / 2 + nodeData.width / 2 + sideGap
+            );
+            nodeData.position.y = targetNode.position.y;
+        });
+
+        Object.values(result.clusters).forEach((cluster) => {
+            const childNodes = (cluster.nodes || []).map((nodeName) => result.nodes[nodeName]).filter(Boolean);
+            if (!childNodes.length) return;
+            const left = Math.min(...childNodes.map((node) => node.position.x - node.width / 2));
+            const top = Math.min(...childNodes.map((node) => node.position.y - node.height / 2));
+            const right = Math.max(...childNodes.map((node) => node.position.x + node.width / 2));
+            const bottom = Math.max(...childNodes.map((node) => node.position.y + node.height / 2));
+            cluster.bb = [left - 36, top - 56, right + 36, bottom + 36].join(",");
+        });
+
+        const semanticEdges = new Map();
+        Object.entries(adj_list).forEach(([source, nodeData]) => {
+            (nodeData.edges || []).forEach((edge) => {
+                if (edge.edge_data_id) {
+                    semanticEdges.set(String(edge.edge_data_id), { source, target: edge.target });
+                }
+            });
+        });
+
         // Process edges
         for (const edge of graphData.edges) {
             const sourceId = edge.tail;
             const targetId = edge.head;
 
             // Find node names by their _gvid
-            const sourceName = Object.values(result.nodes).find(n => n.id === sourceId)?.name;
-            const targetName = Object.values(result.nodes).find(n => n.id === targetId)?.name;
+            const renderedSourceName = Object.values(result.nodes).find(n => n.id === sourceId)?.name;
+            const renderedTargetName = Object.values(result.nodes).find(n => n.id === targetId)?.name;
+            const semanticEdge = semanticEdges.get(String(edge.edge_data_id || ""));
+            const sourceName = result.nodes[semanticEdge?.source] ? semanticEdge.source : renderedSourceName;
+            const targetName = result.nodes[semanticEdge?.target] ? semanticEdge.target : renderedTargetName;
 
             if (!sourceName || !targetName) continue;
 
@@ -1593,12 +1716,67 @@ function ptoBuildColorMap(keys) {
                 labelPos = { x: lx, y: ly };
             }
 
+            const sourceNode = result.nodes[sourceName];
+            const targetNode = result.nodes[targetName];
+            // Auxiliary nodes are moved after Dot. Derive the connection
+            // direction from the final geometry so Weight/Cache edges always
+            // use side ports even when their original schema y values differ.
+            const isSideEdge = sourceNode && targetNode &&
+                Math.abs(sourceNode.position.y - targetNode.position.y) < 1;
+            if (isSideEdge) {
+                if (sourceNode && targetNode) {
+                    const sourceOnLeft = sourceNode.position.x <= targetNode.position.x;
+                    const start = {
+                        x: sourceNode.position.x + (sourceOnLeft ? sourceNode.width / 2 : -sourceNode.width / 2),
+                        y: sourceNode.position.y
+                    };
+                    const end = {
+                        x: targetNode.position.x + (sourceOnLeft ? -targetNode.width / 2 : targetNode.width / 2),
+                        y: targetNode.position.y
+                    };
+                    const midX = (start.x + end.x) / 2;
+                    pathPoints = [
+                        start,
+                        { x: midX, y: start.y },
+                        { x: midX, y: end.y },
+                        end
+                    ];
+                    // Keep the label with the auxiliary node instead of
+                    // placing it across the operator's vertical data label.
+                    labelPos = {
+                        x: sourceNode.position.x,
+                        y: sourceNode.position.y - sourceNode.height / 2 - 14
+                    };
+                }
+            } else {
+                if (sourceNode && targetNode) {
+                    const targetBelow = targetNode.position.y >= sourceNode.position.y;
+                    const start = {
+                        x: sourceNode.position.x,
+                        y: sourceNode.position.y + (targetBelow ? sourceNode.height / 2 : -sourceNode.height / 2)
+                    };
+                    const end = {
+                        x: targetNode.position.x,
+                        y: targetNode.position.y + (targetBelow ? -targetNode.height / 2 : targetNode.height / 2)
+                    };
+                    const midY = (start.y + end.y) / 2;
+                    pathPoints = [
+                        start,
+                        { x: start.x, y: midY },
+                        { x: end.x, y: midY },
+                        end
+                    ];
+                    labelPos = { x: (start.x + end.x) / 2, y: midY - 12 };
+                }
+            }
+
             let edgeObj = {
                 source: sourceName,
                 target: targetName,
                 path: pathPoints,
                 edge_data_id: edge.edge_data_id,
                 labelPos: labelPos,
+                is_side_edge: Boolean(isSideEdge),
             }
             if (edge.is_implied_edge) {
                 edgeObj.is_implied_edge = true;
@@ -1773,6 +1951,10 @@ function ptoBuildColorMap(keys) {
             if (adj_list[nodeName] && adj_list[nodeName].failed) return "#e00f0f";
             return null;
         }
+        function layoutGroupAttr(nodeName) {
+            const point = activeVisualLayoutNodes.get(nodeName);
+            return point ? `, group="pto_lane_${Math.round(point.x)}"` : "";
+        }
         let dotSource = 'digraph G {\n';
         if (topDown) {
             dotSource += '  rankdir=TB;\n';
@@ -1781,11 +1963,12 @@ function ptoBuildColorMap(keys) {
         }
         dotSource += `  node [shape=box, style=filled, margin="${GRAPHVIZ_NODE_MARGIN_X},0.055", fontcolor="${GRAPHVIZ_DOT_TEXT_COLOR}"];\n`;
         dotSource += '  compound=true;\n';
+        dotSource += '  newrank=true;\n';
         dotSource += '  graph [margin="0.22", pad="0.38"];\n';
         dotSource += `  bgcolor="${GRAPHVIZ_DARK_BG}";\n`;
-        dotSource += '  ranksep=0.5;\n';
+        dotSource += '  ranksep=0.85;\n';
         dotSource += `  edge [arrowhead=vee, arrowsize=0.6, color="${GRAPHVIZ_DOT_LINE_COLOR}", fontcolor="${GRAPHVIZ_DOT_TEXT_COLOR}"];\n`;
-        dotSource += '  nodesep=0.55;\n';
+        dotSource += '  nodesep=0.85;\n';
 
 
         // Find top containers
@@ -1878,7 +2061,7 @@ function ptoBuildColorMap(keys) {
                 const errorColor = getErrorColor(containerName);
                 const fillColor = errorColor || getNodeColor(containerName);
             const displayName = formatContainerDisplay(containerName);
-            dotSource += `${indent}"${containerName}" [fillcolor="${fillColor}", label="${displayName}"];\n`;
+            dotSource += `${indent}"${containerName}" [fillcolor="${fillColor}", label="${displayName}", shape=box, width=5.07, height=0.64, fixedsize=true, fontsize=16${layoutGroupAttr(containerName)}];\n`;
             return;
         }
         
@@ -1918,17 +2101,17 @@ function ptoBuildColorMap(keys) {
                         const errorColor = getErrorColor(child);
                         const fillColor = errorColor || getNodeColor(child);
                         const childDisplayName = graph_node_display_names[child] || graph_node_name_to_without_suffix[child] || child;
-                        dotSource += `${indent}  "${child}" [label="${childDisplayName}", shape=box, width=0.7, height=0.32, style="filled", fillcolor="${fillColor}"];\n`;
+                        dotSource += `${indent}  "${child}" [label="${childDisplayName}", shape=box, width=3.31, height=0.69, fixedsize=true, fontsize=14, style="filled", fillcolor="${fillColor}"${layoutGroupAttr(child)}];\n`;
                     } else if (nodeData.node_type === "Input" || nodeData.node_type === "Output") {
                         const errorColor = getErrorColor(child);
                         const fillColor = errorColor || getNodeColor(child);
                         const childDisplayName = graph_node_display_names[child] || graph_node_name_to_without_suffix[child] || child;
-                        dotSource += `${indent}  "${child}" [label="${childDisplayName}", shape=box, width=1.2, height=0.5, style="filled", fillcolor="${fillColor}"];\n`;
+                        dotSource += `${indent}  "${child}" [label="${childDisplayName}", shape=box, width=2.92, height=0.69, fixedsize=true, fontsize=14, style="filled", fillcolor="${fillColor}"${layoutGroupAttr(child)}];\n`;
                     } else {
                         const errorColor = getErrorColor(child);
                         const fillColor = errorColor || getNodeColor(child);
                         const childDisplayName = graph_node_display_names[child] || graph_node_name_to_without_suffix[child] || child;
-                        dotSource += `${indent}  "${child}" [fillcolor="${fillColor}", label="${childDisplayName}"];\n`;
+                        dotSource += `${indent}  "${child}" [fillcolor="${fillColor}", label="${childDisplayName}", shape=box, width=5.07, height=0.64, fixedsize=true, fontsize=16${layoutGroupAttr(child)}];\n`;
                     }
                 }
             }
@@ -1948,20 +2131,37 @@ function ptoBuildColorMap(keys) {
                     const errorColor = getErrorColor(node);
                     const fillColor = errorColor || getNodeColor(node);
                     const nodeDisplayName = graph_node_display_names[node] || graph_node_name_to_without_suffix[node] || node;
-                    dotSource += `  "${node}" [shape=box, width=0.7, height=0.32, fillcolor="${fillColor}", label="${nodeDisplayName}", style="filled"];\n`;
+                    dotSource += `  "${node}" [shape=box, width=3.31, height=0.69, fixedsize=true, fontsize=14, fillcolor="${fillColor}", label="${nodeDisplayName}", style="filled"${layoutGroupAttr(node)}];\n`;
                 } else if (data.node_type === "Input" || data.node_type === "Output") {
                     const errorColor = getErrorColor(node);
                     const fillColor = errorColor || getNodeColor(node);
                     const nodeDisplayName = graph_node_display_names[node] || graph_node_name_to_without_suffix[node] || node;
-                    dotSource += `  "${node}" [shape=box, width=1.2, height=0.5, fillcolor="${fillColor}", label="${nodeDisplayName}", style="filled"];\n`;
+                    dotSource += `  "${node}" [shape=box, width=2.92, height=0.69, fixedsize=true, fontsize=14, fillcolor="${fillColor}", label="${nodeDisplayName}", style="filled"${layoutGroupAttr(node)}];\n`;
                 } else {
                     const errorColor = getErrorColor(node);
                     const fillColor = errorColor || getNodeColor(node);
                     const nodeDisplayName = graph_node_display_names[node] || graph_node_name_to_without_suffix[node] || node;
-                    dotSource += `  "${node}" [fillcolor="${fillColor}", label="${nodeDisplayName}"];\n`;
+                    dotSource += `  "${node}" [fillcolor="${fillColor}", label="${nodeDisplayName}", shape=box, width=5.07, height=0.64, fixedsize=true, fontsize=16${layoutGroupAttr(node)}];\n`;
                 }
             }
         }
+
+        // Translate schema visual_layout rows into Dot rank constraints. This
+        // keeps the main x lane centered and places Parameter/Weight inputs or
+        // State/Cache auxiliaries horizontally beside their consumer.
+        const layoutRows = new Map();
+        Object.keys(adj_list_collapsed_nodes).forEach((nodeName) => {
+            const point = activeVisualLayoutNodes.get(nodeName);
+            if (!point) return;
+            const rowKey = String(Math.round(point.y));
+            if (!layoutRows.has(rowKey)) layoutRows.set(rowKey, []);
+            layoutRows.get(rowKey).push({ nodeName, x: point.x });
+        });
+        layoutRows.forEach((row) => {
+            if (row.length < 2) return;
+            row.sort((left, right) => left.x - right.x);
+            dotSource += `  { rank=same; ${row.map(({ nodeName }) => `"${nodeName}"`).join('; ')}; }\n`;
+        });
 
         // Add all edges
         const emittedEdges = new Set();
@@ -1985,6 +2185,12 @@ function ptoBuildColorMap(keys) {
 
                 let edgeLabelFontSize = "10";
                 let edgeAttrs = `[fontsize="${edgeLabelFontSize}"`;
+
+                const sourceLayout = activeVisualLayoutNodes.get(node);
+                const targetLayout = activeVisualLayoutNodes.get(edge.target);
+                if (sourceLayout && targetLayout && Math.abs(sourceLayout.y - targetLayout.y) < 1) {
+                    edgeAttrs += `, constraint=false`;
+                }
 
                 if (edge.edge_data_id) edgeAttrs += `, edge_data_id="${edge.edge_data_id}"`;
                 if (edge.is_implied_edge) edgeAttrs += `, is_implied_edge="true"`;
@@ -2113,14 +2319,23 @@ function ptoBuildColorMap(keys) {
             renderGraphvizSvg();
         } else {
             const dotSource = generateDotSource(adj_list, ancestor_map);
+            try {
+                graphData = vizInstance.renderJSON(dotSource);
+                // Extract the graph data with positions from Graphviz
+                const extractedGraphData = extractGraphData(graphData);
+                createGraph(extractedGraphData);
 
-            graphData = vizInstance.renderJSON(dotSource)
-            // Extract the graph data with positions from Graphviz
-            const extractedGraphData = extractGraphData(graphData);
-            createGraph(extractedGraphData);
-
-            // Needed to get the right vp coverage when containers are expanded
-            calculateContainerNodeCounts();
+                // Needed to get the right vp coverage when containers are expanded
+                calculateContainerNodeCounts();
+                window.__PTO_MODEL_GRAPHVIZ_DEBUG__ = { dotSource, error: null };
+            } catch (error) {
+                window.__PTO_MODEL_GRAPHVIZ_DEBUG__ = { dotSource, error };
+                console.error("Model Graphviz layout failed", error, dotSource);
+                const graphRoot = document.getElementById("graph_8738e552-e764-4a57-839a-6321bc3ae7d3");
+                if (graphRoot) {
+                    graphRoot.innerHTML = `<pre style="margin:24px;color:#ffb4ab;white-space:pre-wrap">${String(error?.message || error)}</pre>`;
+                }
+            }
         }
     }
 
@@ -2355,8 +2570,8 @@ function ptoBuildColorMap(keys) {
             .attr("y", y1)
             .attr("width", clusterWidth)
             .attr("height", clusterHeight)
-            .attr("fill-opacity", isRepeat ? 0.12 : 0.10)
-            .attr("fill", isRepeat ? clusterColor : "var(--graphviz-node-bg)")
+            .attr("fill-opacity", 0)
+            .attr("fill", "transparent")
             .attr("stroke", isRepeat ? GRAPHVIZ_LINE_COLOR : GRAPHVIZ_LINE_SOFT_COLOR)
             .attr("stroke-dasharray", isRepeat ? "3 2" : null)
             .attr("stroke-width", isRepeat ? 1.2 : 1.6)
@@ -2499,11 +2714,12 @@ function ptoBuildColorMap(keys) {
             .attr("class", "edge-label_8738e552-e764-4a57-839a-6321bc3ae7d3")
             .attr("transform", `translate(${pointAtStart.x}, ${pointAtStart.y})`);
             
+            const visibleDims = edgeData.dims.split(" | ").slice(0, 3).join(" | ");
             const text = labelGroup.append("text")
             .attr("text-anchor", "middle")
             .attr("dominant-baseline", "central")
             .style("font-size", "6pt")
-            .text(edgeData.dims)
+            .text(visibleDims)
             // .attr("transform", `rotate(${angle})`)
             .attr("fill", GRAPHVIZ_TEXT_COLOR)
             .attr("stroke", GRAPHVIZ_DARK_BG)
@@ -3128,10 +3344,13 @@ function ptoBuildColorMap(keys) {
         Object.keys(target).forEach(key => delete target[key]);
     }
 
-    function schemaNodeType(kind) {
+    function schemaNodeType(kind, stateType) {
         const normalized = String(kind || "").toLowerCase();
+        const normalizedStateType = String(stateType || "").toLowerCase();
         if (normalized === "module") return "Module";
         if (normalized === "op" || normalized === "operation" || normalized === "operator") return "Operation";
+        if (normalized === "parameter" || normalized === "weight") return "Parameter";
+        if (normalized === "state" && normalizedStateType === "parameter") return "Parameter";
         if (normalized === "state" || normalized === "buffer" || normalized === "cache") return "State";
         if (normalized === "input") return "Input";
         if (normalized === "output") return "Output";
@@ -3224,7 +3443,7 @@ function ptoBuildColorMap(keys) {
         nodes.forEach((node, index) => {
             const id = schemaId(node.id, `node_${index + 1}`, usedIds);
             nodeIdMap.set(String(node.id || id), id);
-            const nodeType = schemaNodeType(node.kind);
+            const nodeType = schemaNodeType(node.kind, node.state_type);
             const label = String(node.label || node.name || node.id || id);
             adj_list[id] = { edges: [], failed: false, node_type: nodeType };
             graph_node_name_to_without_suffix[id] = label;
@@ -3266,6 +3485,29 @@ function ptoBuildColorMap(keys) {
                 },
                 extra_repr: group.badge || label
             };
+        });
+
+        activeVisualLayoutNodes = new Map();
+        const rawLayoutNodes = schema.visual_layout?.nodes || {};
+        Object.entries(rawLayoutNodes).forEach(([rawId, point]) => {
+            const id = nodeIdMap.get(String(rawId));
+            const x = Number(point?.x);
+            const y = Number(point?.y);
+            if (id && Number.isFinite(x) && Number.isFinite(y)) {
+                activeVisualLayoutNodes.set(id, { x, y });
+            }
+        });
+        groups.forEach((group) => {
+            const groupId = groupIdMap.get(String(group.id || ""));
+            const representative = (group.nodes || [])
+                .map((rawId) => rawLayoutNodes[rawId])
+                .find((point) => Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.y)));
+            if (groupId && representative) {
+                activeVisualLayoutNodes.set(groupId, {
+                    x: Number(representative.x),
+                    y: Number(representative.y)
+                });
+            }
         });
 
         nodes.forEach((node) => {
@@ -3383,11 +3625,13 @@ function ptoBuildColorMap(keys) {
                 { id: "token_ids", kind: "input", label: "Token IDs" },
                 { id: "transformer", kind: "module", label: "Transformer", module_type: "decoder_only_transformer" },
                 { id: "embedding", kind: "op", label: "Parallel Embedding", op_type: "Embedding" },
+                { id: "embedding_weight", kind: "state", state_type: "parameter", label: "Embedding Weight", role: "vocabulary embedding parameter tensor" },
                 { id: "decoder_layer", kind: "module", label: "Decoder Layer", module_type: "decoder_layer_template" },
                 { id: "attention_norm", kind: "op", label: "Attention RMSNorm", op_type: "RMSNorm" },
                 { id: "mla", kind: "module", label: "MLA", module_type: "multi_head_latent_attention" },
                 { id: "query_projection", kind: "op", label: "Query Projection", op_type: "Linear" },
                 { id: "kv_projection", kind: "op", label: "KV Projection", op_type: "Linear" },
+                { id: "attention_projection_weights", kind: "state", state_type: "parameter", label: "Attention Projection Weights", role: "Q/KV/O projection parameter tensors" },
                 { id: "rope_cache", kind: "state", label: "RoPE Cache", state_type: "rotary_embedding_cache" },
                 { id: "kv_cache", kind: "state", label: "KV Cache", state_type: "attention_cache" },
                 { id: "sparse_indexer", kind: "module", label: "Sparse Indexer", module_type: "attention_indexer" },
@@ -3397,24 +3641,31 @@ function ptoBuildColorMap(keys) {
                 { id: "ffn_norm", kind: "op", label: "FFN RMSNorm", op_type: "RMSNorm" },
                 { id: "ffn_selector", kind: "module", label: "Feed Forward Selector", module_type: "layer_branch" },
                 { id: "dense_mlp", kind: "module", label: "Dense MLP", module_type: "feed_forward" },
+                { id: "dense_mlp_weights", kind: "state", state_type: "parameter", label: "Dense MLP Weights", role: "dense FFN gate/up/down parameter tensors" },
                 { id: "moe", kind: "module", label: "MoE", module_type: "mixture_of_experts" },
                 { id: "router", kind: "op", label: "Router Linear", op_type: "LinearRouter" },
+                { id: "router_weight", kind: "state", state_type: "parameter", label: "Router Weight", role: "MoE router gate parameter tensor" },
                 { id: "topk_expert_select", kind: "op", label: "TopK Expert Select", op_type: "TopK" },
                 { id: "expert_mlp", kind: "op", label: "Routed Expert MLP", op_type: "MLP" },
+                { id: "expert_weights", kind: "state", state_type: "parameter", label: "Routed Expert Weights", role: "routed expert parameter bank" },
                 { id: "shared_expert", kind: "op", label: "Shared Expert MLP", op_type: "MLP" },
+                { id: "shared_expert_weights", kind: "state", state_type: "parameter", label: "Shared Expert Weights", role: "shared expert MLP parameter tensors" },
                 { id: "moe_combine", kind: "op", label: "Expert Combine", op_type: "WeightedSum" },
                 { id: "final_norm", kind: "op", label: "Final RMSNorm", op_type: "RMSNorm" },
                 { id: "lm_head", kind: "op", label: "LM Head Linear", op_type: "Linear" },
+                { id: "lm_head_weight", kind: "state", state_type: "parameter", label: "LM Head Weight", role: "vocabulary output projection parameter tensor" },
                 { id: "logits", kind: "output", label: "Logits" }
             ],
             edges: [
                 { id: "e_tokens_transformer", source: "token_ids", target: "transformer", tensor: { name: "input_ids", shape: "[B,T]", dtype: "int64" } },
                 { id: "e_transformer_embedding", source: "transformer", target: "embedding", tensor: { name: "token_ids", shape: "[B,T]", dtype: "int64", constraints: ["V=129280"] } },
+                { id: "e_embedding_weight", source: "embedding_weight", target: "embedding", tensor: { name: "embedding.weight", shape: "[V,H]", dtype: "bf16", constraints: ["V=129280", "H=7168"] } },
                 { id: "e_embedding_decoder", source: "embedding", target: "decoder_layer", tensor: { name: "hidden_states", shape: "[B,T,H]", dtype: "bf16", constraints: ["H=7168"] } },
                 { id: "e_decoder_attn_norm", source: "decoder_layer", target: "attention_norm", tensor: { name: "hidden_states", shape: "[B,T,H]", dtype: "bf16" } },
                 { id: "e_attn_norm_mla", source: "attention_norm", target: "mla", tensor: { name: "normed_hidden_states", shape: "[B,T,H]", dtype: "bf16" } },
                 { id: "e_mla_query", source: "mla", target: "query_projection", tensor: { name: "q_input", shape: "[B,T,H]", dtype: "bf16" } },
                 { id: "e_mla_kv", source: "mla", target: "kv_projection", tensor: { name: "kv_input", shape: "[B,T,H]", dtype: "bf16" } },
+                { id: "e_attention_weights_q", source: "attention_projection_weights", target: "query_projection", tensor: { name: "q/kv/o projection weights", dtype: "bf16" } },
                 { id: "e_rope_query", source: "rope_cache", target: "query_projection", tensor: { name: "rotary_embedding", shape: "[T,rope_dim]", dtype: "bf16", constraints: ["rope_dim=64"] } },
                 { id: "e_kv_cache_attention", source: "kv_cache", target: "attention", tensor: { name: "past_key_values", shape: "[B,S,kv_latent+rope_dim]", dtype: "bf16/fp8", constraints: ["kv_latent=512", "rope_dim=64"] } },
                 { id: "e_query_indexer", source: "query_projection", target: "sparse_indexer", tensor: { name: "query_states", shape: "[B,T,H]", dtype: "bf16" } },
@@ -3425,16 +3676,21 @@ function ptoBuildColorMap(keys) {
                 { id: "e_attn_ffn_norm", source: "attention_output", target: "ffn_norm", tensor: { name: "residual_hidden_states", shape: "[B,T,H]", dtype: "bf16" } },
                 { id: "e_ffn_norm_selector", source: "ffn_norm", target: "ffn_selector", tensor: { name: "ffn_input", shape: "[B,T,H]", dtype: "bf16", constraints: ["dense_layers=0-2", "moe_layers=3-60"] } },
                 { id: "e_selector_dense", source: "ffn_selector", target: "dense_mlp", tensor: { name: "dense_branch_input", shape: "[B,T,H]", dtype: "bf16", constraints: ["layers=0-2"] } },
+                { id: "e_dense_weights", source: "dense_mlp_weights", target: "dense_mlp", tensor: { name: "dense_mlp_weights", dtype: "bf16", constraints: ["layers=0-2"] } },
                 { id: "e_selector_moe", source: "ffn_selector", target: "moe", tensor: { name: "moe_branch_input", shape: "[B,T,H]", dtype: "bf16", constraints: ["layers=3-60"] } },
                 { id: "e_moe_router", source: "moe", target: "router", tensor: { name: "router_input", shape: "[B*T,H]", dtype: "bf16" } },
+                { id: "e_router_weight", source: "router_weight", target: "router", tensor: { name: "router.weight", shape: "[H,E]", dtype: "bf16/fp32", constraints: ["E=256"] } },
                 { id: "e_router_topk", source: "router", target: "topk_expert_select", tensor: { name: "router_logits", shape: "[B*T,E]", dtype: "fp32", constraints: ["E=256"] } },
                 { id: "e_topk_expert", source: "topk_expert_select", target: "expert_mlp", tensor: { name: "expert_indices_and_weights", shape: "[B*T,top_k]", dtype: "int32+fp32", constraints: ["top_k=8"] } },
+                { id: "e_expert_weights", source: "expert_weights", target: "expert_mlp", tensor: { name: "expert_bank.weights", dtype: "bf16", constraints: ["E=256"] } },
                 { id: "e_moe_shared", source: "moe", target: "shared_expert", tensor: { name: "shared_expert_input", shape: "[B,T,H]", dtype: "bf16" } },
+                { id: "e_shared_expert_weights", source: "shared_expert_weights", target: "shared_expert", tensor: { name: "shared_expert.weights", dtype: "bf16" } },
                 { id: "e_expert_combine", source: "expert_mlp", target: "moe_combine", tensor: { name: "routed_expert_output", shape: "[B,T,H]", dtype: "bf16" } },
                 { id: "e_shared_combine", source: "shared_expert", target: "moe_combine", tensor: { name: "shared_expert_output", shape: "[B,T,H]", dtype: "bf16" } },
                 { id: "e_dense_final", source: "dense_mlp", target: "final_norm", tensor: { name: "dense_output", shape: "[B,T,H]", dtype: "bf16" } },
                 { id: "e_moe_final", source: "moe_combine", target: "final_norm", tensor: { name: "moe_output", shape: "[B,T,H]", dtype: "bf16" } },
                 { id: "e_final_lm_head", source: "final_norm", target: "lm_head", tensor: { name: "hidden_states", shape: "[B,T,H]", dtype: "bf16" } },
+                { id: "e_lm_head_weight", source: "lm_head_weight", target: "lm_head", tensor: { name: "lm_head.weight", shape: "[H,V]", dtype: "bf16", constraints: ["V=129280"] } },
                 { id: "e_lm_logits", source: "lm_head", target: "logits", tensor: { name: "logits", shape: "[B,T,V]", dtype: "fp32", constraints: ["V=129280"] } }
             ],
             repeats: [
@@ -3460,13 +3716,15 @@ function ptoBuildColorMap(keys) {
                     token_ids: { x: 480, y: 90 },
                     transformer: { x: 480, y: 175 },
                     embedding: { x: 480, y: 260 },
+                    embedding_weight: { x: 210, y: 260 },
                     decoder_layer: { x: 480, y: 365 },
                     attention_norm: { x: 480, y: 455 },
                     mla: { x: 480, y: 545 },
                     query_projection: { x: 290, y: 640 },
                     kv_projection: { x: 480, y: 640 },
-                    rope_cache: { x: 130, y: 640 },
-                    kv_cache: { x: 670, y: 640 },
+                    attention_projection_weights: { x: 90, y: 640 },
+                    rope_cache: { x: 780, y: 640 },
+                    kv_cache: { x: 780, y: 825 },
                     sparse_indexer: { x: 385, y: 735 },
                     topk_index_select: { x: 385, y: 825 },
                     attention: { x: 575, y: 825 },
@@ -3474,21 +3732,26 @@ function ptoBuildColorMap(keys) {
                     ffn_norm: { x: 480, y: 1030 },
                     ffn_selector: { x: 480, y: 1120 },
                     dense_mlp: { x: 290, y: 1220 },
+                    dense_mlp_weights: { x: 90, y: 1220 },
                     moe: { x: 650, y: 1220 },
                     router: { x: 560, y: 1325 },
+                    router_weight: { x: 320, y: 1325 },
                     topk_expert_select: { x: 560, y: 1415 },
                     expert_mlp: { x: 560, y: 1510 },
-                    shared_expert: { x: 745, y: 1510 },
+                    expert_weights: { x: 90, y: 1510 },
+                    shared_expert: { x: 780, y: 1510 },
+                    shared_expert_weights: { x: 1000, y: 1510 },
                     moe_combine: { x: 650, y: 1610 },
                     final_norm: { x: 480, y: 1735 },
                     lm_head: { x: 480, y: 1830 },
+                    lm_head_weight: { x: 210, y: 1830 },
                     logits: { x: 480, y: 1920 }
                 },
                 groups: [
                     {
                         id: "transformer_group",
                         label: "Transformer",
-                        nodes: ["token_ids", "transformer", "embedding", "decoder_layer", "final_norm", "lm_head", "logits"],
+                        nodes: ["token_ids", "transformer", "embedding", "embedding_weight", "decoder_layer", "final_norm", "lm_head", "lm_head_weight", "logits"],
                         children: ["decoder_group"],
                         badge: "source: full model"
                     },
@@ -3502,20 +3765,20 @@ function ptoBuildColorMap(keys) {
                     {
                         id: "mla_group",
                         label: "MLA Attention",
-                        nodes: ["mla", "query_projection", "kv_projection", "rope_cache", "kv_cache", "sparse_indexer", "topk_index_select", "attention"],
+                        nodes: ["mla", "query_projection", "kv_projection", "attention_projection_weights", "rope_cache", "kv_cache", "sparse_indexer", "topk_index_select", "attention"],
                         badge: "cache and index state separated"
                     },
                     {
                         id: "ffn_group",
                         label: "Feed Forward Branch",
-                        nodes: ["ffn_norm", "ffn_selector", "dense_mlp", "moe"],
+                        nodes: ["ffn_norm", "ffn_selector", "dense_mlp", "dense_mlp_weights", "moe"],
                         children: ["moe_group"],
                         badge: "dense 0-2 / MoE 3-60"
                     },
                     {
                         id: "moe_group",
                         label: "MoE",
-                        nodes: ["router", "topk_expert_select", "expert_mlp", "shared_expert", "moe_combine"],
+                        nodes: ["router", "router_weight", "topk_expert_select", "expert_mlp", "expert_weights", "shared_expert", "shared_expert_weights", "moe_combine"],
                         badge: "routed + shared experts"
                     }
                 ]
@@ -3555,8 +3818,9 @@ function ptoBuildColorMap(keys) {
         function normalizeKind(kind) {
             const value = String(kind || "").toLowerCase();
             if (value === "operation") return "op";
+            if (value === "parameter" || value === "weight") return "parameter";
             if (value === "tensor") return "state";
-            if (["module", "op", "state", "input", "output"].includes(value)) return value;
+            if (["module", "op", "state", "parameter", "input", "output"].includes(value)) return value;
             return "module";
         }
 
@@ -3566,6 +3830,7 @@ function ptoBuildColorMap(keys) {
                 module: ptoNormalizeColormapColor("#14B8A6"),
                 op: ptoNormalizeColormapColor("#06B6D4"),
                 state: ptoNormalizeColormapColor("#A855F7"),
+                parameter: ptoNormalizeColormapColor("#D1D1D1"),
                 input: ptoNormalizeColormapColor("#A855F7"),
                 output: ptoNormalizeColormapColor("#38BDF8")
             }[normalized] || ptoNormalizeColormapColor("#64748B");
@@ -3884,14 +4149,14 @@ function ptoBuildColorMap(keys) {
                     .attr("fill", (d) => colorForKind(d.kind));
                 node.append("text")
                     .attr("x", 16)
-                    .attr("y", 24)
-                    .attr("font-size", 14)
-                    .attr("font-weight", 700)
+                    .attr("y", 23)
+                    .attr("font-size", 12)
+                    .attr("font-weight", 600)
                     .text((d) => escapeText(d.label || d.id));
                 node.append("text")
                     .attr("x", 16)
-                    .attr("y", 43)
-                    .attr("font-size", 11)
+                    .attr("y", 41)
+                    .attr("font-size", 10)
                     .attr("opacity", 0.78)
                     .text((d) => normalizeKind(d.kind).toUpperCase());
 
@@ -3934,10 +4199,18 @@ function ptoBuildColorMap(keys) {
             }
         }
 
-        if (document.readyState === "loading") {
-            document.addEventListener("DOMContentLoaded", initModelVizLoader);
-        } else {
+        function initDeepSeekGalleryGraph() {
             initModelVizLoader();
+            if (new URLSearchParams(window.location.search).get("legacy") === "1") return;
+            if (window.modelvizLoadArchitectureSchema) {
+                window.modelvizLoadArchitectureSchema(defaultArchitecture, "DeepSeek V3.2 gallery schema");
+            }
+        }
+
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", initDeepSeekGalleryGraph);
+        } else {
+            initDeepSeekGalleryGraph();
         }
     })();
     </script>

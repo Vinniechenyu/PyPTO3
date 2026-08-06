@@ -8,15 +8,23 @@
     (() => {
       const params = new URLSearchParams(window.location.search);
       const theme = params.get('theme');
-      document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+      if (theme === 'light' || theme === 'dark' || theme === 'glass') {
+        document.documentElement.dataset.theme = theme;
+      } else {
+        document.documentElement.dataset.theme = 'dark';
+      }
+      if (params.get('embed') === '1' || params.get('debug') !== '1') {
+        document.documentElement.dataset.embed = '1';
+      }
     })();
   </script>
   <link rel="stylesheet" href="../../../tokens/foundation.css">
   <link rel="stylesheet" href="../../../tokens/semantic.css">
   <link rel="stylesheet" href="../../../tokens/components.css">
   <link rel="stylesheet" href="../../../css/style.css">
-  <link rel="stylesheet" href="../pattern.css">
-  <link rel="stylesheet" href="../../model-training-graphviz/pattern.css">
+  <link rel="stylesheet" href="../pattern.css?v=model-gallery-light-border-1">
+  <link rel="stylesheet" href="../../pass-ir-graph-node/pattern.css?v=pass-ir-capsule-2">
+  <link rel="stylesheet" href="../capsule.css?v=model-capsule-12">
   <style>
     :root {
       --opv-shell-bg: var(--background);
@@ -59,7 +67,7 @@
       --model-graphviz-node-label: #1f2937;
       --model-graphviz-node-type: rgba(69, 82, 104, 0.74);
       --model-graphviz-cluster-label: rgba(69, 82, 104, 0.72);
-      --model-graphviz-tensor-fill: #f7f9fc;
+      --model-graphviz-tensor-fill: #D1D1D1;
       --model-graphviz-tensor-stroke: rgba(63, 76, 99, 0.24);
     }
     * { box-sizing: border-box; }
@@ -79,6 +87,15 @@
       grid-template-rows: 48px minmax(0, 1fr);
       background: var(--opv-shell-bg);
     }
+    :root[data-embed='1'] .opv-app {
+      grid-template-rows: minmax(0, 1fr);
+      min-height: 0;
+      height: 100vh;
+    }
+    :root[data-embed='1'] .opv-topbar,
+    :root[data-embed='1'] .opv-status {
+      display: none;
+    }
     .opv-topbar {
       grid-column: 1 / -1;
       display: flex;
@@ -94,6 +111,24 @@
     .opv-title span { color: var(--opv-muted); font: var(--text-mono); white-space: nowrap; }
     .opv-actions { display: flex; align-items: center; gap: var(--space-2); }
     .opv-file input { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none; }
+    .opv-floating-theme {
+      position: absolute;
+      z-index: 16;
+      top: 12px;
+      right: 12px;
+      display: none;
+      min-width: 64px;
+      min-height: 30px;
+      border: 1px solid var(--opv-border-strong);
+      background: color-mix(in srgb, var(--opv-panel-bg) 94%, transparent);
+      color: var(--opv-text);
+      backdrop-filter: blur(16px);
+    }
+    :root[data-embed='1'] .opv-floating-theme {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
     .opv-color-panel {
       position: absolute;
       z-index: 20;
@@ -177,12 +212,12 @@
     }
     :root[data-theme='light'] .opv-stage .pto-model-graphviz-node-label {
       fill: var(--model-graphviz-node-label);
-      font-size: 22px;
+      font-size: var(--font-size-title-sm);
       font-weight: 650;
     }
     :root[data-theme='light'] .opv-stage .pto-model-graphviz-node-type {
       fill: var(--model-graphviz-node-type);
-      font-size: 9px;
+      font-size: calc(var(--font-size-label-xs) - 4px);
       font-weight: 500;
     }
     .opv-overlay-toggle { cursor: pointer; pointer-events: all; }
@@ -324,7 +359,7 @@
     }
   </style>
 </head>
-<body class="pto-model-graphviz-pattern-page">
+<body class="pto-model-graphviz-pattern-page pto-model-graphviz-capsule-page">
   <main class="opv-app">
     <header class="opv-topbar">
       <div class="opv-title">
@@ -345,6 +380,7 @@
         </label>
       </div>
     </header>
+    <button class="btn btn-ghost opv-floating-theme" type="button" id="floatingThemeToggle" aria-label="Switch to light mode">Light</button>
     <section class="opv-color-panel" id="colorPanel" aria-label="Light mode HSL controls" hidden>
       <div class="opv-color-head">
         <div class="opv-color-title">Light HSL</div>
@@ -367,22 +403,29 @@
       </label>
       <div class="opv-color-swatches" id="colorPreview" aria-hidden="true"></div>
     </section>
-    <section class="opv-stage" id="graphStage" aria-label="openPangu model architecture graph">
+    <section class="opv-stage pto-model-architecture-stage" id="graphStage" aria-label="openPangu model architecture graph">
       <div class="opv-node-popover" id="nodePopover" hidden></div>
     </section>
     <div class="opv-status" id="statusText">Loading schema.</div>
   </main>
-  <script type="application/json" id="defaultSchemaJson">{"schema_version":"model_architecture.v1","model":{"name":"openPangu-2.0-Flash","framework":"pytorch/vllm/ascend-npu","source_root":"/Users/yin/pto/model-architecture/sources"},"extraction_scope":{"kind":"full_source","full_main_layers":46,"trace_main_layers":null,"notes":["Canonical graph is extracted from config.json plus openPangu-2.0-Infer source.","Weights were not downloaded; local safetensors files are Git LFS pointer files.","swa_layers includes MTP indices; visual branches separate main decoder layers from MTP layers."]},"sources":[{"id":"runtime_config","kind":"config","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Flash/config.json","role":"source_of_truth"},{"id":"hf_config_class","kind":"source","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Flash/configuration_openpangu_v2.py","role":"source_of_truth"},{"id":"model_impl","kind":"source","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Infer/components/omni-npu/src/omni_npu/v1/models/pangu/pangu_v2_moe.py","role":"source_of_truth"},{"id":"attention_impl","kind":"source","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Infer/components/omni-npu/src/omni_npu/v1/layers/attention/npu_pangu.py","role":"source_of_truth"},{"id":"mtp_impl","kind":"source","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Infer/components/omni-npu/src/omni_npu/v1/models/pangu/pangu_v2_moe_mtp.py","role":"source_of_truth"},{"id":"moe_impl","kind":"source","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Infer/components/omni-npu/src/omni_npu/layers/fused_moe/layer.py","role":"supporting_evidence"},{"id":"model_card","kind":"model_card","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Flash/README.md","role":"supporting_evidence"}],"symbol_table":{"B":"batch","T":"sequence","H":2560,"V":151552,"L":46,"N_h":48,"D_nope":128,"D_rope":64,"D_qk":192,"D_v":128,"R_q":1024,"R_kv":512,"R_kv_plus_rope":576,"I_dense":9216,"I_moe":1024,"E":256,"E_shared":1,"top_k":8,"K_index":2048,"N_index":24,"S_max":524288,"S_mhc":4,"N_sink":128,"W_router":3,"N_mtp":3},"nodes":[{"id":"input_tokens","kind":"input","label":"Token IDs","role":"external token ids","provenance":[{"source":"model_impl","fact":"OpenPanguV2ForCausalLM.forward accepts input_ids","confidence":"confirmed","line":2243}]},{"id":"positions","kind":"input","label":"Position IDs","role":"token positions for RoPE lookup","provenance":[{"source":"model_impl","fact":"OpenPanguV2ForCausalLM.forward accepts positions","confidence":"confirmed","line":2243}]},{"id":"causal_lm","kind":"module","label":"OpenPangu V2 For Causal LM","module_type":"causal_lm","attrs":{"architecture":"OpenPanguV2ForCausalLM"},"provenance":[{"source":"runtime_config","fact":"architectures contains OpenPanguV2ForCausalLM","confidence":"confirmed","line":2}]},{"id":"decoder_model","kind":"module","label":"OpenPangu V2 Model","module_type":"decoder_only_transformer","attrs":{"use_mhc":true,"mhc_num_stream":4},"provenance":[{"source":"model_impl","fact":"class OpenPanguV2Model","confidence":"confirmed","line":1970}]},{"id":"token_embedding","kind":"op","label":"Vocab Parallel Embedding","op_type":"Embedding","attrs":{"vocab_size_symbol":"V","hidden_size_symbol":"H"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2Model creates NPUVocabParallelEmbedding on first PP rank","confidence":"confirmed","line":1990}]},{"id":"decoder_layer","kind":"module","label":"Decoder Layer Template","module_type":"decoder_layer_template","attrs":{"layer_count_symbol":"L"},"provenance":[{"source":"model_impl","fact":"class OpenPanguV2DecoderLayer","confidence":"confirmed","line":1263}]},{"id":"mhc_attention","kind":"module","label":"mHC Attention Branch","module_type":"mhc_branch","attrs":{"streams_symbol":"S_mhc","recurrent_norm":20},"provenance":[{"source":"model_impl","fact":"Decoder layer creates attention-side NPUmHC when use_mhc is enabled","confidence":"confirmed","line":1310}]},{"id":"input_layernorm","kind":"op","label":"Input RMSNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"model_impl","fact":"Decoder layer creates input_layernorm","confidence":"confirmed","line":1372}]},{"id":"sparse_mla_attention","kind":"module","label":"Sparse MLA Attention","module_type":"mla_sparse_attention","attrs":{"attention_heads_symbol":"N_h","q_lora_rank_symbol":"R_q","kv_lora_rank_symbol":"R_kv","dsa_layer_count":16,"swa_main_layer_count":30},"provenance":[{"source":"model_impl","fact":"Decoder layer creates NPUPanguSparseAttention","confidence":"confirmed","line":1326}]},{"id":"q_a_proj","kind":"op","label":"Q Latent Linear","op_type":"Linear","attrs":{"output_rank_symbol":"R_q"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates q_a_proj","confidence":"confirmed","line":781}]},{"id":"q_causal_conv","kind":"op","label":"Q Causal Conv1D","op_type":"CausalConv1D","attrs":{"kernel_width_symbol":"W_router","path":"MoME Q stream"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates qa_conv for MoME","confidence":"confirmed","line":1011}]},{"id":"q_residual_add","kind":"op","label":"Q Add","op_type":"Add","attrs":{"residual_connection":true},"provenance":[{"source":"attention_impl","fact":"MoME causal conv custom op supports residual_connection","confidence":"confirmed","line":1715}]},{"id":"q_a_norm","kind":"op","label":"Q LayerNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates q_a_layernorm","confidence":"confirmed","line":797}]},{"id":"q_b_proj","kind":"op","label":"Q Up Linear","op_type":"Linear","attrs":{"qk_head_dim_symbol":"D_qk"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates q_b_proj","confidence":"confirmed","line":801}]},{"id":"kv_a_proj","kind":"op","label":"KV Latent Linear","op_type":"Linear","attrs":{"output_rank_symbol":"R_kv_plus_rope"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates kv_a_proj_with_mqa","confidence":"confirmed","line":789}]},{"id":"kv_causal_conv","kind":"op","label":"KV Causal Conv1D","op_type":"CausalConv1D","attrs":{"kernel_width_symbol":"W_router","path":"MoME KV stream"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates compresskv_conv for MoME","confidence":"confirmed","line":1017}]},{"id":"kv_residual_add","kind":"op","label":"KV Add","op_type":"Add","attrs":{"residual_connection":true},"provenance":[{"source":"attention_impl","fact":"MoME causal conv custom op supports residual_connection","confidence":"confirmed","line":1715}]},{"id":"kv_a_norm","kind":"op","label":"KV LayerNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates kv_a_layernorm","confidence":"confirmed","line":836}]},{"id":"kv_b_proj","kind":"op","label":"KV Up Linear","op_type":"Linear","attrs":{"v_head_dim_symbol":"D_v"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates kv_b_proj","confidence":"confirmed","line":840}]},{"id":"rope_apply","kind":"op","label":"Apply RoPE","op_type":"RotaryEmbedding","attrs":{"rope_theta":6400000,"rope_interleave":false},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention initializes rotary embedding","confidence":"confirmed","line":859}]},{"id":"dsa_indexer","kind":"op","label":"DSA Indexer","op_type":"SparseIndexer","attrs":{"index_topk_symbol":"K_index","index_heads_symbol":"N_index"},"provenance":[{"source":"attention_impl","fact":"class NPUPanguIndexer","confidence":"confirmed","line":127}]},{"id":"attention_core","kind":"op","label":"Sparse FlashAttention","op_type":"Attention","attrs":{"branches":["DSA","SWA"],"use_mome":true},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention chooses DSAAttention or MLASWAAttention","confidence":"confirmed","line":942}]},{"id":"o_causal_conv","kind":"op","label":"Output Causal Conv1D","op_type":"CausalConv1D","attrs":{"kernel_width_symbol":"W_router","path":"MoME output stream"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates o_conv for MoME","confidence":"confirmed","line":1023}]},{"id":"o_residual_add","kind":"op","label":"Output Add","op_type":"Add","attrs":{"residual_connection":true},"provenance":[{"source":"attention_impl","fact":"Attention output can pass through output-side MoME before projection","confidence":"confirmed","line":2144}]},{"id":"o_proj","kind":"op","label":"Output Projection","op_type":"Linear","attrs":{"hidden_size_symbol":"H"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates o_proj","confidence":"confirmed","line":849}]},{"id":"post_attention_norm","kind":"op","label":"Post Attention RMSNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"model_impl","fact":"Decoder layer creates post_attention_layernorm","confidence":"confirmed","line":1376}]},{"id":"mhc_attention_post","kind":"module","label":"mHC Attention Merge","module_type":"mhc_merge","attrs":{"use_gamma":true},"provenance":[{"source":"model_impl","fact":"Decoder forward applies mHC sandwich norm after attention","confidence":"confirmed","line":1758}]},{"id":"pre_mlp_norm","kind":"op","label":"Pre MLP RMSNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"model_impl","fact":"Decoder layer creates pre_mlp_layernorm","confidence":"confirmed","line":1381}]},{"id":"ffn_choice","kind":"module","label":"Feed Forward Choice","module_type":"conditional_ffn","attrs":{"dense_layers":"0-1","moe_layers":"2-45"},"provenance":[{"source":"model_impl","fact":"Decoder layer chooses OpenPanguV2MOE after first_k_dense_replace","confidence":"confirmed","line":1346}]},{"id":"dense_mlp","kind":"module","label":"Dense MLP","module_type":"dense_ffn","attrs":{"intermediate_size_symbol":"I_dense"},"provenance":[{"source":"model_impl","fact":"class OpenPanguV2MLP","confidence":"confirmed","line":132}]},{"id":"dense_gate_up","kind":"op","label":"Gate Up Projection","op_type":"MergedLinear","attrs":{"output_multiplier":2},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MLP creates gate_up_proj","confidence":"confirmed","line":151}]},{"id":"dense_silu","kind":"op","label":"SiLU Multiply","op_type":"ActivationMultiply","attrs":{"activation":"silu"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MLP validates SiLU and creates SiluAndMul","confidence":"confirmed","line":171}]},{"id":"dense_down","kind":"op","label":"Dense Down Projection","op_type":"Linear","attrs":{"output_size_symbol":"H"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MLP creates down_proj","confidence":"confirmed","line":160}]},{"id":"moe_ffn","kind":"module","label":"MoE FFN","module_type":"mixture_of_experts","attrs":{"routed_experts_symbol":"E","top_k_symbol":"top_k","shared_experts_symbol":"E_shared"},"provenance":[{"source":"model_impl","fact":"class OpenPanguV2MOE","confidence":"confirmed","line":199}]},{"id":"router_gate","kind":"op","label":"Router Gate","op_type":"Linear","attrs":{"output_size_symbol":"E"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MOE creates replicated router gate","confidence":"confirmed","line":234}]},{"id":"route_topk","kind":"op","label":"TopK Router","op_type":"TopK","attrs":{"top_k_symbol":"top_k","scoring_func":"sigmoid"},"provenance":[{"source":"moe_impl","fact":"NPUFusedMoE.select_experts chooses routed tokens","confidence":"confirmed","line":130}]},{"id":"routed_expert_bank","kind":"op","label":"Routed Expert Bank","op_type":"FusedMoE","attrs":{"expert_intermediate_symbol":"I_moe"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MOE creates NPUSharedFusedMoE","confidence":"confirmed","line":275}]},{"id":"shared_expert_mlp","kind":"module","label":"Shared Expert MLP","module_type":"shared_expert","attrs":{"shared_experts_symbol":"E_shared"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MOE creates shared_experts with OpenPanguV2MLP","confidence":"confirmed","line":250}]},{"id":"moe_combine","kind":"op","label":"MoE Combine","op_type":"Combine","attrs":{"routed_scaling_factor":2.5,"renormalize":true},"provenance":[{"source":"moe_impl","fact":"Fused MoE applies routed and shared expert outputs","confidence":"confirmed","line":148}]},{"id":"post_mlp_norm","kind":"op","label":"Post MLP RMSNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"model_impl","fact":"Decoder layer creates post_mlp_layernorm","confidence":"confirmed","line":1385}]},{"id":"block_post_norm","kind":"op","label":"Block Post RMSNorm","op_type":"RMSNorm","attrs":{"enabled_layers":[0,4,9,14,19,24,29,34,39]},"provenance":[{"source":"model_impl","fact":"Decoder layer optionally creates block_post_layernorm","confidence":"confirmed","line":1390}]},{"id":"final_norm","kind":"op","label":"Final RMSNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"model_impl","fact":"OpenPanguV2Model creates final norm on last PP rank","confidence":"confirmed","line":2018}]},{"id":"lm_head","kind":"op","label":"LM Head","op_type":"Linear","attrs":{"tie_word_embeddings":false,"vocab_size_symbol":"V"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2ForCausalLM creates NPUParallelLMHead","confidence":"confirmed","line":2195}]},{"id":"logits","kind":"output","label":"Logits","role":"language model logits","provenance":[{"source":"model_impl","fact":"OpenPanguV2ForCausalLM.compute_logits produces logits","confidence":"confirmed","line":2255}]},{"id":"mtp_module","kind":"module","label":"Multi Token Predictor","module_type":"speculative_decoder","attrs":{"next_predict_layers_symbol":"N_mtp"},"provenance":[{"source":"mtp_impl","fact":"class OpenPanguV2MTP","confidence":"confirmed","line":210}]},{"id":"mtp_input_norms","kind":"op","label":"MTP Input Norms","op_type":"RMSNorm","attrs":{"norms":["enorm","hnorm"]},"provenance":[{"source":"mtp_impl","fact":"MTP layer creates enorm and hnorm","confidence":"confirmed","line":77}]},{"id":"mtp_eh_proj","kind":"op","label":"MTP EH Projection","op_type":"Linear","attrs":{"input_multiplier":2,"output_size_symbol":"H"},"provenance":[{"source":"mtp_impl","fact":"MTP layer projects concatenated embedding and hidden state","confidence":"confirmed","line":79}]},{"id":"mtp_decoder_layer","kind":"module","label":"MTP Decoder Layer","module_type":"decoder_layer_template","attrs":{"reuses":"OpenPanguV2DecoderLayer"},"provenance":[{"source":"mtp_impl","fact":"MTP layer embeds an OpenPanguV2DecoderLayer","confidence":"confirmed","line":91}]},{"id":"mtp_shared_head","kind":"module","label":"MTP Shared Head","module_type":"lm_head","attrs":{"vocab_size_symbol":"V"},"provenance":[{"source":"mtp_impl","fact":"class SharedHead contains norm and NPUParallelLMHead","confidence":"confirmed","line":36}]},{"id":"mtp_logits","kind":"output","label":"MTP Logits","role":"speculative output logits","provenance":[{"source":"mtp_impl","fact":"OpenPanguV2MultiTokenPredictor.compute_logits returns logits","confidence":"confirmed","line":196}]},{"id":"rope_cache","kind":"state","label":"RoPE Cache","state_type":"rotary_embedding_cache","attrs":{"max_position_embeddings_symbol":"S_max"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2Model reads cos_cached and sin_cached from attention rotary_emb","confidence":"confirmed","line":2035}]},{"id":"kv_cache","kind":"state","label":"KV Cache","state_type":"attention_cache","attrs":{"use_cache":true},"provenance":[{"source":"runtime_config","fact":"use_cache=true","confidence":"confirmed","line":51}]},{"id":"param_sink_state","kind":"state","label":"Parameter Sink","state_type":"attention_sink_state","attrs":{"param_sink_number_symbol":"N_sink"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention initializes param sink tensors","confidence":"confirmed","line":886}]},{"id":"mome_state","kind":"state","label":"MoME State","state_type":"router_sliding_state","attrs":{"kernel_width_symbol":"W_router"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention initializes MomeAttention when use_mome is enabled","confidence":"confirmed","line":991}]},{"id":"expert_parallel_state","kind":"state","label":"Expert Parallel State","state_type":"parallel_runtime_state","attrs":{"logical_experts_symbol":"E","local_physical_experts":"runtime_dependent"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MOE derives physical and local expert counts","confidence":"confirmed","line":297}]}],"edges":[{"id":"e_input_to_embedding","source":"input_tokens","target":"token_embedding","tensor":{"name":"input_ids","shape":"[B,T]","dtype":"int64","constraints":["T<=S_max"]},"provenance":[{"source":"model_impl","fact":"input_tokens feeds token_embedding with input_ids","confidence":"confirmed","line":2076}]},{"id":"e_positions_to_rope_cache","source":"positions","target":"rope_cache","tensor":{"name":"positions","shape":"[B,T]","dtype":"int64","constraints":["T<=S_max"]},"provenance":[{"source":"model_impl","fact":"positions feeds rope_cache with positions","confidence":"confirmed","line":2096}]},{"id":"e_embedding_to_decoder","source":"token_embedding","target":"decoder_layer","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"token_embedding feeds decoder_layer with hidden_states","confidence":"confirmed","line":2080}]},{"id":"e_decoder_to_mhc","source":"decoder_layer","target":"mhc_attention","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"decoder_layer feeds mhc_attention with hidden_states","confidence":"confirmed","line":2099}]},{"id":"e_mhc_to_norm","source":"mhc_attention","target":"input_layernorm","tensor":{"name":"hidden_states","shape":"[B,T,S_mhc,H]","dtype":"bf16","constraints":["S_mhc=4"]},"provenance":[{"source":"model_impl","fact":"mhc_attention feeds input_layernorm with hidden_states","confidence":"confirmed","line":1453}]},{"id":"e_norm_to_attention","source":"input_layernorm","target":"sparse_mla_attention","tensor":{"name":"normalized_hidden","shape":"[B,T,S_mhc,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"input_layernorm feeds sparse_mla_attention with normalized_hidden","confidence":"confirmed","line":1732}]},{"id":"e_attention_to_qa","source":"sparse_mla_attention","target":"q_a_proj","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"sparse_mla_attention feeds q_a_proj with hidden_states","confidence":"confirmed","line":781}]},{"id":"e_qa_to_qconv","source":"q_a_proj","target":"q_causal_conv","tensor":{"name":"q_lora","shape":"[B,T,R_q]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"q_a_proj feeds q_causal_conv with q_lora","confidence":"confirmed","line":2015}]},{"id":"e_qa_skip_to_qadd","source":"q_a_proj","target":"q_residual_add","tensor":{"name":"q_lora_residual","shape":"[B,T,R_q]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"q_a_proj feeds q_residual_add with q_lora_residual","confidence":"confirmed","line":1715}]},{"id":"e_qconv_to_qadd","source":"q_causal_conv","target":"q_residual_add","tensor":{"name":"q_local_context","shape":"[B,T,R_q]","dtype":"bf16","constraints":["W_router=3"]},"provenance":[{"source":"attention_impl","fact":"q_causal_conv feeds q_residual_add with q_local_context","confidence":"confirmed","line":1715}]},{"id":"e_qadd_to_qnorm","source":"q_residual_add","target":"q_a_norm","tensor":{"name":"q_lora","shape":"[B,T,R_q]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"q_residual_add feeds q_a_norm with q_lora","confidence":"confirmed","line":2024}]},{"id":"e_qnorm_to_qb","source":"q_a_norm","target":"q_b_proj","tensor":{"name":"q_lora_normed","shape":"[B,T,R_q]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"q_a_norm feeds q_b_proj with q_lora_normed","confidence":"confirmed","line":2034}]},{"id":"e_attention_to_kva","source":"sparse_mla_attention","target":"kv_a_proj","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"sparse_mla_attention feeds kv_a_proj with hidden_states","confidence":"confirmed","line":789}]},{"id":"e_kva_to_kvconv","source":"kv_a_proj","target":"kv_causal_conv","tensor":{"name":"kv_lora","shape":"[B,T,R_kv]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"kv_a_proj feeds kv_causal_conv with kv_lora","confidence":"confirmed","line":2068}]},{"id":"e_kva_skip_to_kvadd","source":"kv_a_proj","target":"kv_residual_add","tensor":{"name":"kv_lora_residual","shape":"[B,T,R_kv+D_rope]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"kv_a_proj feeds kv_residual_add with kv_lora_residual","confidence":"confirmed","line":2082}]},{"id":"e_kvconv_to_kvadd","source":"kv_causal_conv","target":"kv_residual_add","tensor":{"name":"kv_local_context","shape":"[B,T,R_kv]","dtype":"bf16","constraints":["W_router=3"]},"provenance":[{"source":"attention_impl","fact":"kv_causal_conv feeds kv_residual_add with kv_local_context","confidence":"confirmed","line":2082}]},{"id":"e_kvadd_to_kvnorm","source":"kv_residual_add","target":"kv_a_norm","tensor":{"name":"kv_lora_plus_rope","shape":"[B,T,R_kv+D_rope]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"kv_residual_add feeds kv_a_norm with kv_lora_plus_rope","confidence":"confirmed","line":2092}]},{"id":"e_kvnorm_to_kvb","source":"kv_a_norm","target":"kv_b_proj","tensor":{"name":"kv_lora_normed","shape":"[B,T,R_kv]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"kv_a_norm feeds kv_b_proj with kv_lora_normed","confidence":"confirmed","line":840}]},{"id":"e_qb_to_rope","source":"q_b_proj","target":"rope_apply","tensor":{"name":"q_nope_q_rope","shape":"[B,T,N_h,D_qk]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"q_b_proj feeds rope_apply with q_nope_q_rope","confidence":"confirmed","line":871}]},{"id":"e_rope_cache_to_rope","source":"rope_cache","target":"rope_apply","tensor":{"name":"cos_sin","shape":"[T,D_rope]","dtype":"bf16","constraints":["T<=S_max"]},"provenance":[{"source":"model_impl","fact":"rope_cache feeds rope_apply with cos_sin","confidence":"confirmed","line":2096}]},{"id":"e_rope_to_dsa","source":"rope_apply","target":"dsa_indexer","tensor":{"name":"query_key_rotary","shape":"[B,T,N_h,D_qk]","dtype":"bf16","constraints":["K_index<=2048"]},"provenance":[{"source":"attention_impl","fact":"rope_apply feeds dsa_indexer with query_key_rotary","confidence":"confirmed","line":127}]},{"id":"e_rope_to_core","source":"rope_apply","target":"attention_core","tensor":{"name":"query","shape":"[B,T,N_h,D_qk]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"rope_apply feeds attention_core with query","confidence":"confirmed","line":2034}]},{"id":"e_kvb_to_core","source":"kv_b_proj","target":"attention_core","tensor":{"name":"compressed_kv","shape":"[B,T,R_kv+D_v]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"kv_b_proj feeds attention_core with compressed_kv","confidence":"confirmed","line":954}]},{"id":"e_dsa_to_core","source":"dsa_indexer","target":"attention_core","tensor":{"name":"sparse_indices","shape":"[B,T,K_index]","dtype":"int32","constraints":["K_index<=2048"]},"provenance":[{"source":"attention_impl","fact":"dsa_indexer feeds attention_core with sparse_indices","confidence":"confirmed","line":221}]},{"id":"e_kv_cache_to_core","source":"kv_cache","target":"attention_core","tensor":{"name":"kv_cache","shape":"[B,S_cache,R_kv+D_v]","dtype":"bf16/fp8"},"provenance":[{"source":"attention_impl","fact":"kv_cache feeds attention_core with kv_cache","confidence":"confirmed","line":214}]},{"id":"e_param_sink_to_core","source":"param_sink_state","target":"attention_core","tensor":{"name":"sink_kv","shape":"[N_sink,R_kv+D_rope]","dtype":"bf16","constraints":["N_sink=128"]},"provenance":[{"source":"attention_impl","fact":"param_sink_state feeds attention_core with sink_kv","confidence":"confirmed","line":886}]},{"id":"e_mome_to_core","source":"mome_state","target":"attention_core","tensor":{"name":"mome_state","shape":"[B,W_router,R_q/R_kv/D_v]","dtype":"bf16","constraints":["W_router=3"]},"provenance":[{"source":"attention_impl","fact":"mome_state feeds attention_core with mome_state","confidence":"confirmed","line":991}]},{"id":"e_core_to_oconv","source":"attention_core","target":"o_causal_conv","tensor":{"name":"attn_output","shape":"[B,T,N_h,D_v]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"attention_core feeds o_causal_conv with attn_output","confidence":"confirmed","line":2137}]},{"id":"e_core_skip_to_oadd","source":"attention_core","target":"o_residual_add","tensor":{"name":"attn_output_residual","shape":"[B,T,N_h,D_v]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"attention_core feeds o_residual_add with attn_output_residual","confidence":"confirmed","line":2144}]},{"id":"e_oconv_to_oadd","source":"o_causal_conv","target":"o_residual_add","tensor":{"name":"attn_local_context","shape":"[B,T,N_h,D_v]","dtype":"bf16","constraints":["W_router=3"]},"provenance":[{"source":"attention_impl","fact":"o_causal_conv feeds o_residual_add with attn_local_context","confidence":"confirmed","line":2144}]},{"id":"e_oadd_to_o","source":"o_residual_add","target":"o_proj","tensor":{"name":"attn_output","shape":"[B,T,N_h,D_v]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"o_residual_add feeds o_proj with attn_output","confidence":"confirmed","line":849}]},{"id":"e_o_to_post_attn","source":"o_proj","target":"post_attention_norm","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"o_proj feeds post_attention_norm with hidden_states","confidence":"confirmed","line":1758}]},{"id":"e_post_attn_to_mhc_post","source":"post_attention_norm","target":"mhc_attention_post","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"post_attention_norm feeds mhc_attention_post with hidden_states","confidence":"confirmed","line":1758}]},{"id":"e_mhc_post_to_pre_mlp","source":"mhc_attention_post","target":"pre_mlp_norm","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"mhc_attention_post feeds pre_mlp_norm with hidden_states","confidence":"confirmed","line":1758}]},{"id":"e_pre_mlp_to_ffn","source":"pre_mlp_norm","target":"ffn_choice","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16/fp32","constraints":["layer_id<2 uses dense","layer_id>=2 uses moe"]},"provenance":[{"source":"model_impl","fact":"pre_mlp_norm feeds ffn_choice with hidden_states","confidence":"confirmed","line":1346}]},{"id":"e_ffn_to_dense","source":"ffn_choice","target":"dense_mlp","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16","constraints":["layer_id<2"]},"provenance":[{"source":"model_impl","fact":"ffn_choice feeds dense_mlp with hidden_states","confidence":"confirmed","line":1357}]},{"id":"e_dense_to_gateup","source":"dense_mlp","target":"dense_gate_up","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"dense_mlp feeds dense_gate_up with hidden_states","confidence":"confirmed","line":151}]},{"id":"e_gateup_to_silu","source":"dense_gate_up","target":"dense_silu","tensor":{"name":"gate_up","shape":"[B,T,2*I_dense]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"dense_gate_up feeds dense_silu with gate_up","confidence":"confirmed","line":183}]},{"id":"e_silu_to_dense_down","source":"dense_silu","target":"dense_down","tensor":{"name":"activated","shape":"[B,T,I_dense]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"dense_silu feeds dense_down with activated","confidence":"confirmed","line":184}]},{"id":"e_dense_down_to_post_mlp","source":"dense_down","target":"post_mlp_norm","tensor":{"name":"dense_output","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"dense_down feeds post_mlp_norm with dense_output","confidence":"confirmed","line":185}]},{"id":"e_ffn_to_moe","source":"ffn_choice","target":"moe_ffn","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16/fp32","constraints":["layer_id>=2"]},"provenance":[{"source":"model_impl","fact":"ffn_choice feeds moe_ffn with hidden_states","confidence":"confirmed","line":1350}]},{"id":"e_moe_to_router","source":"moe_ffn","target":"router_gate","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16/fp32"},"provenance":[{"source":"model_impl","fact":"moe_ffn feeds router_gate with hidden_states","confidence":"confirmed","line":234}]},{"id":"e_router_to_topk","source":"router_gate","target":"route_topk","tensor":{"name":"router_logits","shape":"[B,T,E]","dtype":"fp32","constraints":["top_k=8"]},"provenance":[{"source":"moe_impl","fact":"router_gate feeds route_topk with router_logits","confidence":"confirmed","line":130}]},{"id":"e_topk_to_expert","source":"route_topk","target":"routed_expert_bank","tensor":{"name":"topk_ids_weights","shape":"[B,T,top_k]","dtype":"int32/fp32","constraints":["top_k=8","expert_id<E"]},"provenance":[{"source":"moe_impl","fact":"route_topk feeds routed_expert_bank with topk_ids_weights","confidence":"confirmed","line":130}]},{"id":"e_ep_to_expert","source":"expert_parallel_state","target":"routed_expert_bank","tensor":{"name":"expert_map","shape":"[E]","dtype":"int32","constraints":["E=256"]},"provenance":[{"source":"model_impl","fact":"expert_parallel_state feeds routed_expert_bank with expert_map","confidence":"confirmed","line":297}]},{"id":"e_moe_to_shared","source":"moe_ffn","target":"shared_expert_mlp","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16","constraints":["E_shared=1"]},"provenance":[{"source":"model_impl","fact":"moe_ffn feeds shared_expert_mlp with hidden_states","confidence":"confirmed","line":252}]},{"id":"e_expert_to_combine","source":"routed_expert_bank","target":"moe_combine","tensor":{"name":"routed_output","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"moe_impl","fact":"routed_expert_bank feeds moe_combine with routed_output","confidence":"confirmed","line":148}]},{"id":"e_shared_to_combine","source":"shared_expert_mlp","target":"moe_combine","tensor":{"name":"shared_output","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"moe_impl","fact":"shared_expert_mlp feeds moe_combine with shared_output","confidence":"confirmed","line":154}]},{"id":"e_moe_combine_to_post_mlp","source":"moe_combine","target":"post_mlp_norm","tensor":{"name":"moe_output","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"moe_combine feeds post_mlp_norm with moe_output","confidence":"confirmed","line":1773}]},{"id":"e_post_mlp_to_block_norm","source":"post_mlp_norm","target":"block_post_norm","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16","constraints":["only selected layer ids"]},"provenance":[{"source":"model_impl","fact":"post_mlp_norm feeds block_post_norm with hidden_states","confidence":"confirmed","line":1390}]},{"id":"e_block_norm_to_final","source":"block_post_norm","target":"final_norm","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"block_post_norm feeds final_norm with hidden_states","confidence":"confirmed","line":2018}]},{"id":"e_final_to_head","source":"final_norm","target":"lm_head","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"final_norm feeds lm_head with hidden_states","confidence":"confirmed","line":2255}]},{"id":"e_head_to_logits","source":"lm_head","target":"logits","tensor":{"name":"logits","shape":"[B,T,V]","dtype":"fp32"},"provenance":[{"source":"model_impl","fact":"lm_head feeds logits with logits","confidence":"confirmed","line":2255}]},{"id":"e_final_to_mtp","source":"final_norm","target":"mtp_module","tensor":{"name":"previous_hidden_states","shape":"[B,T,H]","dtype":"bf16","constraints":["N_mtp=3"]},"provenance":[{"source":"mtp_impl","fact":"final_norm feeds mtp_module with previous_hidden_states","confidence":"confirmed","line":171}]},{"id":"e_embedding_to_mtp_norms","source":"token_embedding","target":"mtp_input_norms","tensor":{"name":"inputs_embeds","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"mtp_impl","fact":"token_embedding feeds mtp_input_norms with inputs_embeds","confidence":"confirmed","line":112}]},{"id":"e_mtp_to_norms","source":"mtp_module","target":"mtp_input_norms","tensor":{"name":"input_pair","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"mtp_impl","fact":"mtp_module feeds mtp_input_norms with input_pair","confidence":"confirmed","line":77}]},{"id":"e_norms_to_eh","source":"mtp_input_norms","target":"mtp_eh_proj","tensor":{"name":"concat_embedding_hidden","shape":"[B,T,2*H]","dtype":"bf16"},"provenance":[{"source":"mtp_impl","fact":"mtp_input_norms feeds mtp_eh_proj with concat_embedding_hidden","confidence":"confirmed","line":116}]},{"id":"e_eh_to_mtp_decoder","source":"mtp_eh_proj","target":"mtp_decoder_layer","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"mtp_impl","fact":"mtp_eh_proj feeds mtp_decoder_layer with hidden_states","confidence":"confirmed","line":124}]},{"id":"e_mtp_decoder_to_head","source":"mtp_decoder_layer","target":"mtp_shared_head","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"mtp_impl","fact":"mtp_decoder_layer feeds mtp_shared_head with hidden_states","confidence":"confirmed","line":196}]},{"id":"e_mtp_head_to_logits","source":"mtp_shared_head","target":"mtp_logits","tensor":{"name":"mtp_logits","shape":"[B,T,V]","dtype":"fp32"},"provenance":[{"source":"mtp_impl","fact":"mtp_shared_head feeds mtp_logits with mtp_logits","confidence":"confirmed","line":203}]}],"repeats":[{"id":"repeat_main_decoder_layers","template_node":"decoder_layer","range":"0-45","count":46,"provenance":[{"source":"runtime_config","fact":"num_hidden_layers=46","confidence":"confirmed","line":32}]},{"id":"repeat_dense_ffn_layers","template_node":"dense_mlp","range":"0-1","count":2,"provenance":[{"source":"runtime_config","fact":"first_k_dense_replace=2","confidence":"confirmed","line":13}]},{"id":"repeat_moe_ffn_layers","template_node":"moe_ffn","range":"2-45","count":44,"provenance":[{"source":"model_impl","fact":"layers at and after first_k_dense_replace use OpenPanguV2MOE","confidence":"confirmed","line":1346}]},{"id":"repeat_dsa_attention_layers","template_node":"dsa_indexer","range":"0,3,6,9,12,15,18,21,24,27,30,33,36,39,42,45","count":16,"provenance":[{"source":"runtime_config","fact":"dsa_layers lists sparse global aggregation layers","confidence":"confirmed","line":10}]},{"id":"repeat_swa_attention_layers","template_node":"attention_core","range":"1,2,4,5,7,8,10,11,13,14,16,17,19,20,22,23,25,26,28,29,31,32,34,35,37,38,40,41,43,44","count":30,"provenance":[{"source":"runtime_config","fact":"swa_layers lists local window attention layers","confidence":"confirmed","line":48}]},{"id":"repeat_mtp_layers","template_node":"mtp_decoder_layer","range":"46,47,48","count":3,"provenance":[{"source":"runtime_config","fact":"num_nextn_predict_layers=3","confidence":"confirmed","line":33}]}],"branches":[{"id":"attention_branch","condition":"layer_id in dsa_layers","true_target":"dsa_indexer","false_target":"attention_core","resolved_ranges":[{"target":"dsa_indexer","range":"0,3,6,9,12,15,18,21,24,27,30,33,36,39,42,45"},{"target":"attention_core","range":"1,2,4,5,7,8,10,11,13,14,16,17,19,20,22,23,25,26,28,29,31,32,34,35,37,38,40,41,43,44"}],"provenance":[{"source":"runtime_config","fact":"dsa_layers and swa_layers define independent layer classes","confidence":"confirmed","line":10}]},{"id":"ffn_branch","condition":"layer_id < first_k_dense_replace","true_target":"dense_mlp","false_target":"moe_ffn","resolved_ranges":[{"target":"dense_mlp","range":"0-1"},{"target":"moe_ffn","range":"2-45"}],"provenance":[{"source":"model_impl","fact":"Decoder layer selects dense MLP before first_k_dense_replace","confidence":"confirmed","line":1346}]}],"visual_layout":{"direction":"vertical","default_collapse_depth":2,"nodes":{},"groups":[{"id":"model-core","label":"Causal LM","nodes":["token_embedding","final_norm","lm_head","logits"],"children":["decoder-stack","mtp-stack"],"badge":"source checked"},{"id":"decoder-stack","label":"Decoder Layer Template","nodes":["mhc_attention","input_layernorm","post_attention_norm","mhc_attention_post","pre_mlp_norm","post_mlp_norm","block_post_norm"],"children":["attention-block","ffn-block"],"badge":"repeat 0-45, count 46"},{"id":"attention-block","label":"Sparse MLA Attention","nodes":["q_a_proj","q_causal_conv","q_residual_add","q_a_norm","q_b_proj","kv_a_proj","kv_causal_conv","kv_residual_add","kv_a_norm","kv_b_proj","rope_apply","dsa_indexer","attention_core","o_causal_conv","o_residual_add","o_proj","rope_cache","kv_cache","param_sink_state","mome_state"],"children":[],"badge":"MLA + MoME local context","collapsed_by_default":false},{"id":"ffn-block","label":"Dense + MoE FFN","nodes":["dense_mlp","dense_gate_up","dense_silu","dense_down","moe_ffn","post_mlp_norm"],"children":["moe-block"],"badge":"dense then MoE","collapsed_by_default":false},{"id":"moe-block","label":"MoE FFN","nodes":["router_gate","route_topk","routed_expert_bank","shared_expert_mlp","moe_combine","expert_parallel_state"],"children":[],"badge":"routed + shared","collapsed_by_default":true},{"id":"mtp-stack","label":"Multi Token Predictor","nodes":["mtp_input_norms","mtp_eh_proj","mtp_decoder_layer","mtp_shared_head","mtp_logits"],"children":[],"badge":"next-token draft branch","collapsed_by_default":true}]},"warnings":["The local checkout intentionally skips full safetensors weights.","swa_layers includes indices 46-48, which align with the three MTP layers rather than main decoder layers."]}</script>
-  <script src="../pattern.js"></script>
-  <script src="../../model-training-graphviz/pattern.js"></script>
+  <script type="application/json" id="defaultSchemaJson">{"schema_version":"model_architecture.v1","model":{"name":"openPangu-2.0-Flash","framework":"pytorch/vllm/ascend-npu","source_root":"/Users/yin/pto/model-architecture/sources"},"extraction_scope":{"kind":"full_source","full_main_layers":46,"trace_main_layers":null,"notes":["Canonical graph is extracted from config.json plus openPangu-2.0-Infer source.","Weights were not downloaded; local safetensors files are Git LFS pointer files.","swa_layers includes MTP indices; visual branches separate main decoder layers from MTP layers."]},"sources":[{"id":"runtime_config","kind":"config","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Flash/config.json","role":"source_of_truth"},{"id":"hf_config_class","kind":"source","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Flash/configuration_openpangu_v2.py","role":"source_of_truth"},{"id":"model_impl","kind":"source","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Infer/components/omni-npu/src/omni_npu/v1/models/pangu/pangu_v2_moe.py","role":"source_of_truth"},{"id":"attention_impl","kind":"source","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Infer/components/omni-npu/src/omni_npu/v1/layers/attention/npu_pangu.py","role":"source_of_truth"},{"id":"mtp_impl","kind":"source","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Infer/components/omni-npu/src/omni_npu/v1/models/pangu/pangu_v2_moe_mtp.py","role":"source_of_truth"},{"id":"moe_impl","kind":"source","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Infer/components/omni-npu/src/omni_npu/layers/fused_moe/layer.py","role":"supporting_evidence"},{"id":"model_card","kind":"model_card","path":"/Users/yin/pto/model-architecture/sources/openPangu-2.0-Flash/README.md","role":"supporting_evidence"}],"symbol_table":{"B":"batch","T":"sequence","H":2560,"V":151552,"L":46,"N_h":48,"D_nope":128,"D_rope":64,"D_qk":192,"D_v":128,"R_q":1024,"R_kv":512,"R_kv_plus_rope":576,"I_dense":9216,"I_moe":1024,"E":256,"E_shared":1,"top_k":8,"K_index":2048,"N_index":24,"S_max":524288,"S_mhc":4,"N_sink":128,"W_router":3,"N_mtp":3},"nodes":[{"id":"input_tokens","kind":"input","label":"Token IDs","role":"external token ids","provenance":[{"source":"model_impl","fact":"OpenPanguV2ForCausalLM.forward accepts input_ids","confidence":"confirmed","line":2243}]},{"id":"positions","kind":"input","label":"Position IDs","role":"token positions for RoPE lookup","provenance":[{"source":"model_impl","fact":"OpenPanguV2ForCausalLM.forward accepts positions","confidence":"confirmed","line":2243}]},{"id":"causal_lm","kind":"module","label":"OpenPangu V2 For Causal LM","module_type":"causal_lm","attrs":{"architecture":"OpenPanguV2ForCausalLM"},"provenance":[{"source":"runtime_config","fact":"architectures contains OpenPanguV2ForCausalLM","confidence":"confirmed","line":2}]},{"id":"decoder_model","kind":"module","label":"OpenPangu V2 Model","module_type":"decoder_only_transformer","attrs":{"use_mhc":true,"mhc_num_stream":4},"provenance":[{"source":"model_impl","fact":"class OpenPanguV2Model","confidence":"confirmed","line":1970}]},{"id":"token_embedding","kind":"op","label":"Vocab Parallel Embedding","op_type":"Embedding","attrs":{"vocab_size_symbol":"V","hidden_size_symbol":"H"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2Model creates NPUVocabParallelEmbedding on first PP rank","confidence":"confirmed","line":1990}]},{"id":"decoder_layer","kind":"module","label":"Decoder Layer Template","module_type":"decoder_layer_template","attrs":{"layer_count_symbol":"L"},"provenance":[{"source":"model_impl","fact":"class OpenPanguV2DecoderLayer","confidence":"confirmed","line":1263}]},{"id":"mhc_attention","kind":"module","label":"mHC Attention Branch","module_type":"mhc_branch","attrs":{"streams_symbol":"S_mhc","recurrent_norm":20},"provenance":[{"source":"model_impl","fact":"Decoder layer creates attention-side NPUmHC when use_mhc is enabled","confidence":"confirmed","line":1310}]},{"id":"input_layernorm","kind":"op","label":"Input RMSNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"model_impl","fact":"Decoder layer creates input_layernorm","confidence":"confirmed","line":1372}]},{"id":"sparse_mla_attention","kind":"module","label":"Sparse MLA Attention","module_type":"mla_sparse_attention","attrs":{"attention_heads_symbol":"N_h","q_lora_rank_symbol":"R_q","kv_lora_rank_symbol":"R_kv","dsa_layer_count":16,"swa_main_layer_count":30},"provenance":[{"source":"model_impl","fact":"Decoder layer creates NPUPanguSparseAttention","confidence":"confirmed","line":1326}]},{"id":"q_a_proj","kind":"op","label":"Q Latent Linear","op_type":"Linear","attrs":{"output_rank_symbol":"R_q"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates q_a_proj","confidence":"confirmed","line":781}]},{"id":"q_causal_conv","kind":"op","label":"Q Causal Conv1D","op_type":"CausalConv1D","attrs":{"kernel_width_symbol":"W_router","path":"MoME Q stream","residual_connection":"fused_in_mome_conv"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates qa_conv for MoME","confidence":"confirmed","line":1011}]},{"id":"q_a_norm","kind":"op","label":"Q LayerNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates q_a_layernorm","confidence":"confirmed","line":797}]},{"id":"q_b_proj","kind":"op","label":"Q Up Linear","op_type":"Linear","attrs":{"qk_head_dim_symbol":"D_qk"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates q_b_proj","confidence":"confirmed","line":801}]},{"id":"kv_a_proj","kind":"op","label":"KV Latent Linear","op_type":"Linear","attrs":{"output_rank_symbol":"R_kv_plus_rope"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates kv_a_proj_with_mqa","confidence":"confirmed","line":789}]},{"id":"kv_causal_conv","kind":"op","label":"KV Causal Conv1D","op_type":"CausalConv1D","attrs":{"kernel_width_symbol":"W_router","path":"MoME KV stream","residual_connection":"fused_in_mome_conv"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates compresskv_conv for MoME","confidence":"confirmed","line":1017}]},{"id":"kv_a_norm","kind":"op","label":"KV LayerNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates kv_a_layernorm","confidence":"confirmed","line":836}]},{"id":"kv_b_proj","kind":"op","label":"KV Up Linear","op_type":"Linear","attrs":{"v_head_dim_symbol":"D_v"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates kv_b_proj","confidence":"confirmed","line":840}]},{"id":"rope_apply","kind":"op","label":"Apply RoPE","op_type":"RotaryEmbedding","attrs":{"rope_theta":6400000,"rope_interleave":false},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention initializes rotary embedding","confidence":"confirmed","line":859}]},{"id":"dsa_indexer","kind":"op","label":"DSA Indexer","op_type":"SparseIndexer","attrs":{"index_topk_symbol":"K_index","index_heads_symbol":"N_index"},"provenance":[{"source":"attention_impl","fact":"class NPUPanguIndexer","confidence":"confirmed","line":127}]},{"id":"attention_core","kind":"op","label":"Sparse FlashAttention","op_type":"Attention","attrs":{"branches":["DSA","SWA"],"use_mome":true},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention chooses DSAAttention or MLASWAAttention","confidence":"confirmed","line":942}]},{"id":"o_causal_conv","kind":"op","label":"Output Causal Conv1D","op_type":"CausalConv1D","attrs":{"kernel_width_symbol":"W_router","path":"MoME output stream","residual_connection":"fused_in_mome_conv"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates o_conv for MoME","confidence":"confirmed","line":1023}]},{"id":"o_proj","kind":"op","label":"Output Projection","op_type":"Linear","attrs":{"hidden_size_symbol":"H"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates o_proj","confidence":"confirmed","line":849}]},{"id":"post_attention_norm","kind":"op","label":"Post Attention RMSNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"model_impl","fact":"Decoder layer creates post_attention_layernorm","confidence":"confirmed","line":1376}]},{"id":"mhc_attention_post","kind":"module","label":"mHC Attention Merge","module_type":"mhc_merge","attrs":{"use_gamma":true},"provenance":[{"source":"model_impl","fact":"Decoder forward applies mHC sandwich norm after attention","confidence":"confirmed","line":1758}]},{"id":"pre_mlp_norm","kind":"op","label":"Pre MLP RMSNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"model_impl","fact":"Decoder layer creates pre_mlp_layernorm","confidence":"confirmed","line":1381}]},{"id":"ffn_choice","kind":"module","label":"Feed Forward Choice","module_type":"conditional_ffn","attrs":{"dense_layers":"0-1","moe_layers":"2-45"},"provenance":[{"source":"model_impl","fact":"Decoder layer chooses OpenPanguV2MOE after first_k_dense_replace","confidence":"confirmed","line":1346}]},{"id":"dense_mlp","kind":"module","label":"Dense MLP","module_type":"dense_ffn","attrs":{"intermediate_size_symbol":"I_dense"},"provenance":[{"source":"model_impl","fact":"class OpenPanguV2MLP","confidence":"confirmed","line":132}]},{"id":"dense_gate_up","kind":"op","label":"Gate Up Projection","op_type":"MergedLinear","attrs":{"output_multiplier":2},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MLP creates gate_up_proj","confidence":"confirmed","line":151}]},{"id":"dense_silu","kind":"op","label":"SiLU Multiply","op_type":"ActivationMultiply","attrs":{"activation":"silu"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MLP validates SiLU and creates SiluAndMul","confidence":"confirmed","line":171}]},{"id":"dense_down","kind":"op","label":"Dense Down Projection","op_type":"Linear","attrs":{"output_size_symbol":"H"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MLP creates down_proj","confidence":"confirmed","line":160}]},{"id":"moe_ffn","kind":"module","label":"MoE FFN","module_type":"mixture_of_experts","attrs":{"routed_experts_symbol":"E","top_k_symbol":"top_k","shared_experts_symbol":"E_shared"},"provenance":[{"source":"model_impl","fact":"class OpenPanguV2MOE","confidence":"confirmed","line":199}]},{"id":"router_gate","kind":"op","label":"Router Gate","op_type":"Linear","attrs":{"output_size_symbol":"E"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MOE creates replicated router gate","confidence":"confirmed","line":234}]},{"id":"route_topk","kind":"op","label":"TopK Router","op_type":"TopK","attrs":{"top_k_symbol":"top_k","scoring_func":"sigmoid"},"provenance":[{"source":"moe_impl","fact":"NPUFusedMoE.select_experts chooses routed tokens","confidence":"confirmed","line":130}]},{"id":"routed_expert_bank","kind":"op","label":"Routed Expert Bank","op_type":"FusedMoE","attrs":{"expert_intermediate_symbol":"I_moe"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MOE creates NPUSharedFusedMoE","confidence":"confirmed","line":275}]},{"id":"shared_expert_mlp","kind":"module","label":"Shared Expert MLP","module_type":"shared_expert","attrs":{"shared_experts_symbol":"E_shared"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MOE creates shared_experts with OpenPanguV2MLP","confidence":"confirmed","line":250}]},{"id":"moe_combine","kind":"op","label":"MoE Combine","op_type":"Combine","attrs":{"routed_scaling_factor":2.5,"renormalize":true},"provenance":[{"source":"moe_impl","fact":"Fused MoE applies routed and shared expert outputs","confidence":"confirmed","line":148}]},{"id":"post_mlp_norm","kind":"op","label":"Post MLP RMSNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"model_impl","fact":"Decoder layer creates post_mlp_layernorm","confidence":"confirmed","line":1385}]},{"id":"block_post_norm","kind":"op","label":"Block Post RMSNorm","op_type":"RMSNorm","attrs":{"enabled_layers":[0,4,9,14,19,24,29,34,39]},"provenance":[{"source":"model_impl","fact":"Decoder layer optionally creates block_post_layernorm","confidence":"confirmed","line":1390}]},{"id":"final_norm","kind":"op","label":"Final RMSNorm","op_type":"RMSNorm","attrs":{"eps":0.00001},"provenance":[{"source":"model_impl","fact":"OpenPanguV2Model creates final norm on last PP rank","confidence":"confirmed","line":2018}]},{"id":"lm_head","kind":"op","label":"LM Head","op_type":"Linear","attrs":{"tie_word_embeddings":false,"vocab_size_symbol":"V"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2ForCausalLM creates NPUParallelLMHead","confidence":"confirmed","line":2195}]},{"id":"logits","kind":"output","label":"Logits","role":"language model logits","provenance":[{"source":"model_impl","fact":"OpenPanguV2ForCausalLM.compute_logits produces logits","confidence":"confirmed","line":2255}]},{"id":"mtp_module","kind":"module","label":"Multi Token Predictor","module_type":"speculative_decoder","attrs":{"next_predict_layers_symbol":"N_mtp"},"provenance":[{"source":"mtp_impl","fact":"class OpenPanguV2MTP","confidence":"confirmed","line":210}]},{"id":"mtp_input_norms","kind":"op","label":"MTP Input Norms","op_type":"RMSNorm","attrs":{"norms":["enorm","hnorm"]},"provenance":[{"source":"mtp_impl","fact":"MTP layer creates enorm and hnorm","confidence":"confirmed","line":77}]},{"id":"mtp_eh_proj","kind":"op","label":"MTP EH Projection","op_type":"Linear","attrs":{"input_multiplier":2,"output_size_symbol":"H"},"provenance":[{"source":"mtp_impl","fact":"MTP layer projects concatenated embedding and hidden state","confidence":"confirmed","line":79}]},{"id":"mtp_decoder_layer","kind":"module","label":"MTP Decoder Layer","module_type":"decoder_layer_template","attrs":{"reuses":"OpenPanguV2DecoderLayer"},"provenance":[{"source":"mtp_impl","fact":"MTP layer embeds an OpenPanguV2DecoderLayer","confidence":"confirmed","line":91}]},{"id":"mtp_shared_head","kind":"module","label":"MTP Shared Head","module_type":"lm_head","attrs":{"vocab_size_symbol":"V"},"provenance":[{"source":"mtp_impl","fact":"class SharedHead contains norm and NPUParallelLMHead","confidence":"confirmed","line":36}]},{"id":"mtp_logits","kind":"output","label":"MTP Logits","role":"speculative output logits","provenance":[{"source":"mtp_impl","fact":"OpenPanguV2MultiTokenPredictor.compute_logits returns logits","confidence":"confirmed","line":196}]},{"id":"rope_cache","kind":"state","label":"RoPE Cache","state_type":"rotary_embedding_cache","attrs":{"max_position_embeddings_symbol":"S_max"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2Model reads cos_cached and sin_cached from attention rotary_emb","confidence":"confirmed","line":2035}]},{"id":"kv_cache","kind":"state","label":"KV Cache","state_type":"attention_cache","attrs":{"use_cache":true},"provenance":[{"source":"runtime_config","fact":"use_cache=true","confidence":"confirmed","line":51}]},{"id":"param_sink_state","kind":"state","label":"Parameter Sink","state_type":"attention_sink_state","attrs":{"param_sink_number_symbol":"N_sink"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention initializes param sink tensors","confidence":"confirmed","line":886}]},{"id":"mome_state","kind":"state","label":"MoME State","state_type":"router_sliding_state","attrs":{"kernel_width_symbol":"W_router"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention initializes MomeAttention when use_mome is enabled","confidence":"confirmed","line":991}]},{"id":"expert_parallel_state","kind":"state","label":"Expert Parallel State","state_type":"parallel_runtime_state","attrs":{"logical_experts_symbol":"E","local_physical_experts":"runtime_dependent"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MOE derives physical and local expert counts","confidence":"confirmed","line":297}]},{"id":"embedding_weight","kind":"state","label":"Embedding Weight","state_type":"parameter","role":"vocabulary embedding parameter tensor","attrs":{"parameter_of":"token_embedding","shape":"[V,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"NPUVocabParallelEmbedding owns token embedding weights","confidence":"confirmed","line":1990}]},{"id":"attention_projection_weights","kind":"state","label":"Attention Projection Weights","state_type":"parameter","role":"MLA q/kv/o projection parameter tensors","attrs":{"parameter_of":["q_a_proj","q_b_proj","kv_a_proj","kv_b_proj","o_proj"],"dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"NPUPanguSparseAttention creates q_a/q_b/kv_a/kv_b/o projection layers","confidence":"confirmed","line":781}]},{"id":"dense_mlp_weights","kind":"state","label":"Dense MLP Weights","state_type":"parameter","role":"dense FFN gate/up/down parameter tensors","attrs":{"parameter_of":["dense_gate_up","dense_down"],"dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MLP owns gate_up_proj and down_proj weights","confidence":"confirmed","line":151}]},{"id":"router_weight","kind":"state","label":"Router Weight","state_type":"parameter","role":"MoE router gate parameter tensor","attrs":{"parameter_of":"router_gate","shape":"[H,E]","dtype":"fp32/bf16"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MOE creates replicated router gate","confidence":"confirmed","line":234}]},{"id":"expert_bank_weights","kind":"state","label":"Routed Expert Weights","state_type":"parameter","role":"fused routed expert parameter bank","attrs":{"parameter_of":"routed_expert_bank","routed_experts_symbol":"E","expert_intermediate_symbol":"I_moe","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MOE creates NPUSharedFusedMoE routed expert bank","confidence":"confirmed","line":275}]},{"id":"shared_expert_weights","kind":"state","label":"Shared Expert Weights","state_type":"parameter","role":"shared expert MLP parameter tensors","attrs":{"parameter_of":"shared_expert_mlp","shared_experts_symbol":"E_shared","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"OpenPanguV2MOE creates shared_experts with OpenPanguV2MLP","confidence":"confirmed","line":250}]},{"id":"lm_head_weight","kind":"state","label":"LM Head Weight","state_type":"parameter","role":"vocabulary output projection parameter tensor","attrs":{"parameter_of":"lm_head","shape":"[H,V]","dtype":"bf16","tie_word_embeddings":false},"provenance":[{"source":"model_impl","fact":"OpenPanguV2ForCausalLM creates NPUParallelLMHead","confidence":"confirmed","line":2195}]},{"id":"mtp_head_weight","kind":"state","label":"MTP Head Weight","state_type":"parameter","role":"multi-token predictor shared head parameter tensor","attrs":{"parameter_of":"mtp_shared_head","shape":"[H,V]","dtype":"bf16"},"provenance":[{"source":"mtp_impl","fact":"SharedHead contains NPUParallelLMHead for MTP logits","confidence":"confirmed","line":36}]}],"edges":[{"id":"e_input_to_embedding","source":"input_tokens","target":"token_embedding","tensor":{"name":"input_ids","shape":"[B,T]","dtype":"int64","constraints":["T<=S_max"]},"provenance":[{"source":"model_impl","fact":"input_tokens feeds token_embedding with input_ids","confidence":"confirmed","line":2076}]},{"id":"e_positions_to_rope_cache","source":"positions","target":"rope_cache","tensor":{"name":"positions","shape":"[B,T]","dtype":"int64","constraints":["T<=S_max"]},"provenance":[{"source":"model_impl","fact":"positions feeds rope_cache with positions","confidence":"confirmed","line":2096}]},{"id":"e_embedding_to_decoder","source":"token_embedding","target":"decoder_layer","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"token_embedding feeds decoder_layer with hidden_states","confidence":"confirmed","line":2080}]},{"id":"e_decoder_to_mhc","source":"decoder_layer","target":"mhc_attention","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"decoder_layer feeds mhc_attention with hidden_states","confidence":"confirmed","line":2099}]},{"id":"e_mhc_to_norm","source":"mhc_attention","target":"input_layernorm","tensor":{"name":"hidden_states","shape":"[B,T,S_mhc,H]","dtype":"bf16","constraints":["S_mhc=4"]},"provenance":[{"source":"model_impl","fact":"mhc_attention feeds input_layernorm with hidden_states","confidence":"confirmed","line":1453}]},{"id":"e_norm_to_attention","source":"input_layernorm","target":"sparse_mla_attention","tensor":{"name":"normalized_hidden","shape":"[B,T,S_mhc,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"input_layernorm feeds sparse_mla_attention with normalized_hidden","confidence":"confirmed","line":1732}]},{"id":"e_attention_to_qa","source":"sparse_mla_attention","target":"q_a_proj","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"sparse_mla_attention feeds q_a_proj with hidden_states","confidence":"confirmed","line":781}]},{"id":"e_qa_to_qconv","source":"q_a_proj","target":"q_causal_conv","tensor":{"name":"q_lora","shape":"[B,T,R_q]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"q_a_proj feeds q_causal_conv with q_lora","confidence":"confirmed","line":2015}]},{"id":"e_qnorm_to_qb","source":"q_a_norm","target":"q_b_proj","tensor":{"name":"q_lora_normed","shape":"[B,T,R_q]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"q_a_norm feeds q_b_proj with q_lora_normed","confidence":"confirmed","line":2034}]},{"id":"e_attention_to_kva","source":"sparse_mla_attention","target":"kv_a_proj","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"sparse_mla_attention feeds kv_a_proj with hidden_states","confidence":"confirmed","line":789}]},{"id":"e_kva_to_kvconv","source":"kv_a_proj","target":"kv_causal_conv","tensor":{"name":"kv_lora","shape":"[B,T,R_kv]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"kv_a_proj feeds kv_causal_conv with kv_lora","confidence":"confirmed","line":2068}]},{"id":"e_kvnorm_to_kvb","source":"kv_a_norm","target":"kv_b_proj","tensor":{"name":"kv_lora_normed","shape":"[B,T,R_kv]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"kv_a_norm feeds kv_b_proj with kv_lora_normed","confidence":"confirmed","line":840}]},{"id":"e_qb_to_rope","source":"q_b_proj","target":"rope_apply","tensor":{"name":"q_nope_q_rope","shape":"[B,T,N_h,D_qk]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"q_b_proj feeds rope_apply with q_nope_q_rope","confidence":"confirmed","line":871}]},{"id":"e_rope_cache_to_rope","source":"rope_cache","target":"rope_apply","tensor":{"name":"cos_sin","shape":"[T,D_rope]","dtype":"bf16","constraints":["T<=S_max"]},"provenance":[{"source":"model_impl","fact":"rope_cache feeds rope_apply with cos_sin","confidence":"confirmed","line":2096}]},{"id":"e_rope_to_dsa","source":"rope_apply","target":"dsa_indexer","tensor":{"name":"query_key_rotary","shape":"[B,T,N_h,D_qk]","dtype":"bf16","constraints":["K_index<=2048"]},"provenance":[{"source":"attention_impl","fact":"rope_apply feeds dsa_indexer with query_key_rotary","confidence":"confirmed","line":127}]},{"id":"e_rope_to_core","source":"rope_apply","target":"attention_core","tensor":{"name":"query","shape":"[B,T,N_h,D_qk]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"rope_apply feeds attention_core with query","confidence":"confirmed","line":2034}]},{"id":"e_kvb_to_core","source":"kv_b_proj","target":"attention_core","tensor":{"name":"compressed_kv","shape":"[B,T,R_kv+D_v]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"kv_b_proj feeds attention_core with compressed_kv","confidence":"confirmed","line":954}]},{"id":"e_dsa_to_core","source":"dsa_indexer","target":"attention_core","tensor":{"name":"sparse_indices","shape":"[B,T,K_index]","dtype":"int32","constraints":["K_index<=2048"]},"provenance":[{"source":"attention_impl","fact":"dsa_indexer feeds attention_core with sparse_indices","confidence":"confirmed","line":221}]},{"id":"e_kv_cache_to_core","source":"kv_cache","target":"attention_core","tensor":{"name":"kv_cache","shape":"[B,S_cache,R_kv+D_v]","dtype":"bf16/fp8"},"provenance":[{"source":"attention_impl","fact":"kv_cache feeds attention_core with kv_cache","confidence":"confirmed","line":214}]},{"id":"e_param_sink_to_core","source":"param_sink_state","target":"attention_core","tensor":{"name":"sink_kv","shape":"[N_sink,R_kv+D_rope]","dtype":"bf16","constraints":["N_sink=128"]},"provenance":[{"source":"attention_impl","fact":"param_sink_state feeds attention_core with sink_kv","confidence":"confirmed","line":886}]},{"id":"e_mome_to_core","source":"mome_state","target":"attention_core","tensor":{"name":"mome_state","shape":"[B,W_router,R_q/R_kv/D_v]","dtype":"bf16","constraints":["W_router=3"]},"provenance":[{"source":"attention_impl","fact":"mome_state feeds attention_core with mome_state","confidence":"confirmed","line":991}]},{"id":"e_core_to_oconv","source":"attention_core","target":"o_causal_conv","tensor":{"name":"attn_output","shape":"[B,T,N_h,D_v]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"attention_core feeds o_causal_conv with attn_output","confidence":"confirmed","line":2137}]},{"id":"e_o_to_post_attn","source":"o_proj","target":"post_attention_norm","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"o_proj feeds post_attention_norm with hidden_states","confidence":"confirmed","line":1758}]},{"id":"e_post_attn_to_mhc_post","source":"post_attention_norm","target":"mhc_attention_post","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"post_attention_norm feeds mhc_attention_post with hidden_states","confidence":"confirmed","line":1758}]},{"id":"e_mhc_post_to_pre_mlp","source":"mhc_attention_post","target":"pre_mlp_norm","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"mhc_attention_post feeds pre_mlp_norm with hidden_states","confidence":"confirmed","line":1758}]},{"id":"e_pre_mlp_to_ffn","source":"pre_mlp_norm","target":"ffn_choice","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16/fp32","constraints":["layer_id<2 uses dense","layer_id>=2 uses moe"]},"provenance":[{"source":"model_impl","fact":"pre_mlp_norm feeds ffn_choice with hidden_states","confidence":"confirmed","line":1346}]},{"id":"e_ffn_to_dense","source":"ffn_choice","target":"dense_mlp","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16","constraints":["layer_id<2"]},"provenance":[{"source":"model_impl","fact":"ffn_choice feeds dense_mlp with hidden_states","confidence":"confirmed","line":1357}]},{"id":"e_dense_to_gateup","source":"dense_mlp","target":"dense_gate_up","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"dense_mlp feeds dense_gate_up with hidden_states","confidence":"confirmed","line":151}]},{"id":"e_gateup_to_silu","source":"dense_gate_up","target":"dense_silu","tensor":{"name":"gate_up","shape":"[B,T,2*I_dense]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"dense_gate_up feeds dense_silu with gate_up","confidence":"confirmed","line":183}]},{"id":"e_silu_to_dense_down","source":"dense_silu","target":"dense_down","tensor":{"name":"activated","shape":"[B,T,I_dense]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"dense_silu feeds dense_down with activated","confidence":"confirmed","line":184}]},{"id":"e_dense_down_to_post_mlp","source":"dense_down","target":"post_mlp_norm","tensor":{"name":"dense_output","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"dense_down feeds post_mlp_norm with dense_output","confidence":"confirmed","line":185}]},{"id":"e_ffn_to_moe","source":"ffn_choice","target":"moe_ffn","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16/fp32","constraints":["layer_id>=2"]},"provenance":[{"source":"model_impl","fact":"ffn_choice feeds moe_ffn with hidden_states","confidence":"confirmed","line":1350}]},{"id":"e_moe_to_router","source":"moe_ffn","target":"router_gate","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16/fp32"},"provenance":[{"source":"model_impl","fact":"moe_ffn feeds router_gate with hidden_states","confidence":"confirmed","line":234}]},{"id":"e_router_to_topk","source":"router_gate","target":"route_topk","tensor":{"name":"router_logits","shape":"[B,T,E]","dtype":"fp32","constraints":["top_k=8"]},"provenance":[{"source":"moe_impl","fact":"router_gate feeds route_topk with router_logits","confidence":"confirmed","line":130}]},{"id":"e_topk_to_expert","source":"route_topk","target":"routed_expert_bank","tensor":{"name":"topk_ids_weights","shape":"[B,T,top_k]","dtype":"int32/fp32","constraints":["top_k=8","expert_id<E"]},"provenance":[{"source":"moe_impl","fact":"route_topk feeds routed_expert_bank with topk_ids_weights","confidence":"confirmed","line":130}]},{"id":"e_ep_to_expert","source":"expert_parallel_state","target":"routed_expert_bank","tensor":{"name":"expert_map","shape":"[E]","dtype":"int32","constraints":["E=256"]},"provenance":[{"source":"model_impl","fact":"expert_parallel_state feeds routed_expert_bank with expert_map","confidence":"confirmed","line":297}]},{"id":"e_moe_to_shared","source":"moe_ffn","target":"shared_expert_mlp","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16","constraints":["E_shared=1"]},"provenance":[{"source":"model_impl","fact":"moe_ffn feeds shared_expert_mlp with hidden_states","confidence":"confirmed","line":252}]},{"id":"e_expert_to_combine","source":"routed_expert_bank","target":"moe_combine","tensor":{"name":"routed_output","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"moe_impl","fact":"routed_expert_bank feeds moe_combine with routed_output","confidence":"confirmed","line":148}]},{"id":"e_shared_to_combine","source":"shared_expert_mlp","target":"moe_combine","tensor":{"name":"shared_output","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"moe_impl","fact":"shared_expert_mlp feeds moe_combine with shared_output","confidence":"confirmed","line":154}]},{"id":"e_moe_combine_to_post_mlp","source":"moe_combine","target":"post_mlp_norm","tensor":{"name":"moe_output","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"moe_combine feeds post_mlp_norm with moe_output","confidence":"confirmed","line":1773}]},{"id":"e_post_mlp_to_block_norm","source":"post_mlp_norm","target":"block_post_norm","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16","constraints":["only selected layer ids"]},"provenance":[{"source":"model_impl","fact":"post_mlp_norm feeds block_post_norm with hidden_states","confidence":"confirmed","line":1390}]},{"id":"e_block_norm_to_final","source":"block_post_norm","target":"final_norm","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"block_post_norm feeds final_norm with hidden_states","confidence":"confirmed","line":2018}]},{"id":"e_final_to_head","source":"final_norm","target":"lm_head","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"model_impl","fact":"final_norm feeds lm_head with hidden_states","confidence":"confirmed","line":2255}]},{"id":"e_head_to_logits","source":"lm_head","target":"logits","tensor":{"name":"logits","shape":"[B,T,V]","dtype":"fp32"},"provenance":[{"source":"model_impl","fact":"lm_head feeds logits with logits","confidence":"confirmed","line":2255}]},{"id":"e_final_to_mtp","source":"final_norm","target":"mtp_module","tensor":{"name":"previous_hidden_states","shape":"[B,T,H]","dtype":"bf16","constraints":["N_mtp=3"]},"provenance":[{"source":"mtp_impl","fact":"final_norm feeds mtp_module with previous_hidden_states","confidence":"confirmed","line":171}]},{"id":"e_embedding_to_mtp_norms","source":"token_embedding","target":"mtp_input_norms","tensor":{"name":"inputs_embeds","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"mtp_impl","fact":"token_embedding feeds mtp_input_norms with inputs_embeds","confidence":"confirmed","line":112}]},{"id":"e_mtp_to_norms","source":"mtp_module","target":"mtp_input_norms","tensor":{"name":"input_pair","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"mtp_impl","fact":"mtp_module feeds mtp_input_norms with input_pair","confidence":"confirmed","line":77}]},{"id":"e_norms_to_eh","source":"mtp_input_norms","target":"mtp_eh_proj","tensor":{"name":"concat_embedding_hidden","shape":"[B,T,2*H]","dtype":"bf16"},"provenance":[{"source":"mtp_impl","fact":"mtp_input_norms feeds mtp_eh_proj with concat_embedding_hidden","confidence":"confirmed","line":116}]},{"id":"e_eh_to_mtp_decoder","source":"mtp_eh_proj","target":"mtp_decoder_layer","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"mtp_impl","fact":"mtp_eh_proj feeds mtp_decoder_layer with hidden_states","confidence":"confirmed","line":124}]},{"id":"e_mtp_decoder_to_head","source":"mtp_decoder_layer","target":"mtp_shared_head","tensor":{"name":"hidden_states","shape":"[B,T,H]","dtype":"bf16"},"provenance":[{"source":"mtp_impl","fact":"mtp_decoder_layer feeds mtp_shared_head with hidden_states","confidence":"confirmed","line":196}]},{"id":"e_mtp_head_to_logits","source":"mtp_shared_head","target":"mtp_logits","tensor":{"name":"mtp_logits","shape":"[B,T,V]","dtype":"fp32"},"provenance":[{"source":"mtp_impl","fact":"mtp_shared_head feeds mtp_logits with mtp_logits","confidence":"confirmed","line":203}]},{"id":"e_embedding_weight_to_embedding","source":"embedding_weight","target":"token_embedding","tensor":{"name":"embedding.weight","shape":"[V,H]","dtype":"bf16","role":"parameter"},"provenance":[{"source":"model_impl","fact":"embedding_weight parameterizes token_embedding","confidence":"confirmed"}]},{"id":"e_attention_weights_to_q_a","source":"attention_projection_weights","target":"q_a_proj","tensor":{"name":"mla_projection_weights","shape":"q/kv/o projection tensors","dtype":"bf16","role":"parameter"},"provenance":[{"source":"model_impl","fact":"attention_projection_weights parameterizes q_a_proj","confidence":"confirmed"}]},{"id":"e_dense_weights_to_gateup","source":"dense_mlp_weights","target":"dense_gate_up","tensor":{"name":"dense_mlp_weights","shape":"gate/up/down tensors","dtype":"bf16","role":"parameter"},"provenance":[{"source":"model_impl","fact":"dense_mlp_weights parameterizes dense_gate_up","confidence":"confirmed"}]},{"id":"e_router_weight_to_gate","source":"router_weight","target":"router_gate","tensor":{"name":"router.weight","shape":"[H,E]","dtype":"bf16","role":"parameter"},"provenance":[{"source":"model_impl","fact":"router_weight parameterizes router_gate","confidence":"confirmed"}]},{"id":"e_expert_weights_to_bank","source":"expert_bank_weights","target":"routed_expert_bank","tensor":{"name":"expert_bank.weights","shape":"[E,H,I_moe]","dtype":"bf16","role":"parameter"},"provenance":[{"source":"model_impl","fact":"expert_bank_weights parameterizes routed_expert_bank","confidence":"confirmed"}]},{"id":"e_shared_weights_to_mlp","source":"shared_expert_weights","target":"shared_expert_mlp","tensor":{"name":"shared_expert.weights","shape":"[E_shared,H,I_dense]","dtype":"bf16","role":"parameter"},"provenance":[{"source":"model_impl","fact":"shared_expert_weights parameterizes shared_expert_mlp","confidence":"confirmed"}]},{"id":"e_lm_head_weight_to_head","source":"lm_head_weight","target":"lm_head","tensor":{"name":"lm_head.weight","shape":"[H,V]","dtype":"bf16","role":"parameter"},"provenance":[{"source":"model_impl","fact":"lm_head_weight parameterizes lm_head","confidence":"confirmed"}]},{"id":"e_mtp_head_weight_to_head","source":"mtp_head_weight","target":"mtp_shared_head","tensor":{"name":"mtp_head.weight","shape":"[H,V]","dtype":"bf16","role":"parameter"},"provenance":[{"source":"model_impl","fact":"mtp_head_weight parameterizes mtp_shared_head","confidence":"confirmed"}]},{"id":"e_qconv_to_qnorm","source":"q_causal_conv","target":"q_a_norm","tensor":{"name":"q_lora_after_mome","shape":"[B,T,R_q]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"MoME causal conv is fused with residual_connection=1 and returns the stream tensor for the next op","confidence":"confirmed"}]},{"id":"e_kvconv_to_kvnorm","source":"kv_causal_conv","target":"kv_a_norm","tensor":{"name":"kv_lora_plus_rope_after_mome","shape":"[B,T,R_kv+D_rope]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"MoME causal conv is fused with residual_connection=1 and returns the stream tensor for the next op","confidence":"confirmed"}]},{"id":"e_oconv_to_o","source":"o_causal_conv","target":"o_proj","tensor":{"name":"attn_output_after_mome","shape":"[B,T,N_h,D_v]","dtype":"bf16"},"provenance":[{"source":"attention_impl","fact":"MoME causal conv is fused with residual_connection=1 and returns the stream tensor for the next op","confidence":"confirmed"}]}],"repeats":[{"id":"repeat_main_decoder_layers","template_node":"decoder_layer","range":"0-45","count":46,"provenance":[{"source":"runtime_config","fact":"num_hidden_layers=46","confidence":"confirmed","line":32}]},{"id":"repeat_dense_ffn_layers","template_node":"dense_mlp","range":"0-1","count":2,"provenance":[{"source":"runtime_config","fact":"first_k_dense_replace=2","confidence":"confirmed","line":13}]},{"id":"repeat_moe_ffn_layers","template_node":"moe_ffn","range":"2-45","count":44,"provenance":[{"source":"model_impl","fact":"layers at and after first_k_dense_replace use OpenPanguV2MOE","confidence":"confirmed","line":1346}]},{"id":"repeat_dsa_attention_layers","template_node":"dsa_indexer","range":"0,3,6,9,12,15,18,21,24,27,30,33,36,39,42,45","count":16,"provenance":[{"source":"runtime_config","fact":"dsa_layers lists sparse global aggregation layers","confidence":"confirmed","line":10}]},{"id":"repeat_swa_attention_layers","template_node":"attention_core","range":"1,2,4,5,7,8,10,11,13,14,16,17,19,20,22,23,25,26,28,29,31,32,34,35,37,38,40,41,43,44","count":30,"provenance":[{"source":"runtime_config","fact":"swa_layers lists local window attention layers","confidence":"confirmed","line":48}]},{"id":"repeat_mtp_layers","template_node":"mtp_decoder_layer","range":"46,47,48","count":3,"provenance":[{"source":"runtime_config","fact":"num_nextn_predict_layers=3","confidence":"confirmed","line":33}]}],"branches":[{"id":"attention_branch","condition":"layer_id in dsa_layers","true_target":"dsa_indexer","false_target":"attention_core","resolved_ranges":[{"target":"dsa_indexer","range":"0,3,6,9,12,15,18,21,24,27,30,33,36,39,42,45"},{"target":"attention_core","range":"1,2,4,5,7,8,10,11,13,14,16,17,19,20,22,23,25,26,28,29,31,32,34,35,37,38,40,41,43,44"}],"provenance":[{"source":"runtime_config","fact":"dsa_layers and swa_layers define independent layer classes","confidence":"confirmed","line":10}]},{"id":"ffn_branch","condition":"layer_id < first_k_dense_replace","true_target":"dense_mlp","false_target":"moe_ffn","resolved_ranges":[{"target":"dense_mlp","range":"0-1"},{"target":"moe_ffn","range":"2-45"}],"provenance":[{"source":"model_impl","fact":"Decoder layer selects dense MLP before first_k_dense_replace","confidence":"confirmed","line":1346}]}],"visual_layout":{"direction":"vertical","default_collapse_depth":2,"nodes":{},"groups":[{"id":"model-core","label":"Causal LM","nodes":["token_embedding","final_norm","lm_head","logits","embedding_weight","lm_head_weight"],"children":["decoder-stack","mtp-stack"],"badge":"source checked"},{"id":"decoder-stack","label":"Decoder Layer Template","nodes":["mhc_attention","input_layernorm","post_attention_norm","mhc_attention_post","pre_mlp_norm","post_mlp_norm","block_post_norm"],"children":["attention-block","ffn-block"],"badge":"repeat 0-45, count 46"},{"id":"attention-block","label":"Sparse MLA Attention","nodes":["q_a_proj","q_causal_conv","q_a_norm","q_b_proj","kv_a_proj","kv_causal_conv","kv_a_norm","kv_b_proj","rope_apply","dsa_indexer","attention_core","o_causal_conv","o_proj","rope_cache","kv_cache","param_sink_state","mome_state","attention_projection_weights"],"children":[],"badge":"MLA + MoME local context","collapsed_by_default":false},{"id":"ffn-block","label":"Dense + MoE FFN","nodes":["dense_mlp","dense_gate_up","dense_silu","dense_down","moe_ffn","post_mlp_norm","dense_mlp_weights"],"children":["moe-block"],"badge":"dense then MoE","collapsed_by_default":false},{"id":"moe-block","label":"MoE FFN","nodes":["router_gate","route_topk","routed_expert_bank","shared_expert_mlp","moe_combine","expert_parallel_state","router_weight","expert_bank_weights","shared_expert_weights"],"children":[],"badge":"routed + shared","collapsed_by_default":true},{"id":"mtp-stack","label":"Multi Token Predictor","nodes":["mtp_input_norms","mtp_eh_proj","mtp_decoder_layer","mtp_shared_head","mtp_logits","mtp_head_weight"],"children":[],"badge":"next-token draft branch","collapsed_by_default":true}]},"warnings":["The local checkout intentionally skips full safetensors weights.","swa_layers includes indices 46-48, which align with the three MTP layers rather than main decoder layers.","Parameter/weight tensor nodes are explicit graph nodes, but full safetensors payloads are still local Git LFS pointers."]}</script>
+  <script src="../pattern.js?v=model-gallery-tag-avoid-1"></script>
+  <script src="../../pass-ir-graph-node/pattern.js?v=pass-ir-capsule-2"></script>
+  <script src="../capsule.js?v=model-capsule-12"></script>
   <script>
-    const NODE_SPEC = {"input_tokens": {"w": 170, "h": 48, "colorKey": "io:input"}, "positions": {"w": 164, "h": 48, "colorKey": "io:input", "lane": 190}, "token_embedding": {"w": 260, "h": 56, "colorKey": "sem:embedding", "parent": "model-core"}, "decoder_layer": {"w": 274, "h": 58, "colorKey": "module:decoder", "parent": "model-core"}, "mhc_attention": {"w": 246, "h": 56, "colorKey": "module:mhc", "parent": "decoder-stack"}, "input_layernorm": {"w": 204, "h": 54, "colorKey": "sem:norm", "parent": "decoder-stack"}, "sparse_mla_attention": {"w": 252, "h": 58, "colorKey": "sem:attention", "parent": "decoder-stack"}, "q_a_proj": {"w": 210, "h": 52, "colorKey": "sem:linear", "parent": "attention-block", "lane": 465}, "q_causal_conv": {"w": 212, "h": 52, "colorKey": "sem:act", "parent": "attention-block", "lane": 465}, "q_residual_add": {"w": 102, "h": 46, "colorKey": "sem:comm", "parent": "attention-block", "lane": 465}, "q_a_norm": {"w": 190, "h": 52, "colorKey": "sem:norm", "parent": "attention-block", "lane": 465}, "q_b_proj": {"w": 178, "h": 52, "colorKey": "sem:linear", "parent": "attention-block", "lane": 465}, "kv_a_proj": {"w": 220, "h": 52, "colorKey": "sem:linear", "parent": "attention-block", "lane": 815}, "kv_causal_conv": {"w": 222, "h": 52, "colorKey": "sem:act", "parent": "attention-block", "lane": 815}, "kv_residual_add": {"w": 110, "h": 46, "colorKey": "sem:comm", "parent": "attention-block", "lane": 815}, "kv_a_norm": {"w": 196, "h": 52, "colorKey": "sem:norm", "parent": "attention-block", "lane": 815}, "kv_b_proj": {"w": 188, "h": 52, "colorKey": "sem:linear", "parent": "attention-block", "lane": 815}, "rope_apply": {"w": 170, "h": 52, "colorKey": "sem:rope", "parent": "attention-block", "lane": 640}, "dsa_indexer": {"w": 176, "h": 52, "colorKey": "sem:gate", "parent": "attention-block", "lane": 390}, "attention_core": {"w": 226, "h": 52, "colorKey": "sem:attention", "parent": "attention-block", "lane": 640}, "o_causal_conv": {"w": 238, "h": 52, "colorKey": "sem:act", "parent": "attention-block", "lane": 640}, "o_residual_add": {"w": 126, "h": 46, "colorKey": "sem:comm", "parent": "attention-block", "lane": 640}, "o_proj": {"w": 194, "h": 52, "colorKey": "sem:linear", "parent": "attention-block"}, "post_attention_norm": {"w": 244, "h": 54, "colorKey": "sem:norm", "parent": "decoder-stack"}, "mhc_attention_post": {"w": 244, "h": 56, "colorKey": "module:mhc", "parent": "decoder-stack"}, "pre_mlp_norm": {"w": 188, "h": 54, "colorKey": "sem:norm", "parent": "decoder-stack"}, "ffn_choice": {"w": 248, "h": 58, "colorKey": "module:ffn", "parent": "decoder-stack"}, "dense_mlp": {"w": 184, "h": 54, "colorKey": "sem:mlp", "parent": "ffn-block", "lane": 520}, "dense_gate_up": {"w": 198, "h": 52, "colorKey": "sem:linear", "parent": "ffn-block", "lane": 520}, "dense_silu": {"w": 172, "h": 52, "colorKey": "sem:act", "parent": "ffn-block", "lane": 520}, "dense_down": {"w": 192, "h": 52, "colorKey": "sem:linear", "parent": "ffn-block", "lane": 520}, "moe_ffn": {"w": 174, "h": 54, "colorKey": "sem:moe", "parent": "ffn-block", "lane": 765}, "router_gate": {"w": 170, "h": 52, "colorKey": "sem:gate", "parent": "moe-block", "lane": 765}, "route_topk": {"w": 164, "h": 52, "colorKey": "sem:gate", "parent": "moe-block", "lane": 765}, "routed_expert_bank": {"w": 218, "h": 52, "colorKey": "sem:moe", "parent": "moe-block", "lane": 765}, "shared_expert_mlp": {"w": 208, "h": 52, "colorKey": "sem:mlp", "parent": "moe-block", "lane": 1010}, "moe_combine": {"w": 170, "h": 52, "colorKey": "sem:comm", "parent": "moe-block", "lane": 885}, "post_mlp_norm": {"w": 206, "h": 54, "colorKey": "sem:norm", "parent": "decoder-stack"}, "block_post_norm": {"w": 214, "h": 54, "colorKey": "sem:norm", "parent": "decoder-stack"}, "final_norm": {"w": 174, "h": 54, "colorKey": "sem:norm", "parent": "model-core"}, "lm_head": {"w": 168, "h": 54, "colorKey": "sem:head", "parent": "model-core"}, "logits": {"w": 148, "h": 48, "colorKey": "io:output", "parent": "model-core"}, "mtp_module": {"w": 250, "h": 58, "colorKey": "module:mtp", "parent": "model-core", "lane": 990}, "mtp_input_norms": {"w": 204, "h": 52, "colorKey": "sem:norm", "parent": "mtp-stack", "lane": 990}, "mtp_eh_proj": {"w": 198, "h": 52, "colorKey": "sem:linear", "parent": "mtp-stack", "lane": 990}, "mtp_decoder_layer": {"w": 226, "h": 54, "colorKey": "module:decoder", "parent": "mtp-stack", "lane": 990}, "mtp_shared_head": {"w": 204, "h": 52, "colorKey": "sem:head", "parent": "mtp-stack", "lane": 990}, "mtp_logits": {"w": 160, "h": 48, "colorKey": "io:output", "parent": "mtp-stack", "lane": 990}, "rope_cache": {"w": 158, "h": 48, "colorKey": "io:state", "parent": "attention-block", "lane": 190}, "kv_cache": {"w": 144, "h": 48, "colorKey": "io:state", "parent": "attention-block", "lane": 190}, "param_sink_state": {"w": 176, "h": 48, "colorKey": "io:state", "parent": "attention-block", "lane": 190}, "mome_state": {"w": 150, "h": 48, "colorKey": "io:state", "parent": "attention-block", "lane": 190}, "expert_parallel_state": {"w": 214, "h": 48, "colorKey": "io:state", "parent": "moe-block", "lane": 190}};
+    const NODE_SPEC = {"input_tokens":{"w":170,"h":48,"colorKey":"io:input"},"positions":{"w":164,"h":48,"colorKey":"io:input","lane":190},"token_embedding":{"w":260,"h":56,"colorKey":"sem:embedding","parent":"model-core"},"decoder_layer":{"w":274,"h":58,"colorKey":"module:decoder","parent":"model-core"},"mhc_attention":{"w":246,"h":56,"colorKey":"module:mhc","parent":"decoder-stack"},"input_layernorm":{"w":204,"h":54,"colorKey":"sem:norm","parent":"decoder-stack"},"sparse_mla_attention":{"w":252,"h":58,"colorKey":"sem:attention","parent":"decoder-stack"},"q_a_proj":{"w":210,"h":52,"colorKey":"sem:linear","parent":"attention-block","lane":465},"q_causal_conv":{"w":212,"h":52,"colorKey":"sem:act","parent":"attention-block","lane":465},"q_a_norm":{"w":190,"h":52,"colorKey":"sem:norm","parent":"attention-block","lane":465},"q_b_proj":{"w":178,"h":52,"colorKey":"sem:linear","parent":"attention-block","lane":465},"kv_a_proj":{"w":220,"h":52,"colorKey":"sem:linear","parent":"attention-block","lane":815},"kv_causal_conv":{"w":222,"h":52,"colorKey":"sem:act","parent":"attention-block","lane":815},"kv_a_norm":{"w":196,"h":52,"colorKey":"sem:norm","parent":"attention-block","lane":815},"kv_b_proj":{"w":188,"h":52,"colorKey":"sem:linear","parent":"attention-block","lane":815},"rope_apply":{"w":170,"h":52,"colorKey":"sem:rope","parent":"attention-block","lane":640},"dsa_indexer":{"w":176,"h":52,"colorKey":"sem:gate","parent":"attention-block","lane":390},"attention_core":{"w":226,"h":52,"colorKey":"sem:attention","parent":"attention-block","lane":640},"o_causal_conv":{"w":238,"h":52,"colorKey":"sem:act","parent":"attention-block","lane":640},"o_proj":{"w":194,"h":52,"colorKey":"sem:linear","parent":"attention-block"},"post_attention_norm":{"w":244,"h":54,"colorKey":"sem:norm","parent":"decoder-stack"},"mhc_attention_post":{"w":244,"h":56,"colorKey":"module:mhc","parent":"decoder-stack"},"pre_mlp_norm":{"w":188,"h":54,"colorKey":"sem:norm","parent":"decoder-stack"},"ffn_choice":{"w":248,"h":58,"colorKey":"module:ffn","parent":"decoder-stack"},"dense_mlp":{"w":184,"h":54,"colorKey":"sem:mlp","parent":"ffn-block","lane":520},"dense_gate_up":{"w":198,"h":52,"colorKey":"sem:linear","parent":"ffn-block","lane":520},"dense_silu":{"w":172,"h":52,"colorKey":"sem:act","parent":"ffn-block","lane":520},"dense_down":{"w":192,"h":52,"colorKey":"sem:linear","parent":"ffn-block","lane":520},"moe_ffn":{"w":174,"h":54,"colorKey":"sem:moe","parent":"ffn-block","lane":765},"router_gate":{"w":170,"h":52,"colorKey":"sem:gate","parent":"moe-block","lane":765},"route_topk":{"w":164,"h":52,"colorKey":"sem:gate","parent":"moe-block","lane":765},"routed_expert_bank":{"w":218,"h":52,"colorKey":"sem:moe","parent":"moe-block","lane":765},"shared_expert_mlp":{"w":208,"h":52,"colorKey":"sem:mlp","parent":"moe-block","lane":1010},"moe_combine":{"w":170,"h":52,"colorKey":"sem:comm","parent":"moe-block","lane":885},"post_mlp_norm":{"w":206,"h":54,"colorKey":"sem:norm","parent":"decoder-stack"},"block_post_norm":{"w":214,"h":54,"colorKey":"sem:norm","parent":"decoder-stack"},"final_norm":{"w":174,"h":54,"colorKey":"sem:norm","parent":"model-core"},"lm_head":{"w":168,"h":54,"colorKey":"sem:head","parent":"model-core"},"logits":{"w":148,"h":48,"colorKey":"io:output","parent":"model-core"},"mtp_module":{"w":250,"h":58,"colorKey":"module:mtp","parent":"model-core","lane":990},"mtp_input_norms":{"w":204,"h":52,"colorKey":"sem:norm","parent":"mtp-stack","lane":990},"mtp_eh_proj":{"w":198,"h":52,"colorKey":"sem:linear","parent":"mtp-stack","lane":990},"mtp_decoder_layer":{"w":226,"h":54,"colorKey":"module:decoder","parent":"mtp-stack","lane":990},"mtp_shared_head":{"w":204,"h":52,"colorKey":"sem:head","parent":"mtp-stack","lane":990},"mtp_logits":{"w":160,"h":48,"colorKey":"io:output","parent":"mtp-stack","lane":990},"rope_cache":{"w":158,"h":48,"colorKey":"io:state","parent":"attention-block","lane":190},"kv_cache":{"w":144,"h":48,"colorKey":"io:state","parent":"attention-block","lane":190},"param_sink_state":{"w":176,"h":48,"colorKey":"io:state","parent":"attention-block","lane":190},"mome_state":{"w":150,"h":48,"colorKey":"io:state","parent":"attention-block","lane":190},"expert_parallel_state":{"w":214,"h":48,"colorKey":"io:state","parent":"moe-block","lane":190}};
     const GROUPS = [{"id": "model-core", "label": "Causal LM", "colorKey": "module:model", "parentCluster": null, "repeat": false}, {"id": "decoder-stack", "label": "Decoder Layer Template", "colorKey": "module:decoder", "parentCluster": "model-core", "repeat": true}, {"id": "attention-block", "label": "Sparse MLA Attention", "colorKey": "sem:attention", "parentCluster": "decoder-stack", "repeat": false}, {"id": "ffn-block", "label": "Dense + MoE FFN", "colorKey": "module:ffn", "parentCluster": "decoder-stack", "repeat": false}, {"id": "moe-block", "label": "MoE FFN", "colorKey": "sem:moe", "parentCluster": "ffn-block", "repeat": true}, {"id": "mtp-stack", "label": "Multi Token Predictor", "colorKey": "module:mtp", "parentCluster": "model-core", "repeat": true}];
     const MODULE_BY_CLUSTER = {"decoder-stack": "decoder_layer", "attention-block": "sparse_mla_attention", "ffn-block": "ffn_choice", "moe-block": "moe_ffn", "mtp-stack": "mtp_module"};
     const CLUSTER_BY_MODULE = Object.fromEntries(Object.entries(MODULE_BY_CLUSTER).map(([clusterId, moduleId]) => [moduleId, clusterId]));
-    const COLLAPSIBLE = {"decoder_layer": ["mhc_attention", "input_layernorm", "sparse_mla_attention", "q_a_proj", "q_causal_conv", "q_residual_add", "q_a_norm", "q_b_proj", "kv_a_proj", "kv_causal_conv", "kv_residual_add", "kv_a_norm", "kv_b_proj", "rope_apply", "dsa_indexer", "attention_core", "o_causal_conv", "o_residual_add", "o_proj", "post_attention_norm", "mhc_attention_post", "pre_mlp_norm", "ffn_choice", "dense_mlp", "dense_gate_up", "dense_silu", "dense_down", "moe_ffn", "router_gate", "route_topk", "routed_expert_bank", "shared_expert_mlp", "moe_combine", "post_mlp_norm", "block_post_norm", "rope_cache", "kv_cache", "param_sink_state", "mome_state", "expert_parallel_state"], "sparse_mla_attention": ["q_a_proj", "q_causal_conv", "q_residual_add", "q_a_norm", "q_b_proj", "kv_a_proj", "kv_causal_conv", "kv_residual_add", "kv_a_norm", "kv_b_proj", "rope_apply", "dsa_indexer", "attention_core", "o_causal_conv", "o_residual_add", "o_proj", "rope_cache", "kv_cache", "param_sink_state", "mome_state"], "ffn_choice": ["dense_mlp", "dense_gate_up", "dense_silu", "dense_down", "moe_ffn", "router_gate", "route_topk", "routed_expert_bank", "shared_expert_mlp", "moe_combine", "expert_parallel_state"], "moe_ffn": ["router_gate", "route_topk", "routed_expert_bank", "shared_expert_mlp", "moe_combine", "expert_parallel_state"], "mtp_module": ["mtp_input_norms", "mtp_eh_proj", "mtp_decoder_layer", "mtp_shared_head", "mtp_logits"]};
+    const COLLAPSIBLE = {"decoder_layer":["mhc_attention","input_layernorm","sparse_mla_attention","q_a_proj","q_causal_conv","q_a_norm","q_b_proj","kv_a_proj","kv_causal_conv","kv_a_norm","kv_b_proj","rope_apply","dsa_indexer","attention_core","o_causal_conv","o_proj","post_attention_norm","mhc_attention_post","pre_mlp_norm","ffn_choice","dense_mlp","dense_gate_up","dense_silu","dense_down","moe_ffn","router_gate","route_topk","routed_expert_bank","shared_expert_mlp","moe_combine","post_mlp_norm","block_post_norm","rope_cache","kv_cache","param_sink_state","mome_state","expert_parallel_state"],"sparse_mla_attention":["q_a_proj","q_causal_conv","q_a_norm","q_b_proj","kv_a_proj","kv_causal_conv","kv_a_norm","kv_b_proj","rope_apply","dsa_indexer","attention_core","o_causal_conv","o_proj","rope_cache","kv_cache","param_sink_state","mome_state"],"ffn_choice":["dense_mlp","dense_gate_up","dense_silu","dense_down","moe_ffn","router_gate","route_topk","routed_expert_bank","shared_expert_mlp","moe_combine","expert_parallel_state"],"moe_ffn":["router_gate","route_topk","routed_expert_bank","shared_expert_mlp","moe_combine","expert_parallel_state"],"mtp_module":["mtp_input_norms","mtp_eh_proj","mtp_decoder_layer","mtp_shared_head","mtp_logits"]};
+    COLLAPSIBLE.decoder_layer.push('attention_all_gather', 'attention_reduce_scatter', 'attention_residual_add', 'ffn_all_gather', 'ffn_reduce_scatter', 'ffn_residual_add', 'moe_all_to_all_dispatch', 'moe_all_to_all_combine');
     COLLAPSIBLE.decoder_layer.push('query_tensor', 'key_tensor', 'value_tensor');
     COLLAPSIBLE.sparse_mla_attention.push('query_tensor', 'key_tensor', 'value_tensor');
+    COLLAPSIBLE.decoder_layer.push('attention_projection_weights', 'dense_mlp_weights', 'router_weight', 'expert_bank_weights', 'shared_expert_weights');
+    COLLAPSIBLE.sparse_mla_attention.push('attention_projection_weights');
+    COLLAPSIBLE.ffn_choice.push('dense_mlp_weights', 'router_weight', 'expert_bank_weights', 'shared_expert_weights', 'ffn_all_gather', 'ffn_reduce_scatter', 'moe_all_to_all_dispatch', 'moe_all_to_all_combine');
+    COLLAPSIBLE.moe_ffn.push('router_weight', 'expert_bank_weights', 'shared_expert_weights', 'moe_all_to_all_dispatch', 'moe_all_to_all_combine');
+    COLLAPSIBLE.mtp_module.push('mtp_head_weight');
     const DEFAULT_COLLAPSED = new Set(["mtp_module"]);
     const DEFAULT_DETAIL_MODULES = new Set();
     const ALWAYS_VISIBLE_MODULES = new Set(['decoder_layer', 'sparse_mla_attention']);
@@ -400,20 +443,27 @@
       decoder_layer: 'Decoder Layer',
       input_layernorm: 'Input RMSNorm',
       sparse_mla_attention: 'Sparse MLA Attention',
+      embedding_weight: 'Embedding Weight',
+      attention_projection_weights: 'Attention Projection Weights',
       q_a_proj: 'Q Latent Linear',
       kv_a_proj: 'KV Latent Linear',
       q_causal_conv: 'Q Causal Conv1D',
       kv_causal_conv: 'KV Causal Conv1D',
-      q_residual_add: '+',
-      kv_residual_add: '+',
+      attention_residual_add: '+',
       q_b_proj: 'Q Up Linear',
       kv_b_proj: 'KV Up Linear',
       attention_core: 'Sparse FlashAttention',
       o_causal_conv: 'Output Causal Conv1D',
-      o_residual_add: '+',
       o_proj: 'Output Projection',
       post_attention_norm: 'Post Attention RMSNorm',
       ffn_choice: 'Feed Forward Choice',
+      ffn_residual_add: '+',
+      dense_mlp_weights: 'Dense MLP Weights',
+      router_weight: 'Router Weight',
+      expert_bank_weights: 'Routed Expert Weights',
+      shared_expert_weights: 'Shared Expert Weights',
+      lm_head_weight: 'LM Head Weight',
+      mtp_head_weight: 'MTP Head Weight',
     };
     const OPENPANGU_VIRTUAL_NODES = {
       query_tensor: {
@@ -438,6 +488,64 @@
         attrs: { source: 'kv_b_proj', target: 'attention_core', tensor_edge: 'compressed_kv.value' },
       },
     };
+    Object.assign(OPENPANGU_VIRTUAL_NODES, {
+      attention_residual_add: {
+        id: 'attention_residual_add',
+        kind: 'op',
+        label: 'Attention Residual Add',
+        op_type: 'Add',
+        attrs: { residual_connection: true, stage: 'attention_block' },
+      },
+      ffn_residual_add: {
+        id: 'ffn_residual_add',
+        kind: 'op',
+        label: 'FFN Residual Add',
+        op_type: 'Add',
+        attrs: { residual_connection: true, stage: 'ffn_block' },
+      },
+      attention_all_gather: {
+        id: 'attention_all_gather',
+        kind: 'op',
+        label: 'AllGather',
+        op_type: 'Communication',
+        attrs: { collective: 'all_gather', scope: 'tensor_parallel', stage: 'attention_input' },
+      },
+      attention_reduce_scatter: {
+        id: 'attention_reduce_scatter',
+        kind: 'op',
+        label: 'Reduce-Scatter',
+        op_type: 'Communication',
+        attrs: { collective: 'reduce_scatter', scope: 'tensor_parallel', stage: 'attention_output' },
+      },
+      ffn_all_gather: {
+        id: 'ffn_all_gather',
+        kind: 'op',
+        label: 'AllGather',
+        op_type: 'Communication',
+        attrs: { collective: 'all_gather', scope: 'tensor_parallel', stage: 'ffn_input' },
+      },
+      ffn_reduce_scatter: {
+        id: 'ffn_reduce_scatter',
+        kind: 'op',
+        label: 'Reduce-Scatter',
+        op_type: 'Communication',
+        attrs: { collective: 'reduce_scatter', scope: 'tensor_parallel', stage: 'ffn_output' },
+      },
+      moe_all_to_all_dispatch: {
+        id: 'moe_all_to_all_dispatch',
+        kind: 'op',
+        label: 'All-to-All Dispatch',
+        op_type: 'Communication',
+        attrs: { collective: 'all_to_all', scope: 'expert_parallel', stage: 'expert_dispatch' },
+      },
+      moe_all_to_all_combine: {
+        id: 'moe_all_to_all_combine',
+        kind: 'op',
+        label: 'All-to-All Combine',
+        op_type: 'Communication',
+        attrs: { collective: 'all_to_all', scope: 'expert_parallel', stage: 'expert_combine' },
+      },
+    });
     const OPENPANGU_WIDTHS = Object.freeze({
       mainSpine: 480,
       attentionLane: 470,
@@ -447,6 +555,13 @@
       moeLane: 340,
       mtpLane: 300,
       state: 250,
+      parameter: 238,
+      leftParameterLane: 70,
+      moeParameterLane: 730,
+      moeCoreLane: 1040,
+      moeSharedLane: 1480,
+      moeStateLane: 1395,
+      moeCombineLane: 1220,
     });
     const LIGHT_HSL_DEFAULT = Object.freeze({ hue: 2, saturation: 79, lightness: 76 });
     const LIGHT_HSL_STORAGE_KEY = 'openpangu-architecture-light-hsl';
@@ -458,7 +573,7 @@
       'sem:rope': 'opv:rope',
       'sem:qknorm': 'opv:norm',
       'sem:linear': 'opv:linear',
-      'sem:head': 'opv:linear',
+      'sem:head': 'opv:head',
       'sem:mlp': 'opv:mlp',
       'sem:act': 'opv:act',
       'sem:gate': 'opv:gate',
@@ -472,31 +587,36 @@
     });
     const LIGHT_BASE_COLOR_BY_KEY = Object.freeze({
       'opv:act': '#8B5CF6',
-      'opv:attention': '#EC4899',
-      'opv:comm': '#22D3EE',
-      'opv:decoder': '#14B8A6',
+      'opv:attention': '#3B82F6',
+      'opv:comm': '#06B6D4',
+      'opv:decoder': '#0D9488',
       'opv:embedding': '#14B8A6',
       'opv:gate': '#F59E0B',
-      'opv:linear': '#3B82F6',
-      'opv:mlp': '#8B5CF6',
-      'opv:model': '#64748B',
-      'opv:moe': '#F97316',
-      'opv:norm': '#06B6D4',
+      'opv:head': '#7C3AED',
+      'opv:linear': '#4F46E5',
+      'opv:mlp': '#A855F7',
+      'opv:model': '#475569',
+      'opv:moe': '#EA580C',
+      'opv:norm': '#0EA5E9',
+      'opv:op': '#14B8A6',
       'opv:rope': '#A855F7',
     });
     Object.assign(NODE_SPEC, {
-      input_tokens: { ...NODE_SPEC.input_tokens, w: OPENPANGU_WIDTHS.mainSpine, h: 66 },
+      input_tokens: { ...NODE_SPEC.input_tokens, w: OPENPANGU_WIDTHS.mainSpine, h: 66, parent: 'model-core' },
       token_embedding: { ...NODE_SPEC.token_embedding, w: OPENPANGU_WIDTHS.mainSpine, h: 58 },
-      decoder_layer: { ...NODE_SPEC.decoder_layer, w: OPENPANGU_WIDTHS.mainSpine, h: 64 },
+      embedding_weight: { w: OPENPANGU_WIDTHS.parameter, h: 50, colorKey: 'io:parameter', parent: 'model-core' },
+      decoder_layer: { ...NODE_SPEC.decoder_layer, w: OPENPANGU_WIDTHS.mainSpine, h: 64, parent: 'decoder-stack' },
       mhc_attention: { ...NODE_SPEC.mhc_attention, w: OPENPANGU_WIDTHS.mainSpine, h: 62 },
       input_layernorm: { ...NODE_SPEC.input_layernorm, w: OPENPANGU_WIDTHS.mainSpine, h: 66, colorKey: 'sem:norm' },
+      attention_all_gather: { w: OPENPANGU_WIDTHS.mainSpine, h: 58, colorKey: 'sem:comm', parent: 'decoder-stack' },
       sparse_mla_attention: { ...NODE_SPEC.sparse_mla_attention, w: OPENPANGU_WIDTHS.mainSpine, h: 66, colorKey: 'sem:attention', parent: 'attention-block' },
+      attention_reduce_scatter: { w: OPENPANGU_WIDTHS.mainSpine, h: 58, colorKey: 'sem:comm', parent: 'decoder-stack' },
+      attention_residual_add: { w: OPENPANGU_WIDTHS.addGlyph, h: OPENPANGU_WIDTHS.addGlyph, colorKey: 'sem:act', parent: 'decoder-stack', glyph: true, hideTypeLabel: true },
+      attention_projection_weights: { w: 282, h: 50, colorKey: 'io:parameter', parent: 'attention-block', lane: OPENPANGU_WIDTHS.leftParameterLane },
       q_a_proj: { ...NODE_SPEC.q_a_proj, w: OPENPANGU_WIDTHS.attentionLane, h: 62, lane: 390 },
       kv_a_proj: { ...NODE_SPEC.kv_a_proj, w: OPENPANGU_WIDTHS.attentionLane, h: 62, lane: 1050 },
       q_causal_conv: { ...NODE_SPEC.q_causal_conv, w: OPENPANGU_WIDTHS.attentionLane, h: 62, colorKey: 'sem:act', lane: 390 },
       kv_causal_conv: { ...NODE_SPEC.kv_causal_conv, w: OPENPANGU_WIDTHS.attentionLane, h: 62, colorKey: 'sem:act', lane: 1050 },
-      q_residual_add: { ...NODE_SPEC.q_residual_add, w: OPENPANGU_WIDTHS.addGlyph, h: OPENPANGU_WIDTHS.addGlyph, lane: 390, glyph: true, hideTypeLabel: true },
-      kv_residual_add: { ...NODE_SPEC.kv_residual_add, w: OPENPANGU_WIDTHS.addGlyph, h: OPENPANGU_WIDTHS.addGlyph, lane: 1050, glyph: true, hideTypeLabel: true },
       q_a_norm: { ...NODE_SPEC.q_a_norm, w: OPENPANGU_WIDTHS.attentionLane, h: 62, colorKey: 'sem:norm', lane: 390 },
       kv_a_norm: { ...NODE_SPEC.kv_a_norm, w: OPENPANGU_WIDTHS.attentionLane, h: 62, colorKey: 'sem:norm', lane: 1050 },
       q_b_proj: { ...NODE_SPEC.q_b_proj, w: OPENPANGU_WIDTHS.attentionLane, h: 62, lane: 390 },
@@ -506,31 +626,41 @@
       value_tensor: { w: OPENPANGU_WIDTHS.attentionTensor, h: 62, colorKey: 'sem:linear', parent: 'attention-block', lane: 1180 },
       attention_core: { ...NODE_SPEC.attention_core, w: OPENPANGU_WIDTHS.mainSpine, h: 64, colorKey: 'sem:attention', lane: 720 },
       o_causal_conv: { ...NODE_SPEC.o_causal_conv, w: OPENPANGU_WIDTHS.mainSpine, h: 62, colorKey: 'sem:act', lane: 720 },
-      o_residual_add: { ...NODE_SPEC.o_residual_add, w: OPENPANGU_WIDTHS.addGlyph, h: OPENPANGU_WIDTHS.addGlyph, lane: 720, glyph: true, hideTypeLabel: true },
       o_proj: { ...NODE_SPEC.o_proj, w: OPENPANGU_WIDTHS.mainSpine, h: 62, lane: 720 },
       post_attention_norm: { ...NODE_SPEC.post_attention_norm, w: OPENPANGU_WIDTHS.mainSpine, h: 62, colorKey: 'sem:norm' },
       mhc_attention_post: { ...NODE_SPEC.mhc_attention_post, w: OPENPANGU_WIDTHS.mainSpine, h: 62 },
       pre_mlp_norm: { ...NODE_SPEC.pre_mlp_norm, w: OPENPANGU_WIDTHS.mainSpine, h: 62, colorKey: 'sem:norm' },
       ffn_choice: { ...NODE_SPEC.ffn_choice, w: OPENPANGU_WIDTHS.mainSpine, h: 64, colorKey: 'module:ffn' },
+      ffn_all_gather: { w: OPENPANGU_WIDTHS.mainSpine, h: 58, colorKey: 'sem:comm', parent: 'ffn-block' },
+      dense_mlp_weights: { w: 238, h: 50, colorKey: 'io:parameter', parent: 'ffn-block', lane: OPENPANGU_WIDTHS.leftParameterLane },
       dense_mlp: { ...NODE_SPEC.dense_mlp, w: OPENPANGU_WIDTHS.denseLane, h: 62, colorKey: 'sem:mlp', lane: 420 },
       dense_gate_up: { ...NODE_SPEC.dense_gate_up, w: OPENPANGU_WIDTHS.denseLane, h: 62, lane: 420 },
       dense_silu: { ...NODE_SPEC.dense_silu, w: OPENPANGU_WIDTHS.denseLane, h: 62, colorKey: 'sem:act', lane: 420 },
       dense_down: { ...NODE_SPEC.dense_down, w: OPENPANGU_WIDTHS.denseLane, h: 62, lane: 420 },
-      moe_ffn: { ...NODE_SPEC.moe_ffn, w: OPENPANGU_WIDTHS.moeLane, h: 62, colorKey: 'sem:moe', lane: 960 },
-      router_gate: { ...NODE_SPEC.router_gate, w: OPENPANGU_WIDTHS.moeLane, h: 62, lane: 960 },
-      route_topk: { ...NODE_SPEC.route_topk, w: OPENPANGU_WIDTHS.moeLane, h: 62, lane: 960 },
-      routed_expert_bank: { ...NODE_SPEC.routed_expert_bank, w: OPENPANGU_WIDTHS.moeLane, h: 62, colorKey: 'sem:moe', lane: 960 },
-      shared_expert_mlp: { ...NODE_SPEC.shared_expert_mlp, w: OPENPANGU_WIDTHS.moeLane, h: 62, lane: 1380 },
-      moe_combine: { ...NODE_SPEC.moe_combine, w: OPENPANGU_WIDTHS.moeLane, h: 62, lane: 1120 },
-      expert_parallel_state: { ...NODE_SPEC.expert_parallel_state, w: OPENPANGU_WIDTHS.state, h: 54, lane: 1285 },
+      moe_ffn: { ...NODE_SPEC.moe_ffn, w: OPENPANGU_WIDTHS.moeLane, h: 62, colorKey: 'sem:moe', lane: OPENPANGU_WIDTHS.moeCoreLane },
+      router_weight: { w: 218, h: 50, colorKey: 'io:parameter', parent: 'moe-block', lane: OPENPANGU_WIDTHS.moeParameterLane },
+      router_gate: { ...NODE_SPEC.router_gate, w: OPENPANGU_WIDTHS.moeLane, h: 62, lane: OPENPANGU_WIDTHS.moeCoreLane },
+      route_topk: { ...NODE_SPEC.route_topk, w: OPENPANGU_WIDTHS.moeLane, h: 62, lane: OPENPANGU_WIDTHS.moeCoreLane },
+      moe_all_to_all_dispatch: { w: OPENPANGU_WIDTHS.moeLane, h: 58, colorKey: 'sem:comm', parent: 'moe-block', lane: OPENPANGU_WIDTHS.moeCoreLane },
+      expert_bank_weights: { w: 238, h: 50, colorKey: 'io:parameter', parent: 'moe-block', lane: OPENPANGU_WIDTHS.moeParameterLane },
+      routed_expert_bank: { ...NODE_SPEC.routed_expert_bank, w: OPENPANGU_WIDTHS.moeLane, h: 62, colorKey: 'sem:moe', lane: OPENPANGU_WIDTHS.moeCoreLane },
+      shared_expert_weights: { w: 238, h: 50, colorKey: 'io:parameter', parent: 'moe-block', lane: OPENPANGU_WIDTHS.moeParameterLane },
+      shared_expert_mlp: { ...NODE_SPEC.shared_expert_mlp, w: OPENPANGU_WIDTHS.moeLane, h: 62, lane: OPENPANGU_WIDTHS.moeSharedLane },
+      moe_all_to_all_combine: { w: OPENPANGU_WIDTHS.moeLane, h: 58, colorKey: 'sem:comm', parent: 'moe-block', lane: OPENPANGU_WIDTHS.moeCombineLane },
+      moe_combine: { ...NODE_SPEC.moe_combine, w: OPENPANGU_WIDTHS.moeLane, h: 62, colorKey: 'sem:moe', lane: OPENPANGU_WIDTHS.moeCombineLane },
+      expert_parallel_state: { ...NODE_SPEC.expert_parallel_state, w: OPENPANGU_WIDTHS.state, h: 54, lane: OPENPANGU_WIDTHS.moeStateLane },
+      ffn_reduce_scatter: { w: OPENPANGU_WIDTHS.mainSpine, h: 58, colorKey: 'sem:comm', parent: 'ffn-block' },
+      ffn_residual_add: { w: OPENPANGU_WIDTHS.addGlyph, h: OPENPANGU_WIDTHS.addGlyph, colorKey: 'sem:act', parent: 'decoder-stack', glyph: true, hideTypeLabel: true },
       post_mlp_norm: { ...NODE_SPEC.post_mlp_norm, w: OPENPANGU_WIDTHS.mainSpine, h: 62, colorKey: 'sem:norm' },
       block_post_norm: { ...NODE_SPEC.block_post_norm, w: OPENPANGU_WIDTHS.mainSpine, h: 62, colorKey: 'sem:norm' },
       final_norm: { ...NODE_SPEC.final_norm, w: OPENPANGU_WIDTHS.mainSpine, h: 58, colorKey: 'sem:norm' },
+      lm_head_weight: { w: OPENPANGU_WIDTHS.parameter, h: 50, colorKey: 'io:parameter', parent: 'model-core' },
       lm_head: { ...NODE_SPEC.lm_head, w: OPENPANGU_WIDTHS.mainSpine, h: 58 },
       mtp_module: { ...NODE_SPEC.mtp_module, w: OPENPANGU_WIDTHS.mtpLane, h: 58, lane: 1180 },
       mtp_input_norms: { ...NODE_SPEC.mtp_input_norms, w: OPENPANGU_WIDTHS.mtpLane, h: 52, lane: 1180 },
       mtp_eh_proj: { ...NODE_SPEC.mtp_eh_proj, w: OPENPANGU_WIDTHS.mtpLane, h: 52, lane: 1180 },
       mtp_decoder_layer: { ...NODE_SPEC.mtp_decoder_layer, w: OPENPANGU_WIDTHS.mtpLane, h: 54, lane: 1180 },
+      mtp_head_weight: { w: 214, h: 50, colorKey: 'io:parameter', parent: 'mtp-stack', lane: 860 },
       mtp_shared_head: { ...NODE_SPEC.mtp_shared_head, w: OPENPANGU_WIDTHS.mtpLane, h: 52, lane: 1180 },
     });
     const COL_X = 640;
@@ -650,10 +780,22 @@
 
     function syncThemeToggle() {
       const isLight = document.documentElement.dataset.theme === 'light';
-      const button = document.getElementById('themeToggle');
-      button.textContent = isLight ? 'Dark' : 'Light';
-      button.setAttribute('aria-label', isLight ? 'Switch to dark mode' : 'Switch to light mode');
-      button.setAttribute('aria-pressed', String(isLight));
+      [document.getElementById('themeToggle'), document.getElementById('floatingThemeToggle')].forEach((button) => {
+        if (!button) return;
+        button.textContent = isLight ? 'Dark' : 'Light';
+        button.setAttribute('aria-label', isLight ? 'Switch to dark mode' : 'Switch to light mode');
+        button.setAttribute('aria-pressed', String(isLight));
+      });
+    }
+
+    function setTheme(next) {
+      document.documentElement.dataset.theme = next;
+      syncThemeToggle();
+      const url = new URL(window.location.href);
+      url.searchParams.set('theme', next);
+      window.history.replaceState({}, '', url);
+      syncColorPanel();
+      renderAll(`${next} theme.`, { preserveZoom: true });
     }
 
     function isOpenPanguSchema(schema) {
@@ -679,13 +821,15 @@
     }
 
     function graphKind(kind) {
-      if (kind === 'input' || kind === 'output' || kind === 'state') return 'tensor';
+      if (kind === 'input' || kind === 'output' || kind === 'state' || kind === 'parameter') return 'tensor';
       if (kind === 'tensor') return 'tensor';
       if (kind === 'module') return 'module';
       return 'op';
     }
 
-    function typeLabel(kind) {
+    function typeLabel(kind, node = null) {
+      if (kind === 'parameter' || node?.state_type === 'parameter') return 'Parameter';
+      if (node?.op_type === 'Communication') return 'Comm';
       return { input: 'Input', output: 'Output', state: 'State', tensor: 'Tensor', module: 'Module', op: 'Op' }[kind] || 'Node';
     }
 
@@ -693,6 +837,7 @@
       const text = `${node.id || ''} ${node.label || ''} ${node.op_type || ''} ${node.module_type || ''} ${node.state_type || ''}`.toLowerCase();
       if (node.kind === 'input') return 'io:input';
       if (node.kind === 'output') return 'io:output';
+      if (node.kind === 'parameter' || node.state_type === 'parameter') return 'io:parameter';
       if (node.kind === 'state') return 'io:state';
       if (text.includes('embedding')) return 'sem:embedding';
       if (text.includes('rope') || text.includes('rotary')) return 'sem:rope';
@@ -701,7 +846,8 @@
       if (text.includes('moe')) return 'sem:moe';
       if (text.includes('mlp') || text.includes('silu')) return 'sem:mlp';
       if (text.includes('gate') || text.includes('router')) return 'sem:gate';
-      if (text.includes('linear') || text.includes('projection') || text.includes('head')) return 'sem:linear';
+      if (text.includes('head')) return 'sem:head';
+      if (text.includes('linear') || text.includes('projection')) return 'sem:linear';
       return node.kind === 'module' ? 'module:model' : 'sem:op';
     }
 
@@ -739,19 +885,7 @@
 
     function currentLightColormap(graph) {
       if (document.documentElement.dataset.theme !== 'light') return undefined;
-      const keys = lightColorKeysForGraph(graph);
-      return {
-        coreColors: keys.map((key) => adjustedLightColor(LIGHT_BASE_COLOR_BY_KEY[key] || '#14B8A6', state.lightHsl)),
-        saturation: state.lightHsl.saturation / 100,
-        lightness: state.lightHsl.lightness / 100,
-        ioColors: {
-          input: { raw: '#D1D1D1' },
-          state: { raw: '#D1D1D1' },
-          output: { raw: '#D1D1D1' },
-          parameter: { raw: '#D1D1D1' },
-          constant: { raw: '#D1D1D1' },
-        },
-      };
+      return window.PtoModelGraphvizPattern.modelArchitectureColormap(graph, { lightHsl: state.lightHsl });
     }
 
     function syncColorPanel() {
@@ -767,7 +901,7 @@
       document.getElementById('colorLightnessValue').textContent = `${state.lightHsl.lightness}%`;
       const preview = document.getElementById('colorPreview');
       if (preview) {
-        const keys = ['opv:embedding', 'opv:norm', 'opv:attention', 'opv:linear', 'opv:mlp', 'opv:gate', 'opv:moe', 'opv:comm', 'opv:model'];
+        const keys = ['opv:embedding', 'opv:norm', 'opv:attention', 'opv:linear', 'opv:head', 'opv:mlp', 'opv:gate', 'opv:moe', 'opv:comm', 'opv:model'];
         preview.innerHTML = keys.map((key) => (
           `<span class="opv-color-swatch" style="--swatch: ${adjustedLightColor(LIGHT_BASE_COLOR_BY_KEY[key], state.lightHsl)}"></span>`
         )).join('');
@@ -794,7 +928,7 @@
       const kvx = 1110;
       const keyX = 1040;
       const valueX = 1300;
-      const stateX = 128;
+      const stateX = 1530;
       const mtpX = NODE_SPEC.mtp_module.lane;
       const place = (id, x, y) => {
         if (!visibleNode(id)) return;
@@ -803,14 +937,16 @@
 
       place('input_tokens', cx, 76);
       place('token_embedding', cx, 168);
+      place('embedding_weight', 330, 168);
       place('decoder_layer', cx, 262);
       place('positions', 180, 170);
 
       if (c.has('decoder_layer')) {
-        place('rope_cache', 180, 346);
-        place('kv_cache', 180, 414);
+        place('rope_cache', 1260, 346);
+        place('kv_cache', 1260, 414);
         place('final_norm', cx, 396);
         place('lm_head', cx, 488);
+        place('lm_head_weight', 390, 488);
         place('logits', cx, 580);
         if (c.has('mtp_module')) place('mtp_module', mtpX, 488);
         return positions;
@@ -818,46 +954,50 @@
 
       place('mhc_attention', cx, 364);
       place('input_layernorm', cx, 466);
-      place('sparse_mla_attention', cx, 560);
+      place('attention_all_gather', cx, 560);
+      place('sparse_mla_attention', cx, 654);
 
-      let tailY = 654;
+      let tailY = 748;
       if (c.has('sparse_mla_attention')) {
-        place('rope_cache', 180, 540);
-        place('kv_cache', 180, 608);
-        tailY = 672;
+        place('rope_cache', 1260, 634);
+        place('kv_cache', 1260, 702);
+        place('attention_reduce_scatter', cx, 748);
+        place('attention_residual_add', cx, 826);
+        tailY = 916;
       } else {
         const detail = attentionDetailOpen();
-        place('q_a_proj', qx, 704);
-        place('kv_a_proj', kvx, 704);
-        place('q_causal_conv', qx, 834);
-        place('kv_causal_conv', kvx, 834);
-        place('q_residual_add', qx, 912);
-        place('kv_residual_add', kvx, 912);
-        place('q_a_norm', qx, 990);
-        place('kv_a_norm', kvx, 990);
-        place('q_b_proj', qx, 1082);
-        place('kv_b_proj', kvx, 1082);
-        place('query_tensor', qx, 1222);
-        place('key_tensor', keyX, 1222);
-        place('value_tensor', valueX, 1222);
+        place('q_a_proj', qx, 798);
+        place('kv_a_proj', kvx, 798);
+        place('attention_projection_weights', OPENPANGU_WIDTHS.leftParameterLane, 798);
+        place('q_causal_conv', qx, 928);
+        place('kv_causal_conv', kvx, 928);
+        place('q_a_norm', qx, 1084);
+        place('kv_a_norm', kvx, 1084);
+        place('q_b_proj', qx, 1176);
+        place('kv_b_proj', kvx, 1176);
+        place('query_tensor', qx, 1316);
+        place('key_tensor', keyX, 1316);
+        place('value_tensor', valueX, 1316);
         if (detail) {
-          place('rope_apply', 800, 1147);
-          place('dsa_indexer', 810, 1310);
-          place('rope_cache', stateX, 1147);
-          place('kv_cache', stateX, 1222);
-          place('param_sink_state', stateX, 1294);
-          place('mome_state', stateX, 1366);
-          place('attention_core', cx, 1422);
-          place('o_causal_conv', cx, 1522);
-          place('o_residual_add', cx, 1600);
-          place('o_proj', cx, 1684);
-          tailY = 1776;
+          place('rope_apply', 800, 1241);
+          place('dsa_indexer', 810, 1404);
+          place('rope_cache', stateX, 1241);
+          place('kv_cache', stateX, 1316);
+          place('param_sink_state', stateX, 1388);
+          place('mome_state', stateX, 1460);
+          place('attention_core', cx, 1516);
+          place('o_causal_conv', cx, 1616);
+          place('o_proj', cx, 1778);
+          place('attention_reduce_scatter', cx, 1870);
+          place('attention_residual_add', cx, 1948);
+          tailY = 2038;
         } else {
-          place('attention_core', cx, 1390);
-          place('o_causal_conv', cx, 1492);
-          place('o_residual_add', cx, 1570);
-          place('o_proj', cx, 1654);
-          tailY = 1746;
+          place('attention_core', cx, 1484);
+          place('o_causal_conv', cx, 1586);
+          place('o_proj', cx, 1748);
+          place('attention_reduce_scatter', cx, 1840);
+          place('attention_residual_add', cx, 1918);
+          tailY = 2008;
         }
       }
 
@@ -867,24 +1007,36 @@
 
       if (c.has('ffn_choice')) {
         place('ffn_choice', cx, tailY + 294);
-        tailY += 404;
+        place('ffn_residual_add', cx, tailY + 374);
+        tailY += 464;
       } else {
-        place('dense_mlp', 420, tailY + 328);
-        place('dense_gate_up', 420, tailY + 448);
-        place('dense_silu', 420, tailY + 568);
-        place('dense_down', 420, tailY + 688);
+        place('ffn_all_gather', cx, tailY + 306);
+        place('dense_mlp', 420, tailY + 424);
+        place('dense_mlp_weights', OPENPANGU_WIDTHS.leftParameterLane, tailY + 544);
+        place('dense_gate_up', 420, tailY + 544);
+        place('dense_silu', 420, tailY + 664);
+        place('dense_down', 420, tailY + 784);
         if (c.has('moe_ffn')) {
-          place('moe_ffn', 960, tailY + 328);
-          tailY += 828;
+          place('moe_ffn', OPENPANGU_WIDTHS.moeCoreLane, tailY + 424);
+          place('ffn_reduce_scatter', cx, tailY + 904);
+          place('ffn_residual_add', cx, tailY + 982);
+          tailY += 1072;
         } else {
-          place('moe_ffn', 960, tailY + 328);
-          place('router_gate', 960, tailY + 448);
-          place('route_topk', 960, tailY + 568);
-          place('routed_expert_bank', 960, tailY + 688);
-          place('shared_expert_mlp', 1380, tailY + 568);
-          place('expert_parallel_state', 1285, tailY + 688);
-          place('moe_combine', 1120, tailY + 828);
-          tailY += 988;
+          place('moe_ffn', OPENPANGU_WIDTHS.moeCoreLane, tailY + 424);
+          place('router_weight', OPENPANGU_WIDTHS.moeParameterLane, tailY + 544);
+          place('router_gate', OPENPANGU_WIDTHS.moeCoreLane, tailY + 544);
+          place('route_topk', OPENPANGU_WIDTHS.moeCoreLane, tailY + 664);
+          place('moe_all_to_all_dispatch', OPENPANGU_WIDTHS.moeCoreLane, tailY + 784);
+          place('expert_bank_weights', OPENPANGU_WIDTHS.moeParameterLane, tailY + 904);
+          place('routed_expert_bank', OPENPANGU_WIDTHS.moeCoreLane, tailY + 904);
+          place('shared_expert_weights', OPENPANGU_WIDTHS.moeParameterLane, tailY + 664);
+          place('shared_expert_mlp', OPENPANGU_WIDTHS.moeSharedLane, tailY + 664);
+          place('expert_parallel_state', OPENPANGU_WIDTHS.moeStateLane, tailY + 904);
+          place('moe_all_to_all_combine', OPENPANGU_WIDTHS.moeCombineLane, tailY + 1024);
+          place('moe_combine', OPENPANGU_WIDTHS.moeCombineLane, tailY + 1144);
+          place('ffn_reduce_scatter', cx, tailY + 1264);
+          place('ffn_residual_add', cx, tailY + 1342);
+          tailY += 1432;
         }
       }
 
@@ -892,6 +1044,7 @@
       place('block_post_norm', cx, tailY + 92);
       place('final_norm', cx, tailY + 208);
       place('lm_head', cx, tailY + 300);
+      place('lm_head_weight', 330, tailY + 300);
       place('logits', cx, tailY + 392);
 
       const mtpY = tailY + 208;
@@ -901,6 +1054,7 @@
         place('mtp_input_norms', mtpX, mtpY - 132);
         place('mtp_eh_proj', mtpX, mtpY - 42);
         place('mtp_decoder_layer', mtpX, mtpY + 48);
+        place('mtp_head_weight', 860, mtpY + 138);
         place('mtp_shared_head', mtpX, mtpY + 138);
         place('mtp_logits', mtpX, mtpY + 228);
       }
@@ -921,7 +1075,7 @@
           id: node.id,
           label: OPENPANGU_DISPLAY_LABELS[node.id] || node.label || node.id,
           kind: graphKind(node.kind),
-          typeLabel: typeLabel(node.kind),
+          typeLabel: typeLabel(node.kind, node),
           x: pos.x,
           y: pos.y,
           width: spec.w,
@@ -955,6 +1109,9 @@
         if (!pos || !spec || !visibleIds.has(id)) return null;
         return { left: pos.x - spec.w / 2, right: pos.x + spec.w / 2, top: pos.y - spec.h / 2, bottom: pos.y + spec.h / 2 };
       }
+      function clusterTopPad(groupId) {
+        return groupId === 'decoder-stack' ? 24 : CLUSTER_TOP_PAD;
+      }
       function clusterBox(groupId) {
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         (groupChildren[groupId] || []).forEach((id) => {
@@ -972,7 +1129,8 @@
         });
         if (minX === Infinity) return null;
         const x = minX - CLUSTER_MARGIN;
-        const y = minY - CLUSTER_TOP_PAD;
+        const topPad = clusterTopPad(groupId);
+        const y = minY - topPad;
         return { x, y, width: maxX + CLUSTER_MARGIN - x, height: maxY + CLUSTER_MARGIN - y };
       }
       const clusters = GROUPS.map((group) => {
@@ -1022,12 +1180,73 @@
           curve: 'horizontal',
         };
       }
+      function straightSideEdge(sourceSide, targetSide, sourceDy = 0, targetDy = 0) {
+        return {
+          sourceAnchor: edgeAnchor(sourceSide, 0, sourceDy),
+          targetAnchor: edgeAnchor(targetSide, 0, targetDy),
+          curve: 'straight',
+        };
+      }
+      function attentionResidualSkipEdge(target, bypassX = -96) {
+        const inputNormPos = positions.input_layernorm;
+        const targetPos = positions[target];
+        if (!inputNormPos || !targetPos) return {};
+        const forkY = inputNormPos.y - NODE_SPEC.input_layernorm.h / 2 - 22;
+        return {
+          tag: 'RESIDUAL',
+          tagAngle: -90,
+          tagFontSize: 16,
+          tagHeight: 30,
+          tagPaddingX: 14,
+          edgeType: 'activation',
+          title: 'Attention residual activation',
+          object: 'residual hidden_states',
+          tensor: { name: 'residual', shape: '[B,T,H]', dtype: 'bf16' },
+          description: 'Object carried on this bypass is the cloned decoder hidden_states saved before Input RMSNorm and self-attention. It is merged with the attention path at Attention Residual Add.',
+          sources: ['pangu_v2_moe.py:1451', 'pangu_v2_moe.py:1758'],
+          sourcePoint: { x: inputNormPos.x, y: forkY },
+          targetAnchor: edgeAnchor('left'),
+          cornerRadius: 18,
+          waypoints: [
+            { x: bypassX, y: forkY },
+            { x: bypassX, y: targetPos.y },
+          ],
+        };
+      }
+      function ffnResidualSkipEdge(source, target, bypassX = -96) {
+        const sourcePos = positions[source];
+        const targetPos = positions[target];
+        if (!sourcePos || !targetPos) return {};
+        const forkY = sourcePos.y + NODE_SPEC[source].h / 2 + 16;
+        return {
+          tag: 'RESIDUAL',
+          tagAngle: -90,
+          tagFontSize: 16,
+          tagHeight: 30,
+          tagPaddingX: 14,
+          edgeType: 'activation',
+          title: 'FFN residual activation',
+          object: 'residual hidden_states',
+          tensor: { name: 'residual', shape: '[B,T,H]', dtype: 'bf16' },
+          description: 'Object carried on this bypass is the cloned hidden_states after the attention residual merge. It bypasses the FFN or MoE path and is merged at FFN Residual Add.',
+          sources: ['pangu_v2_moe.py:1620', 'pangu_v2_moe.py:1773'],
+          sourceAnchor: edgeAnchor('bottom'),
+          targetAnchor: edgeAnchor('left'),
+          cornerRadius: 18,
+          waypoints: [
+            { x: sourcePos.x, y: forkY },
+            { x: bypassX, y: forkY },
+            { x: bypassX, y: targetPos.y },
+          ],
+        };
+      }
       function add(source, target, dashed = false, options = {}) {
         if (visibleIds.has(source) && visibleIds.has(target) && !edges.some((edge) => edge.source === source && edge.target === target)) {
           edges.push({ source, target, dashed, ...defaultEdgeAnchors(source, target), ...options });
         }
       }
       add('input_tokens', 'token_embedding');
+      add('embedding_weight', 'token_embedding', true, straightSideEdge('right', 'left'));
       add('positions', 'rope_cache', true);
       if (state.collapsedModules.has('decoder_layer')) {
         add('token_embedding', 'decoder_layer');
@@ -1039,19 +1258,22 @@
         add('token_embedding', 'decoder_layer');
         add('decoder_layer', 'mhc_attention', true);
         add('mhc_attention', 'input_layernorm');
+        add('input_layernorm', 'attention_all_gather');
         if (state.collapsedModules.has('sparse_mla_attention')) {
-          add('input_layernorm', 'sparse_mla_attention');
+          add('attention_all_gather', 'sparse_mla_attention');
           add('positions', 'sparse_mla_attention', true);
           add('rope_cache', 'sparse_mla_attention', true);
           add('kv_cache', 'sparse_mla_attention', true);
-          add('sparse_mla_attention', 'post_attention_norm');
+          add('sparse_mla_attention', 'attention_reduce_scatter');
+          add('attention_reduce_scatter', 'attention_residual_add');
         } else {
           const detail = attentionDetailOpen();
-          add('input_layernorm', 'sparse_mla_attention');
+          add('attention_all_gather', 'sparse_mla_attention');
           add('sparse_mla_attention', 'q_a_proj', false, forkDown(0, 0));
           add('sparse_mla_attention', 'kv_a_proj', false, forkDown(0, 0));
-          add('q_a_proj', 'q_causal_conv'); add('q_a_proj', 'q_residual_add', true); add('q_causal_conv', 'q_residual_add'); add('q_residual_add', 'q_a_norm'); add('q_a_norm', 'q_b_proj');
-          add('kv_a_proj', 'kv_causal_conv'); add('kv_a_proj', 'kv_residual_add', true); add('kv_causal_conv', 'kv_residual_add'); add('kv_residual_add', 'kv_a_norm'); add('kv_a_norm', 'kv_b_proj');
+          add('attention_projection_weights', 'q_a_proj', true, straightSideEdge('right', 'left'));
+          add('q_a_proj', 'q_causal_conv'); add('q_causal_conv', 'q_a_norm'); add('q_a_norm', 'q_b_proj');
+          add('kv_a_proj', 'kv_causal_conv'); add('kv_causal_conv', 'kv_a_norm'); add('kv_a_norm', 'kv_b_proj');
           if (detail) {
             add('q_b_proj', 'rope_apply'); add('rope_cache', 'rope_apply', true);
             add('rope_apply', 'dsa_indexer');
@@ -1068,48 +1290,85 @@
             add('kv_cache', 'attention_core', true);
             add('param_sink_state', 'attention_core', true); add('mome_state', 'attention_core', true);
           }
-          add('attention_core', 'o_causal_conv'); add('attention_core', 'o_residual_add', true); add('o_causal_conv', 'o_residual_add'); add('o_residual_add', 'o_proj'); add('o_proj', 'post_attention_norm');
+          add('attention_core', 'o_causal_conv'); add('o_causal_conv', 'o_proj'); add('o_proj', 'attention_reduce_scatter'); add('attention_reduce_scatter', 'attention_residual_add');
         }
+        add('input_layernorm', 'attention_residual_add', true, attentionResidualSkipEdge('attention_residual_add'));
+        add('attention_residual_add', 'post_attention_norm');
         add('post_attention_norm', 'mhc_attention_post'); add('mhc_attention_post', 'pre_mlp_norm');
         if (state.collapsedModules.has('ffn_choice')) {
-          add('pre_mlp_norm', 'ffn_choice'); add('ffn_choice', 'post_mlp_norm');
+          add('pre_mlp_norm', 'ffn_choice'); add('ffn_choice', 'ffn_residual_add');
         } else {
-          add('pre_mlp_norm', 'dense_mlp', false, forkDown(0, 0));
+          add('pre_mlp_norm', 'ffn_all_gather');
+          add('ffn_all_gather', 'dense_mlp', false, forkDown(0, 0));
+          add('dense_mlp_weights', 'dense_gate_up', true, straightSideEdge('right', 'left'));
           add('dense_mlp', 'dense_gate_up'); add('dense_gate_up', 'dense_silu'); add('dense_silu', 'dense_down');
-          add('dense_down', 'post_mlp_norm', false, forkDown(0, 0));
+          add('dense_down', 'ffn_reduce_scatter', false, forkDown(0, 0));
           if (state.collapsedModules.has('moe_ffn')) {
-            add('pre_mlp_norm', 'moe_ffn', false, forkDown(0, 0));
-            add('moe_ffn', 'post_mlp_norm', false, forkDown(0, 0));
+            add('ffn_all_gather', 'moe_ffn', false, forkDown(0, 0));
+            add('moe_ffn', 'ffn_reduce_scatter', false, forkDown(0, 0));
           } else {
-            add('pre_mlp_norm', 'router_gate', false, forkDown(0, 0)); add('router_gate', 'route_topk'); add('route_topk', 'routed_expert_bank');
-            add('expert_parallel_state', 'routed_expert_bank', true, sideEdge('left', 'right'));
-            add('pre_mlp_norm', 'shared_expert_mlp', false, forkDown(0, 0));
-            add('routed_expert_bank', 'moe_combine', false, forkDown(0, 0));
+            add('ffn_all_gather', 'router_gate', false, forkDown(0, 0)); add('router_gate', 'route_topk'); add('route_topk', 'moe_all_to_all_dispatch'); add('moe_all_to_all_dispatch', 'routed_expert_bank');
+            add('router_weight', 'router_gate', true, straightSideEdge('right', 'left'));
+            add('expert_bank_weights', 'routed_expert_bank', true, straightSideEdge('right', 'left'));
+            add('shared_expert_weights', 'shared_expert_mlp', true, straightSideEdge('right', 'left'));
+            add('expert_parallel_state', 'routed_expert_bank', true, straightSideEdge('left', 'right'));
+            add('ffn_all_gather', 'shared_expert_mlp', false, forkDown(0, 0));
+            add('routed_expert_bank', 'moe_all_to_all_combine', false, forkDown(0, 0));
+            add('moe_all_to_all_combine', 'moe_combine', false, forkDown(0, 0));
             add('shared_expert_mlp', 'moe_combine', false, forkDown(0, 0));
-            add('moe_combine', 'post_mlp_norm', false, forkDown(0, 0));
+            add('moe_combine', 'ffn_reduce_scatter', false, forkDown(0, 0));
           }
+          add('ffn_reduce_scatter', 'ffn_residual_add', false, forkDown(0, 0));
         }
+        add('attention_residual_add', 'ffn_residual_add', true, ffnResidualSkipEdge('attention_residual_add', 'ffn_residual_add'));
+        add('ffn_residual_add', 'post_mlp_norm');
         add('post_mlp_norm', 'block_post_norm'); add('block_post_norm', 'final_norm');
       }
-      add('final_norm', 'lm_head'); add('lm_head', 'logits');
+      add('final_norm', 'lm_head'); add('lm_head_weight', 'lm_head', true, straightSideEdge('right', 'left')); add('lm_head', 'logits');
       if (state.collapsedModules.has('mtp_module')) {
         add('final_norm', 'mtp_module', true);
       } else {
         add('token_embedding', 'mtp_input_norms', true); add('final_norm', 'mtp_input_norms', true);
-        add('mtp_input_norms', 'mtp_eh_proj'); add('mtp_eh_proj', 'mtp_decoder_layer'); add('mtp_decoder_layer', 'mtp_shared_head'); add('mtp_shared_head', 'mtp_logits');
+        add('mtp_input_norms', 'mtp_eh_proj'); add('mtp_eh_proj', 'mtp_decoder_layer'); add('mtp_decoder_layer', 'mtp_shared_head'); add('mtp_head_weight', 'mtp_shared_head', true, straightSideEdge('right', 'left')); add('mtp_shared_head', 'mtp_logits');
       }
+      const edgeWaypoints = edges.flatMap((edge) => [
+        ...(edge.waypoints || []),
+        edge.sourcePoint,
+        edge.targetPoint,
+      ].filter(Boolean));
       const minGraphX = Math.min(
         ...graphNodes.map((node) => node.x - node.width / 2),
-        ...clusters.map((cluster) => cluster.x)
+        ...clusters.map((cluster) => cluster.x),
+        ...edgeWaypoints.map((point) => point.x)
+      );
+      const minGraphY = Math.min(
+        ...graphNodes.map((node) => node.y - node.height / 2),
+        ...clusters.map((cluster) => cluster.y),
+        ...edgeWaypoints.map((point) => point.y)
       );
       const safeInset = 36;
       if (minGraphX < safeInset) {
         const shiftX = safeInset - minGraphX;
         graphNodes.forEach((node) => { node.x += shiftX; });
         clusters.forEach((cluster) => { cluster.x += shiftX; });
+        edges.forEach((edge) => {
+          edge.waypoints?.forEach((point) => { point.x += shiftX; });
+          if (edge.sourcePoint) edge.sourcePoint.x += shiftX;
+          if (edge.targetPoint) edge.targetPoint.x += shiftX;
+        });
       }
-      const maxBottom = Math.max(900, ...graphNodes.map((node) => node.y + node.height / 2));
-      const maxRight = Math.max(1180, ...graphNodes.map((node) => node.x + node.width / 2), ...clusters.map((cluster) => cluster.x + cluster.width));
+      if (minGraphY < safeInset) {
+        const shiftY = safeInset - minGraphY;
+        graphNodes.forEach((node) => { node.y += shiftY; });
+        clusters.forEach((cluster) => { cluster.y += shiftY; });
+        edges.forEach((edge) => {
+          edge.waypoints?.forEach((point) => { point.y += shiftY; });
+          if (edge.sourcePoint) edge.sourcePoint.y += shiftY;
+          if (edge.targetPoint) edge.targetPoint.y += shiftY;
+        });
+      }
+      const maxBottom = Math.max(900, ...graphNodes.map((node) => node.y + node.height / 2), ...edgeWaypoints.map((point) => point.y));
+      const maxRight = Math.max(1180, ...graphNodes.map((node) => node.x + node.width / 2), ...clusters.map((cluster) => cluster.x + cluster.width), ...edgeWaypoints.map((point) => point.x));
       return { width: Math.round(Math.max(1280, maxRight + 90)), height: Math.round(maxBottom + 80), clusters, nodes: graphNodes, edges };
     }
 
@@ -1149,7 +1408,7 @@
       if (!COLLAPSIBLE[moduleId]) return;
       if (collapsed) state.collapsedModules.add(moduleId);
       else state.collapsedModules.delete(moduleId);
-      state.selectedNodeId = moduleId;
+      state.selectedNodeId = null;
       renderAll(`${getNode(moduleId)?.label || moduleId} ${collapsed ? 'collapsed' : 'expanded'}.`, { preserveZoom: true });
     }
 
@@ -1157,7 +1416,7 @@
       if (moduleId !== 'sparse_mla_attention') return;
       if (expanded) state.detailModules.add(moduleId);
       else state.detailModules.delete(moduleId);
-      state.selectedNodeId = moduleId;
+      state.selectedNodeId = null;
       renderAll(`${getNode(moduleId)?.label || moduleId} detail ${expanded ? 'opened' : 'closed'}.`, { preserveZoom: true });
     }
 
@@ -1536,8 +1795,6 @@
         kvLatent: 420,
         qConv: 550,
         kvConv: 550,
-        qPlus: 625,
-        kvPlus: 625,
         qNorm: 688,
         kvNorm: 688,
         qUp: 778,
@@ -1547,7 +1804,6 @@
         value: 900,
         flash: 1080,
         outConv: 1210,
-        outPlus: 1285,
         outProj: 1370,
         postNorm: 1462,
         mlp: 1554,
@@ -1630,12 +1886,8 @@
 
       line(`M ${qx} ${bottom(y.qLatent)} L ${qx} ${top(y.qConv)}`);
       line(`M ${kvx} ${bottom(y.kvLatent)} L ${kvx} ${top(y.kvConv)}`);
-      line(`M ${qx} ${bottom(y.qConv)} L ${qx} ${y.qPlus - 18}`);
-      line(`M ${kvx} ${bottom(y.kvConv)} L ${kvx} ${y.kvPlus - 18}`);
-      line(`M ${qx - nodeW / 2} ${bottom(y.qLatent) + 30} L 65 ${bottom(y.qLatent) + 30} Q 45 ${bottom(y.qLatent) + 30} 45 ${bottom(y.qLatent) + 50} L 45 ${y.qPlus - 22} Q 45 ${y.qPlus} 67 ${y.qPlus} L ${qx - 18} ${y.qPlus}`);
-      line(`M ${kvx - nodeW / 2} ${bottom(y.kvLatent) + 30} L 705 ${bottom(y.kvLatent) + 30} Q 685 ${bottom(y.kvLatent) + 30} 685 ${bottom(y.kvLatent) + 50} L 685 ${y.kvPlus - 22} Q 685 ${y.kvPlus} 707 ${y.kvPlus} L ${kvx - 18} ${y.kvPlus}`);
-      line(`M ${qx} ${y.qPlus + 18} L ${qx} ${top(y.qNorm)}`);
-      line(`M ${kvx} ${y.kvPlus + 18} L ${kvx} ${top(y.kvNorm)}`);
+      line(`M ${qx} ${bottom(y.qConv)} L ${qx} ${top(y.qNorm)}`);
+      line(`M ${kvx} ${bottom(y.kvConv)} L ${kvx} ${top(y.kvNorm)}`);
       line(`M ${qx} ${bottom(y.qNorm)} L ${qx} ${top(y.qUp)}`);
       line(`M ${kvx} ${bottom(y.kvNorm)} L ${kvx} ${top(y.kvUp)}`);
       line(`M ${qx} ${bottom(y.qUp)} L ${qx} ${top(y.query)}`);
@@ -1648,9 +1900,7 @@
       line(`M ${valueX} ${bottom(y.value)} L ${valueX} ${joinY}`);
       line(`M ${cx} ${joinY} L ${cx} ${top(y.flash)}`);
       line(`M ${cx} ${bottom(y.flash)} L ${cx} ${top(y.outConv)}`);
-      line(`M ${cx} ${bottom(y.outConv)} L ${cx} ${y.outPlus - 18}`);
-      line(`M ${cx - nodeW / 2 + 10} ${bottom(y.flash) + 28} L 405 ${bottom(y.flash) + 28} Q 385 ${bottom(y.flash) + 28} 385 ${bottom(y.flash) + 48} L 385 ${y.outPlus - 22} Q 385 ${y.outPlus} 407 ${y.outPlus} L ${cx - 18} ${y.outPlus}`);
-      line(`M ${cx} ${y.outPlus + 18} L ${cx} ${top(y.outProj)}`);
+      line(`M ${cx} ${bottom(y.outConv)} L ${cx} ${top(y.outProj)}`);
       line(`M ${cx} ${bottom(y.outProj)} L ${cx} ${top(y.postNorm)}`);
       line(`M ${cx} ${bottom(y.postNorm)} L ${cx} ${top(y.mlp)}`);
       line(`M 1340 ${y.kvConv} L ${kvx + nodeW / 2 + 10} ${y.kvConv}`, 'opv-reference-arrow');
@@ -1662,8 +1912,6 @@
       node('kv_a_proj', 'KV Latent', kvx, y.kvLatent, nodeW, 'blue');
       node('q_causal_conv', 'Causual Conv1D', qx, y.qConv, nodeW, 'green');
       node('kv_causal_conv', 'Causual Conv1D', kvx, y.kvConv, nodeW, 'green');
-      plus('q_residual_add', qx, y.qPlus);
-      plus('kv_residual_add', kvx, y.kvPlus);
       node('q_a_norm', 'Q LayerNorm', qx, y.qNorm, nodeW, 'blue');
       node('kv_a_norm', 'KV LayerNorm', kvx, y.kvNorm, nodeW, 'blue');
       node('q_b_proj', 'Q Up Linear', qx, y.qUp, nodeW, 'blue');
@@ -1673,7 +1921,6 @@
       node('kv_b_proj', 'Value', valueX, y.value, smallW, 'blue-strong');
       node('attention_core', 'FlashAttention', cx, y.flash, nodeW, 'blue-strong');
       node('o_causal_conv', 'Causual Conv1D', cx, y.outConv, nodeW, 'green');
-      plus('o_residual_add', cx, y.outPlus);
       node('o_proj', 'Output Linear Projection', cx, y.outProj, nodeW, 'blue');
       node('post_attention_norm', 'Post-Attn LayerNorm', cx, y.postNorm, nodeW, 'blue');
       node('ffn_choice', 'MLP', cx, y.mlp, nodeW, 'blue-strong');
@@ -1724,9 +1971,10 @@
 
       state.graph = buildGraphFromSchema(state.schema);
       const renderGraph = graphForCurrentTheme(state.graph);
-      state.graphController = window.PtoModelTrainingGraphvizPattern.render(stage, renderGraph, {
+      state.graphController = window.PtoModelGraphvizPattern.renderController(stage, renderGraph, {
         ariaLabel: 'openPangu architecture graph',
         reportOverlays: false,
+        className: 'pto-model-architecture-stage',
         viewportPadding: 36,
         fitMode: 'readable',
         minReadableZoom: 0.58,
@@ -1742,10 +1990,9 @@
         },
         overlays: {
           evidence: false,
-          edgeTags: false,
+          edgeTags: true,
         },
         onSelect: ({ nodeId }) => {
-          if (MODULE_BY_CLUSTER[nodeId]) return;
           selectNode(nodeId, { fromController: true });
         },
       });
@@ -1869,15 +2116,11 @@
       centerView();
       setStatus(`Fit ${Math.round(state.zoom * 100)}%.`);
     });
-    document.getElementById('themeToggle').addEventListener('click', () => {
-      const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-      document.documentElement.dataset.theme = next;
-      syncThemeToggle();
-      const url = new URL(window.location.href);
-      url.searchParams.set('theme', next);
-      window.history.replaceState({}, '', url);
-      syncColorPanel();
-      renderAll(`${next} theme.`, { preserveZoom: true });
+    [document.getElementById('themeToggle'), document.getElementById('floatingThemeToggle')].forEach((button) => {
+      button?.addEventListener('click', () => {
+        const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+        setTheme(next);
+      });
     });
     document.getElementById('schemaFileInput').addEventListener('change', async (event) => {
       const file = event.target.files?.[0];

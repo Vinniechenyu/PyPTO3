@@ -19,7 +19,9 @@
   <link rel="stylesheet" href="../../../tokens/foundation.css">
   <link rel="stylesheet" href="../../../tokens/semantic.css">
   <link rel="stylesheet" href="../../../tokens/components.css">
-  <link rel="stylesheet" href="../pattern.css">
+  <link rel="stylesheet" href="../pattern.css?v=model-gallery-light-border-1">
+  <link rel="stylesheet" href="../../pass-ir-graph-node/pattern.css?v=pass-ir-capsule-2">
+  <link rel="stylesheet" href="../capsule.css?v=model-capsule-12">
   <style>
     :root {
       --qwen-shell-bg: var(--background);
@@ -201,9 +203,17 @@
       will-change: transform;
     }
 
-    .qwen-graph-stage .pto-model-graphviz-node,
-    .qwen-graph-stage .pto-model-graphviz-cluster {
+    .qwen-graph-stage .pto-model-graphviz-node {
       cursor: pointer;
+    }
+
+    .qwen-graph-stage .pto-model-graphviz-cluster {
+      cursor: default;
+    }
+
+    .qwen-graph-stage .pto-model-graphviz-cluster > rect:first-child {
+      fill: transparent;
+      fill-opacity: 0;
     }
 
     .qwen-graph-stage [tabindex]:focus,
@@ -307,7 +317,7 @@
     }
   </style>
 </head>
-<body>
+<body class="pto-model-graphviz-pattern-page pto-model-graphviz-capsule-page">
   <main class="qwen-app">
     <header class="qwen-topbar">
       <div class="qwen-title-block">
@@ -327,13 +337,15 @@
 
     <section class="qwen-main">
       <div class="qwen-graph-shell">
-        <div class="qwen-graph-stage" id="graphStage" aria-label="Qwen-7B architecture graph"></div>
+        <div class="qwen-graph-stage pto-model-architecture-stage" id="graphStage" aria-label="Qwen-7B architecture graph"></div>
         <div class="qwen-status" id="statusText">Default Qwen-7B schema loaded.</div>
       </div>
     </section>
   </main>
 
-  <script src="../pattern.js"></script>
+  <script src="../pattern.js?v=model-gallery-tag-avoid-1"></script>
+  <script src="../../pass-ir-graph-node/pattern.js?v=pass-ir-capsule-2"></script>
+  <script src="../capsule.js?v=model-capsule-12"></script>
   <script>
     const DEFAULT_SCHEMA = {
       schema_version: 'model_architecture.v1',
@@ -376,23 +388,27 @@
         { id: 'lm_head_model', kind: 'module', label: 'QWen LM Head Model', module_type: 'causal_lm', role: 'owns transformer and output head' },
         { id: 'transformer', kind: 'module', label: 'QWen Transformer', module_type: 'decoder_only_transformer', role: 'embedding, decoder stack, final norm' },
         { id: 'token_embedding', kind: 'op', label: 'Embedding Lookup', op_type: 'Embedding', role: 'vocabulary embedding' },
+        { id: 'embedding_weight', kind: 'parameter', label: 'Embedding Weight', role: 'vocabulary embedding parameter tensor' },
         { id: 'rope_cache', kind: 'state', label: 'RoPE Cache', state_type: 'rotary_embedding_cache', role: 'rotary position embedding state' },
         { id: 'kv_cache', kind: 'state', label: 'KV Cache', state_type: 'attention_cache', role: 'past key value state' },
         { id: 'decoder_layer', kind: 'module', label: 'QWen Decoder Layer', module_type: 'decoder_layer_template', role: 'folded repeated layer template' },
         { id: 'attn_norm', kind: 'op', label: 'Attention RMSNorm', op_type: 'RMSNorm', role: 'pre-attention normalization' },
         { id: 'attention', kind: 'module', label: 'Self Attention', module_type: 'multi_head_attention', role: 'multi-head causal self-attention' },
+        { id: 'attention_weights', kind: 'parameter', label: 'Attention Weights', role: 'QKV and attention output projection parameter tensors' },
         { id: 'qkv_linear', kind: 'op', label: 'QKV Linear', op_type: 'Linear', role: 'fused qkv projection' },
         { id: 'rotary_apply', kind: 'op', label: 'Apply RoPE', op_type: 'RotaryEmbedding', role: 'apply rotary position embedding' },
         { id: 'scaled_attention', kind: 'op', label: 'Scaled Attention', op_type: 'Attention', role: 'causal attention' },
         { id: 'attn_output_linear', kind: 'op', label: 'Attention Output Linear', op_type: 'Linear', role: 'attention output projection' },
         { id: 'mlp_norm', kind: 'op', label: 'MLP RMSNorm', op_type: 'RMSNorm', role: 'pre-MLP normalization' },
         { id: 'mlp', kind: 'module', label: 'SwiGLU MLP', module_type: 'feed_forward', role: 'feed-forward branch' },
+        { id: 'mlp_weights', kind: 'parameter', label: 'MLP Weights', role: 'SwiGLU gate/up/down projection parameter tensors' },
         { id: 'mlp_gate_linear', kind: 'op', label: 'Gate Linear', op_type: 'Linear', role: 'SwiGLU gate projection' },
         { id: 'mlp_up_linear', kind: 'op', label: 'Up Linear', op_type: 'Linear', role: 'SwiGLU up projection' },
         { id: 'silu_multiply', kind: 'op', label: 'SiLU Multiply', op_type: 'ActivationMultiply', role: 'activation and elementwise multiply' },
         { id: 'mlp_down_linear', kind: 'op', label: 'MLP Output Linear', op_type: 'Linear', role: 'MLP output projection' },
         { id: 'final_norm', kind: 'op', label: 'Final RMSNorm', op_type: 'RMSNorm', role: 'final transformer normalization' },
         { id: 'lm_head', kind: 'op', label: 'LM Head Linear', op_type: 'Linear', role: 'vocabulary projection' },
+        { id: 'lm_head_weight', kind: 'parameter', label: 'LM Head Weight', role: 'vocabulary output projection parameter tensor' },
         { id: 'output_logits', kind: 'output', label: 'Logits', role: 'output logits' },
       ],
       edges: [
@@ -431,23 +447,27 @@
       input_tokens:       { w: 170, h: 48, colorKey: 'io:input' },
       transformer:        { w: 280, h: 58, colorKey: 'module:transformer' },
       token_embedding:    { w: 240, h: 56, colorKey: 'sem:embedding', parent: 'transformer-core' },
-      rope_cache:         { w: 188, h: 52, colorKey: 'io:state', lane: 250 },
-      kv_cache:           { w: 176, h: 52, colorKey: 'io:state', lane: 250 },
+      embedding_weight:   { w: 208, h: 50, colorKey: 'io:parameter', parent: 'transformer-core', lane: 300 },
+      rope_cache:         { w: 188, h: 52, colorKey: 'io:state', lane: 1010 },
+      kv_cache:           { w: 176, h: 52, colorKey: 'io:state', lane: 1010 },
       decoder_layer:      { w: 288, h: 58, colorKey: 'module:decoder-layer', parent: 'transformer-core' },
       attn_norm:          { w: 230, h: 56, colorKey: 'sem:norm', parent: 'decoder-stack' },
       attention:          { w: 220, h: 58, colorKey: 'module:attention', parent: 'decoder-stack' },
+      attention_weights:  { w: 220, h: 50, colorKey: 'io:parameter', parent: 'attention-block', lane: 300 },
       qkv_linear:         { w: 186, h: 54, colorKey: 'sem:linear', parent: 'attention-block' },
       rotary_apply:       { w: 184, h: 54, colorKey: 'sem:rope', parent: 'attention-block' },
       scaled_attention:   { w: 212, h: 54, colorKey: 'sem:attention', parent: 'attention-block' },
       attn_output_linear: { w: 256, h: 54, colorKey: 'sem:linear', parent: 'attention-block' },
       mlp_norm:           { w: 198, h: 56, colorKey: 'sem:norm', parent: 'decoder-stack' },
       mlp:                { w: 190, h: 58, colorKey: 'module:mlp', parent: 'decoder-stack' },
+      mlp_weights:        { w: 186, h: 50, colorKey: 'io:parameter', parent: 'mlp-block', lane: 300 },
       mlp_gate_linear:    { w: 176, h: 54, colorKey: 'sem:linear', parent: 'mlp-block', lane: 540 },
       mlp_up_linear:      { w: 158, h: 54, colorKey: 'sem:linear', parent: 'mlp-block', lane: 748 },
       silu_multiply:      { w: 196, h: 54, colorKey: 'sem:activation', parent: 'mlp-block' },
       mlp_down_linear:    { w: 224, h: 54, colorKey: 'sem:linear', parent: 'mlp-block' },
       final_norm:         { w: 196, h: 56, colorKey: 'sem:norm', parent: 'transformer-core' },
-      lm_head:            { w: 210, h: 56, colorKey: 'sem:linear' },
+      lm_head:            { w: 210, h: 56, colorKey: 'sem:head' },
+      lm_head_weight:     { w: 196, h: 50, colorKey: 'io:parameter', lane: 300 },
       output_logits:      { w: 166, h: 48, colorKey: 'io:output' },
     };
 
@@ -492,22 +512,26 @@
         clusterId: 'transformer-core',
         descendants: [
           'token_embedding',
+          'embedding_weight',
           'rope_cache',
           'kv_cache',
           'decoder_layer',
           'attn_norm',
           'attention',
+          'attention_weights',
           'qkv_linear',
           'rotary_apply',
           'scaled_attention',
           'attn_output_linear',
           'mlp_norm',
           'mlp',
+          'mlp_weights',
           'mlp_gate_linear',
           'mlp_up_linear',
           'silu_multiply',
           'mlp_down_linear',
           'final_norm',
+          'lm_head_weight',
         ],
       },
       decoder_layer: {
@@ -556,7 +580,7 @@
 
     function nodeVisualKind(kind) {
       const normalized = String(kind || '').toLowerCase();
-      if (normalized === 'input' || normalized === 'output' || normalized === 'tensor' || normalized === 'state' || normalized === 'buffer' || normalized === 'cache') return 'tensor';
+      if (normalized === 'input' || normalized === 'output' || normalized === 'tensor' || normalized === 'state' || normalized === 'buffer' || normalized === 'cache' || normalized === 'parameter' || normalized === 'weight') return 'tensor';
       if (normalized === 'module') return 'module';
       return 'op';
     }
@@ -565,6 +589,7 @@
       const normalized = String(kind || '').toLowerCase();
       if (normalized === 'input') return 'Input';
       if (normalized === 'output') return 'Output';
+      if (normalized === 'parameter' || normalized === 'weight') return 'Parameter';
       if (normalized === 'state' || normalized === 'buffer' || normalized === 'cache') return 'State';
       if (normalized === 'module') return 'Module';
       if (normalized === 'op' || normalized === 'operation') return 'Op';
@@ -573,13 +598,15 @@
 
     function stageColorKey(node) {
       const text = `${node.id || ''} ${node.label || ''} ${node.op_type || ''} ${node.module_type || ''} ${node.state_type || ''}`.toLowerCase();
+      if (node.kind === 'parameter' || node.kind === 'weight' || node.state_type === 'parameter') return 'io:parameter';
       if (text.includes('embedding')) return 'sem:embedding';
       if (text.includes('rope') || text.includes('rotary')) return 'sem:rope';
       if (text.includes('cache')) return 'io:state';
       if (text.includes('attention') || text.includes('qkv')) return 'sem:attention';
       if (text.includes('mlp') || text.includes('swiglu') || text.includes('silu')) return 'sem:mlp';
       if (text.includes('norm')) return 'sem:norm';
-      if (text.includes('linear') || text.includes('head')) return 'sem:linear';
+      if (text.includes('head')) return 'sem:head';
+      if (text.includes('linear')) return 'sem:linear';
       if (node.kind === 'input') return 'io:input';
       if (node.kind === 'output') return 'io:output';
       if (node.kind === 'module') return 'module:model';
@@ -665,7 +692,7 @@
         cursor += rowHeight;
         prevDepth = depth;
       });
-      // Side caches sit on the left lane, aligned to whichever node consumes them.
+      // State/cache nodes sit on the right lane; weights/parameters use the left lane in model galleries.
       const ropeTarget = ['rotary_apply', 'attention', 'decoder_layer'].find((id) => positions[id]);
       const kvTarget = ['scaled_attention', 'attention', 'decoder_layer'].find((id) => positions[id]);
       if (isGraphNodeVisible('rope_cache') && ropeTarget) {
@@ -676,6 +703,16 @@
         const sameTarget = ropeTarget === kvTarget;
         positions.kv_cache = { x: NODE_SPEC.kv_cache.lane, y: positions[kvTarget].y + (sameTarget ? 30 : 0) };
       }
+      const placeParameter = (id, targets, yOffset = 0) => {
+        if (!isGraphNodeVisible(id)) return;
+        const target = targets.find((candidate) => positions[candidate]);
+        if (!target) return;
+        positions[id] = { x: NODE_SPEC[id].lane, y: positions[target].y + yOffset };
+      };
+      placeParameter('embedding_weight', ['token_embedding', 'transformer']);
+      placeParameter('attention_weights', ['qkv_linear', 'attention', 'decoder_layer']);
+      placeParameter('mlp_weights', ['silu_multiply', 'mlp', 'decoder_layer']);
+      placeParameter('lm_head_weight', ['lm_head']);
       const bottom = Math.max(...Object.entries(positions).map(([id, p]) => p.y + NODE_SPEC[id].h / 2));
       return { positions, height: Math.round(bottom + 46) };
     }
@@ -768,9 +805,12 @@
       }
 
       addDisplayEdge(edges, visibleIds, 'input_tokens', 'token_embedding');
+      addDisplayEdge(edges, visibleIds, 'embedding_weight', 'token_embedding', { dashed: true, edgeType: 'parameter', tag: 'W' });
 
       if (collapsed.has('decoder_layer')) {
         addDisplayEdge(edges, visibleIds, 'token_embedding', 'decoder_layer');
+        addDisplayEdge(edges, visibleIds, 'attention_weights', 'decoder_layer', { dashed: true, edgeType: 'parameter', tag: 'W' });
+        addDisplayEdge(edges, visibleIds, 'mlp_weights', 'decoder_layer', { dashed: true, edgeType: 'parameter', tag: 'W' });
         addDisplayEdge(edges, visibleIds, 'rope_cache', 'decoder_layer', { dashed: true });
         addDisplayEdge(edges, visibleIds, 'kv_cache', 'decoder_layer', { dashed: true });
         addDisplayEdge(edges, visibleIds, 'decoder_layer', 'final_norm');
@@ -779,11 +819,13 @@
 
         if (collapsed.has('attention')) {
           addDisplayEdge(edges, visibleIds, 'attn_norm', 'attention');
+          addDisplayEdge(edges, visibleIds, 'attention_weights', 'attention', { dashed: true, edgeType: 'parameter', tag: 'W' });
           addDisplayEdge(edges, visibleIds, 'rope_cache', 'attention', { dashed: true });
           addDisplayEdge(edges, visibleIds, 'kv_cache', 'attention', { dashed: true });
           addDisplayEdge(edges, visibleIds, 'attention', 'mlp_norm');
         } else {
           addDisplayEdge(edges, visibleIds, 'attn_norm', 'qkv_linear');
+          addDisplayEdge(edges, visibleIds, 'attention_weights', 'qkv_linear', { dashed: true, edgeType: 'parameter', tag: 'W' });
           addDisplayEdge(edges, visibleIds, 'qkv_linear', 'rotary_apply');
           addDisplayEdge(edges, visibleIds, 'rope_cache', 'rotary_apply', { dashed: true });
           addDisplayEdge(edges, visibleIds, 'rotary_apply', 'scaled_attention');
@@ -794,10 +836,13 @@
 
         if (collapsed.has('mlp')) {
           addDisplayEdge(edges, visibleIds, 'mlp_norm', 'mlp');
+          addDisplayEdge(edges, visibleIds, 'mlp_weights', 'mlp', { dashed: true, edgeType: 'parameter', tag: 'W' });
           addDisplayEdge(edges, visibleIds, 'mlp', 'final_norm');
         } else {
           addDisplayEdge(edges, visibleIds, 'mlp_norm', 'mlp_gate_linear');
+          addDisplayEdge(edges, visibleIds, 'mlp_weights', 'mlp_gate_linear', { dashed: true, edgeType: 'parameter', tag: 'W' });
           addDisplayEdge(edges, visibleIds, 'mlp_norm', 'mlp_up_linear');
+          addDisplayEdge(edges, visibleIds, 'mlp_weights', 'mlp_up_linear', { dashed: true, edgeType: 'parameter', tag: 'W' });
           addDisplayEdge(edges, visibleIds, 'mlp_gate_linear', 'silu_multiply');
           addDisplayEdge(edges, visibleIds, 'mlp_up_linear', 'silu_multiply');
           addDisplayEdge(edges, visibleIds, 'silu_multiply', 'mlp_down_linear');
@@ -806,6 +851,7 @@
       }
 
       addDisplayEdge(edges, visibleIds, 'final_norm', 'lm_head');
+      addDisplayEdge(edges, visibleIds, 'lm_head_weight', 'lm_head', { dashed: true, edgeType: 'parameter', tag: 'W' });
       addDisplayEdge(edges, visibleIds, 'lm_head', 'output_logits');
       return edges;
     }
@@ -1067,7 +1113,8 @@
       const availableHeight = Math.max(640, stage.clientHeight - 72);
       const graphWidth = state.graph?.width || 1280;
       const graphHeight = state.graph?.height || 1600;
-      const fitScale = Math.min(availableWidth / graphWidth, availableHeight / graphHeight);
+      const readableFloor = 0.58;
+      const fitScale = Math.min(availableWidth / graphWidth, Math.max(availableHeight / graphHeight, readableFloor));
       return clampZoom(Math.min(1.08, fitScale));
     }
 
@@ -1170,6 +1217,20 @@
         state.graph,
         {
           ariaLabel: `${state.schema.model?.name || 'Model'} architecture graph`,
+          colormap: window.PtoModelGraphvizPattern.modelArchitectureColormap(state.graph),
+          className: 'pto-model-architecture-stage',
+          attachController: true,
+          autoFit: false,
+          interaction: {
+            panZoom: false,
+            selectable: false,
+            selectableClusters: false,
+          },
+          overlays: {
+            evidence: false,
+            edgeTags: false,
+          },
+          reportOverlays: false,
         }
       );
       if (options.preserveZoom) {

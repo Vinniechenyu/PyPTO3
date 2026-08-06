@@ -1147,6 +1147,7 @@ function ptoBuildColorMap(keys) {
     let vizInstance = null;
     let containerNodeCounts = {};
     let architectureColorMap = new Map();
+    let activeVisualLayoutNodes = new Map();
     let retainedZoomTransform = null;
     let retainedAnchorScreen = null;
 
@@ -1510,14 +1511,132 @@ function ptoBuildColorMap(keys) {
             }
         }
 
+        // Apply the architecture schema's lane contract after Dot has solved
+        // ranks. The legacy renderer uses Dot coordinates directly, so this
+        // explicit pass keeps the main spine on one x-axis and places
+        // Parameter/Weight and State/Cache nodes beside their consumers.
+        const mainLaneXs = Object.entries(result.nodes)
+            .filter(([nodeName]) => Math.abs((activeVisualLayoutNodes.get(nodeName)?.x ?? NaN) - 480) < 1)
+            .map(([, nodeData]) => nodeData.position.x)
+            .sort((left, right) => left - right);
+        const mainLaneX = mainLaneXs.length
+            ? mainLaneXs[Math.floor(mainLaneXs.length / 2)]
+            : null;
+        if (Number.isFinite(mainLaneX)) {
+            Object.entries(result.nodes).forEach(([nodeName, nodeData]) => {
+                if (Math.abs((activeVisualLayoutNodes.get(nodeName)?.x ?? NaN) - 480) < 1) {
+                    nodeData.position.x = mainLaneX;
+                }
+            });
+        }
+
+        // Dot may interleave nodes from outside an expanded cluster with its
+        // internal ranks. Preserve Dot's useful horizontal branch solution,
+        // but make schema y-ranks authoritative for the vertical reading
+        // order in both folded and drill-down states.
+        const visibleSchemaRanks = [...new Set(Object.keys(result.nodes)
+            .map((nodeName) => activeVisualLayoutNodes.get(nodeName)?.y)
+            .filter(Number.isFinite))]
+            .sort((left, right) => left - right);
+        const firstVisibleY = Math.min(...Object.values(result.nodes).map((node) => node.position.y));
+        const schemaRankY = new Map(visibleSchemaRanks.map((rank, index) => [rank, firstVisibleY + index * 124]));
+        Object.entries(result.nodes).forEach(([nodeName, nodeData]) => {
+            const rank = activeVisualLayoutNodes.get(nodeName)?.y;
+            if (schemaRankY.has(rank)) nodeData.position.y = schemaRankY.get(rank);
+        });
+
+        // Expanded MoE owns a centered sub-spine. The two expert branches sit
+        // symmetrically around it; their Parameter nodes are placed afterward.
+        const routedExpertNode = result.nodes.expert_mlp;
+        const sharedExpertNode = result.nodes.shared_expert;
+        const routerNode = result.nodes.router;
+        const topKExpertNode = result.nodes.topk_expert_select;
+        const combineNode = result.nodes.moe_combine;
+        if (Number.isFinite(mainLaneX) && routedExpertNode && sharedExpertNode && routerNode && topKExpertNode && combineNode) {
+            routerNode.position.x = mainLaneX;
+            topKExpertNode.position.x = mainLaneX;
+            combineNode.position.x = mainLaneX;
+            routedExpertNode.position.x = mainLaneX - 380;
+            sharedExpertNode.position.x = mainLaneX + 380;
+        }
+
+        Object.entries(result.nodes).forEach(([nodeName, nodeData]) => {
+            const nodeType = adj_list[nodeName]?.node_type;
+            if (nodeType !== "Parameter" && nodeType !== "State") return;
+            const targetName = (adj_list[nodeName]?.edges || [])
+                .map((edge) => edge.target)
+                .find((candidate) => result.nodes[candidate]);
+            const targetNode = result.nodes[targetName];
+            if (!targetNode) return;
+            const sideGap = 84;
+            const targetLayout = activeVisualLayoutNodes.get(targetName);
+            const parallelPeers = Object.entries(result.nodes)
+                .filter(([candidateName]) => {
+                    if (candidateName === targetName) return false;
+                    const candidateType = adj_list[candidateName]?.node_type;
+                    const candidateLayout = activeVisualLayoutNodes.get(candidateName);
+                    return (candidateType === "Module" || candidateType === "Operation") &&
+                        targetLayout && candidateLayout && Math.abs(candidateLayout.y - targetLayout.y) < 1;
+                })
+                .map(([, candidateNode]) => candidateNode);
+            const peerCenterX = parallelPeers.length
+                ? parallelPeers.reduce((sum, peer) => sum + peer.position.x, 0) / parallelPeers.length
+                : null;
+            const outwardSide = Number.isFinite(peerCenterX)
+                ? (targetNode.position.x <= peerCenterX ? -1 : 1)
+                : (nodeType === "State" ? 1 : -1);
+            const sameTargetAuxiliaries = Object.entries(result.nodes)
+                .filter(([candidateName]) => {
+                    const candidateType = adj_list[candidateName]?.node_type;
+                    return (candidateType === "Parameter" || candidateType === "State") &&
+                        (adj_list[candidateName]?.edges || []).some((edge) => edge.target === targetName);
+                })
+                .map(([candidateName]) => adj_list[candidateName]?.node_type);
+            const hasMixedAuxiliaries = sameTargetAuxiliaries.includes("Parameter") && sameTargetAuxiliaries.includes("State");
+            const side = hasMixedAuxiliaries && nodeType === "State" ? -outwardSide : outwardSide;
+            const processingRow = [targetNode, ...parallelPeers];
+            const anchorNode = hasMixedAuxiliaries && nodeType === "State"
+                ? processingRow.reduce((outermost, candidate) => {
+                    if (side < 0) return candidate.position.x < outermost.position.x ? candidate : outermost;
+                    return candidate.position.x > outermost.position.x ? candidate : outermost;
+                }, targetNode)
+                : targetNode;
+            nodeData.position.x = anchorNode.position.x + side * (
+                anchorNode.width / 2 + nodeData.width / 2 + sideGap
+            );
+            nodeData.position.y = targetNode.position.y;
+        });
+
+        Object.values(result.clusters).forEach((cluster) => {
+            const childNodes = (cluster.nodes || []).map((nodeName) => result.nodes[nodeName]).filter(Boolean);
+            if (!childNodes.length) return;
+            const left = Math.min(...childNodes.map((node) => node.position.x - node.width / 2));
+            const top = Math.min(...childNodes.map((node) => node.position.y - node.height / 2));
+            const right = Math.max(...childNodes.map((node) => node.position.x + node.width / 2));
+            const bottom = Math.max(...childNodes.map((node) => node.position.y + node.height / 2));
+            cluster.bb = [left - 36, top - 56, right + 36, bottom + 36].join(",");
+        });
+
+        const semanticEdges = new Map();
+        Object.entries(adj_list).forEach(([source, nodeData]) => {
+            (nodeData.edges || []).forEach((edge) => {
+                if (edge.edge_data_id) {
+                    semanticEdges.set(String(edge.edge_data_id), { source, target: edge.target });
+                }
+            });
+        });
+
         // Process edges
         for (const edge of graphData.edges) {
             const sourceId = edge.tail;
             const targetId = edge.head;
 
             // Find node names by their _gvid
-            const sourceName = Object.values(result.nodes).find(n => n.id === sourceId)?.name;
-            const targetName = Object.values(result.nodes).find(n => n.id === targetId)?.name;
+            const renderedSourceName = Object.values(result.nodes).find(n => n.id === sourceId)?.name;
+            const renderedTargetName = Object.values(result.nodes).find(n => n.id === targetId)?.name;
+            const semanticEdge = semanticEdges.get(String(edge.edge_data_id || ""));
+            const sourceName = result.nodes[semanticEdge?.source] ? semanticEdge.source : renderedSourceName;
+            const targetName = result.nodes[semanticEdge?.target] ? semanticEdge.target : renderedTargetName;
 
             if (!sourceName || !targetName) continue;
 
@@ -1559,12 +1678,67 @@ function ptoBuildColorMap(keys) {
                 labelPos = { x: lx, y: ly };
             }
 
+            const sourceNode = result.nodes[sourceName];
+            const targetNode = result.nodes[targetName];
+            // Auxiliary nodes are moved after Dot. Derive the connection
+            // direction from the final geometry so Weight/Cache edges always
+            // use side ports even when their original schema y values differ.
+            const isSideEdge = sourceNode && targetNode &&
+                Math.abs(sourceNode.position.y - targetNode.position.y) < 1;
+            if (isSideEdge) {
+                if (sourceNode && targetNode) {
+                    const sourceOnLeft = sourceNode.position.x <= targetNode.position.x;
+                    const start = {
+                        x: sourceNode.position.x + (sourceOnLeft ? sourceNode.width / 2 : -sourceNode.width / 2),
+                        y: sourceNode.position.y
+                    };
+                    const end = {
+                        x: targetNode.position.x + (sourceOnLeft ? -targetNode.width / 2 : targetNode.width / 2),
+                        y: targetNode.position.y
+                    };
+                    const midX = (start.x + end.x) / 2;
+                    pathPoints = [
+                        start,
+                        { x: midX, y: start.y },
+                        { x: midX, y: end.y },
+                        end
+                    ];
+                    // Keep the label with the auxiliary node instead of
+                    // placing it across the operator's vertical data label.
+                    labelPos = {
+                        x: sourceNode.position.x,
+                        y: sourceNode.position.y - sourceNode.height / 2 - 14
+                    };
+                }
+            } else {
+                if (sourceNode && targetNode) {
+                    const targetBelow = targetNode.position.y >= sourceNode.position.y;
+                    const start = {
+                        x: sourceNode.position.x,
+                        y: sourceNode.position.y + (targetBelow ? sourceNode.height / 2 : -sourceNode.height / 2)
+                    };
+                    const end = {
+                        x: targetNode.position.x,
+                        y: targetNode.position.y + (targetBelow ? -targetNode.height / 2 : targetNode.height / 2)
+                    };
+                    const midY = (start.y + end.y) / 2;
+                    pathPoints = [
+                        start,
+                        { x: start.x, y: midY },
+                        { x: end.x, y: midY },
+                        end
+                    ];
+                    labelPos = { x: (start.x + end.x) / 2, y: midY - 12 };
+                }
+            }
+
             let edgeObj = {
                 source: sourceName,
                 target: targetName,
                 path: pathPoints,
                 edge_data_id: edge.edge_data_id,
                 labelPos: labelPos,
+                is_side_edge: Boolean(isSideEdge),
             }
             if (edge.is_implied_edge) {
                 edgeObj.is_implied_edge = true;
@@ -1739,6 +1913,10 @@ function ptoBuildColorMap(keys) {
             if (adj_list[nodeName] && adj_list[nodeName].failed) return "#e00f0f";
             return null;
         }
+        function layoutGroupAttr(nodeName) {
+            const point = activeVisualLayoutNodes.get(nodeName);
+            return point ? `, group="pto_lane_${Math.round(point.x)}"` : "";
+        }
         let dotSource = 'digraph G {\n';
         if (topDown) {
             dotSource += '  rankdir=TB;\n';
@@ -1747,11 +1925,12 @@ function ptoBuildColorMap(keys) {
         }
         dotSource += `  node [shape=box, style=filled, margin="${GRAPHVIZ_NODE_MARGIN_X},0.055", fontcolor="${GRAPHVIZ_DOT_TEXT_COLOR}"];\n`;
         dotSource += '  compound=true;\n';
+        dotSource += '  newrank=true;\n';
         dotSource += '  graph [margin="0.22", pad="0.38"];\n';
         dotSource += `  bgcolor="${GRAPHVIZ_DARK_BG}";\n`;
-        dotSource += '  ranksep=0.5;\n';
+        dotSource += '  ranksep=0.85;\n';
         dotSource += `  edge [arrowhead=vee, arrowsize=0.6, color="${GRAPHVIZ_DOT_LINE_COLOR}", fontcolor="${GRAPHVIZ_DOT_TEXT_COLOR}"];\n`;
-        dotSource += '  nodesep=0.55;\n';
+        dotSource += '  nodesep=0.85;\n';
 
 
         // Find top containers
@@ -1844,7 +2023,7 @@ function ptoBuildColorMap(keys) {
                 const errorColor = getErrorColor(containerName);
                 const fillColor = errorColor || getNodeColor(containerName);
             const displayName = formatContainerDisplay(containerName);
-            dotSource += `${indent}"${containerName}" [fillcolor="${fillColor}", label="${displayName}"];\n`;
+            dotSource += `${indent}"${containerName}" [fillcolor="${fillColor}", label="${displayName}", shape=box, width=5.07, height=0.64, fixedsize=true, fontsize=16${layoutGroupAttr(containerName)}];\n`;
             return;
         }
         
@@ -1884,17 +2063,17 @@ function ptoBuildColorMap(keys) {
                         const errorColor = getErrorColor(child);
                         const fillColor = errorColor || getNodeColor(child);
                         const childDisplayName = graph_node_display_names[child] || graph_node_name_to_without_suffix[child] || child;
-                        dotSource += `${indent}  "${child}" [label="${childDisplayName}", shape=box, width=0.7, height=0.32, style="filled", fillcolor="${fillColor}"];\n`;
+                        dotSource += `${indent}  "${child}" [label="${childDisplayName}", shape=box, width=3.31, height=0.69, fixedsize=true, fontsize=14, style="filled", fillcolor="${fillColor}"${layoutGroupAttr(child)}];\n`;
                     } else if (nodeData.node_type === "Input" || nodeData.node_type === "Output") {
                         const errorColor = getErrorColor(child);
                         const fillColor = errorColor || getNodeColor(child);
                         const childDisplayName = graph_node_display_names[child] || graph_node_name_to_without_suffix[child] || child;
-                        dotSource += `${indent}  "${child}" [label="${childDisplayName}", shape=box, width=1.2, height=0.5, style="filled", fillcolor="${fillColor}"];\n`;
+                        dotSource += `${indent}  "${child}" [label="${childDisplayName}", shape=box, width=2.92, height=0.69, fixedsize=true, fontsize=14, style="filled", fillcolor="${fillColor}"${layoutGroupAttr(child)}];\n`;
                     } else {
                         const errorColor = getErrorColor(child);
                         const fillColor = errorColor || getNodeColor(child);
                         const childDisplayName = graph_node_display_names[child] || graph_node_name_to_without_suffix[child] || child;
-                        dotSource += `${indent}  "${child}" [fillcolor="${fillColor}", label="${childDisplayName}"];\n`;
+                        dotSource += `${indent}  "${child}" [fillcolor="${fillColor}", label="${childDisplayName}", shape=box, width=5.07, height=0.64, fixedsize=true, fontsize=16${layoutGroupAttr(child)}];\n`;
                     }
                 }
             }
@@ -1914,20 +2093,37 @@ function ptoBuildColorMap(keys) {
                     const errorColor = getErrorColor(node);
                     const fillColor = errorColor || getNodeColor(node);
                     const nodeDisplayName = graph_node_display_names[node] || graph_node_name_to_without_suffix[node] || node;
-                    dotSource += `  "${node}" [shape=box, width=0.7, height=0.32, fillcolor="${fillColor}", label="${nodeDisplayName}", style="filled"];\n`;
+                    dotSource += `  "${node}" [shape=box, width=3.31, height=0.69, fixedsize=true, fontsize=14, fillcolor="${fillColor}", label="${nodeDisplayName}", style="filled"${layoutGroupAttr(node)}];\n`;
                 } else if (data.node_type === "Input" || data.node_type === "Output") {
                     const errorColor = getErrorColor(node);
                     const fillColor = errorColor || getNodeColor(node);
                     const nodeDisplayName = graph_node_display_names[node] || graph_node_name_to_without_suffix[node] || node;
-                    dotSource += `  "${node}" [shape=box, width=1.2, height=0.5, fillcolor="${fillColor}", label="${nodeDisplayName}", style="filled"];\n`;
+                    dotSource += `  "${node}" [shape=box, width=2.92, height=0.69, fixedsize=true, fontsize=14, fillcolor="${fillColor}", label="${nodeDisplayName}", style="filled"${layoutGroupAttr(node)}];\n`;
                 } else {
                     const errorColor = getErrorColor(node);
                     const fillColor = errorColor || getNodeColor(node);
                     const nodeDisplayName = graph_node_display_names[node] || graph_node_name_to_without_suffix[node] || node;
-                    dotSource += `  "${node}" [fillcolor="${fillColor}", label="${nodeDisplayName}"];\n`;
+                    dotSource += `  "${node}" [fillcolor="${fillColor}", label="${nodeDisplayName}", shape=box, width=5.07, height=0.64, fixedsize=true, fontsize=16${layoutGroupAttr(node)}];\n`;
                 }
             }
         }
+
+        // Translate schema visual_layout rows into Dot rank constraints. This
+        // keeps the main x lane centered and places Parameter/Weight inputs or
+        // State/Cache auxiliaries horizontally beside their consumer.
+        const layoutRows = new Map();
+        Object.keys(adj_list_collapsed_nodes).forEach((nodeName) => {
+            const point = activeVisualLayoutNodes.get(nodeName);
+            if (!point) return;
+            const rowKey = String(Math.round(point.y));
+            if (!layoutRows.has(rowKey)) layoutRows.set(rowKey, []);
+            layoutRows.get(rowKey).push({ nodeName, x: point.x });
+        });
+        layoutRows.forEach((row) => {
+            if (row.length < 2) return;
+            row.sort((left, right) => left.x - right.x);
+            dotSource += `  { rank=same; ${row.map(({ nodeName }) => `"${nodeName}"`).join('; ')}; }\n`;
+        });
 
         // Add all edges
         const emittedEdges = new Set();
@@ -1951,6 +2147,12 @@ function ptoBuildColorMap(keys) {
 
                 let edgeLabelFontSize = "10";
                 let edgeAttrs = `[fontsize="${edgeLabelFontSize}"`;
+
+                const sourceLayout = activeVisualLayoutNodes.get(node);
+                const targetLayout = activeVisualLayoutNodes.get(edge.target);
+                if (sourceLayout && targetLayout && Math.abs(sourceLayout.y - targetLayout.y) < 1) {
+                    edgeAttrs += `, constraint=false`;
+                }
 
                 if (edge.edge_data_id) edgeAttrs += `, edge_data_id="${edge.edge_data_id}"`;
                 if (edge.is_implied_edge) edgeAttrs += `, is_implied_edge="true"`;
@@ -2079,14 +2281,23 @@ function ptoBuildColorMap(keys) {
             renderGraphvizSvg();
         } else {
             const dotSource = generateDotSource(adj_list, ancestor_map);
+            try {
+                graphData = vizInstance.renderJSON(dotSource);
+                // Extract the graph data with positions from Graphviz
+                const extractedGraphData = extractGraphData(graphData);
+                createGraph(extractedGraphData);
 
-            graphData = vizInstance.renderJSON(dotSource)
-            // Extract the graph data with positions from Graphviz
-            const extractedGraphData = extractGraphData(graphData);
-            createGraph(extractedGraphData);
-
-            // Needed to get the right vp coverage when containers are expanded
-            calculateContainerNodeCounts();
+                // Needed to get the right vp coverage when containers are expanded
+                calculateContainerNodeCounts();
+                window.__PTO_MODEL_GRAPHVIZ_DEBUG__ = { dotSource, error: null };
+            } catch (error) {
+                window.__PTO_MODEL_GRAPHVIZ_DEBUG__ = { dotSource, error };
+                console.error("Model Graphviz layout failed", error, dotSource);
+                const graphRoot = document.getElementById("graph_8738e552-e764-4a57-839a-6321bc3ae7d3");
+                if (graphRoot) {
+                    graphRoot.innerHTML = `<pre style="margin:24px;color:#ffb4ab;white-space:pre-wrap">${String(error?.message || error)}</pre>`;
+                }
+            }
         }
     }
 
@@ -2448,11 +2659,12 @@ function ptoBuildColorMap(keys) {
             .attr("class", "edge-label_8738e552-e764-4a57-839a-6321bc3ae7d3")
             .attr("transform", `translate(${pointAtStart.x}, ${pointAtStart.y})`);
             
+            const visibleDims = edgeData.dims.split(" | ").slice(0, 3).join(" | ");
             const text = labelGroup.append("text")
             .attr("text-anchor", "middle")
             .attr("dominant-baseline", "central")
             .style("font-size", "6pt")
-            .text(edgeData.dims)
+            .text(visibleDims)
             // .attr("transform", `rotate(${angle})`)
             .attr("fill", GRAPHVIZ_TEXT_COLOR)
             .attr("stroke", GRAPHVIZ_DARK_BG)
@@ -3077,10 +3289,13 @@ function ptoBuildColorMap(keys) {
         Object.keys(target).forEach(key => delete target[key]);
     }
 
-    function schemaNodeType(kind) {
+    function schemaNodeType(kind, stateType) {
         const normalized = String(kind || "").toLowerCase();
+        const normalizedStateType = String(stateType || "").toLowerCase();
         if (normalized === "module") return "Module";
         if (normalized === "op" || normalized === "operation" || normalized === "operator") return "Operation";
+        if (normalized === "parameter" || normalized === "weight") return "Parameter";
+        if (normalized === "state" && normalizedStateType === "parameter") return "Parameter";
         if (normalized === "state" || normalized === "buffer" || normalized === "cache") return "State";
         if (normalized === "input") return "Input";
         if (normalized === "output") return "Output";
@@ -3173,7 +3388,7 @@ function ptoBuildColorMap(keys) {
         nodes.forEach((node, index) => {
             const id = schemaId(node.id, `node_${index + 1}`, usedIds);
             nodeIdMap.set(String(node.id || id), id);
-            const nodeType = schemaNodeType(node.kind);
+            const nodeType = schemaNodeType(node.kind, node.state_type);
             const label = String(node.label || node.name || node.id || id);
             adj_list[id] = { edges: [], failed: false, node_type: nodeType };
             graph_node_name_to_without_suffix[id] = label;
@@ -3215,6 +3430,29 @@ function ptoBuildColorMap(keys) {
                 },
                 extra_repr: group.badge || label
             };
+        });
+
+        activeVisualLayoutNodes = new Map();
+        const rawLayoutNodes = schema.visual_layout?.nodes || {};
+        Object.entries(rawLayoutNodes).forEach(([rawId, point]) => {
+            const id = nodeIdMap.get(String(rawId));
+            const x = Number(point?.x);
+            const y = Number(point?.y);
+            if (id && Number.isFinite(x) && Number.isFinite(y)) {
+                activeVisualLayoutNodes.set(id, { x, y });
+            }
+        });
+        groups.forEach((group) => {
+            const groupId = groupIdMap.get(String(group.id || ""));
+            const representative = (group.nodes || [])
+                .map((rawId) => rawLayoutNodes[rawId])
+                .find((point) => Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.y)));
+            if (groupId && representative) {
+                activeVisualLayoutNodes.set(groupId, {
+                    x: Number(representative.x),
+                    y: Number(representative.y)
+                });
+            }
         });
 
         nodes.forEach((node) => {

@@ -29,9 +29,9 @@
 .pto-tmchart__plot-hit { fill: transparent; cursor: crosshair; }
 
 /* hover tooltip */
-.pto-tmchart__tip { position: absolute; z-index: 6; pointer-events: none; min-width: 120px; max-width: 240px; padding: 6px 8px; background: var(--surface-4); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow-sm, 0 4px 12px rgba(0,0,0,.35)); color: var(--foreground); font-size: 11px; line-height: 1.5; opacity: 0; transition: opacity .1s; }
+.pto-tmchart__tip { position: absolute; z-index: 6; pointer-events: none; min-width: 120px; max-width: 240px; padding: 6px 8px; background: var(--surface-4); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow-sm, 0 4px 12px rgba(0,0,0,.35)); color: var(--foreground); font-size: 12px; line-height: 1.5; opacity: 0; transition: opacity .1s; }
 .pto-tmchart__tip.is-visible { opacity: 1; }
-.pto-tmchart__tip-step { font-family: var(--font-mono); font-size: 10px; color: var(--foreground-secondary); margin-bottom: 3px; }
+.pto-tmchart__tip-step { font-family: var(--font-mono); font-size: 12px; color: var(--foreground-secondary); margin-bottom: 3px; }
 .pto-tmchart__tip-row { display: flex; align-items: center; gap: 6px; }
 .pto-tmchart__tip-row i { width: 9px; height: 3px; border-radius: 2px; display: inline-block; flex: 0 0 auto; }
 .pto-tmchart__tip-row b { margin-left: auto; padding-left: 12px; font-family: var(--font-mono); font-weight: var(--font-weight-medium); }

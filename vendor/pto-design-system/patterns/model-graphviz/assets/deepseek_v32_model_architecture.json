@@ -48,6 +48,18 @@
       "op_type": "Embedding"
     },
     {
+      "id": "embedding_weight",
+      "kind": "state",
+      "label": "Embedding Weight",
+      "state_type": "parameter",
+      "role": "vocabulary embedding parameter tensor",
+      "attrs": {
+        "parameter_of": "embedding",
+        "shape": "[V,H]",
+        "dtype": "bf16"
+      }
+    },
+    {
       "id": "decoder_layer",
       "kind": "module",
       "label": "Decoder Layer",
@@ -76,6 +88,21 @@
       "kind": "op",
       "label": "KV Projection",
       "op_type": "Linear"
+    },
+    {
+      "id": "attention_projection_weights",
+      "kind": "state",
+      "label": "Attention Projection Weights",
+      "state_type": "parameter",
+      "role": "Q/KV/O projection parameter tensors",
+      "attrs": {
+        "parameter_of": [
+          "query_projection",
+          "kv_projection",
+          "attention_output"
+        ],
+        "dtype": "bf16"
+      }
     },
     {
       "id": "rope_cache",
@@ -132,6 +159,17 @@
       "module_type": "feed_forward"
     },
     {
+      "id": "dense_mlp_weights",
+      "kind": "state",
+      "label": "Dense MLP Weights",
+      "state_type": "parameter",
+      "role": "dense FFN gate/up/down parameter tensors",
+      "attrs": {
+        "parameter_of": "dense_mlp",
+        "dtype": "bf16"
+      }
+    },
+    {
       "id": "moe",
       "kind": "module",
       "label": "MoE",
@@ -142,6 +180,18 @@
       "kind": "op",
       "label": "Router Linear",
       "op_type": "LinearRouter"
+    },
+    {
+      "id": "router_weight",
+      "kind": "state",
+      "label": "Router Weight",
+      "state_type": "parameter",
+      "role": "MoE router gate parameter tensor",
+      "attrs": {
+        "parameter_of": "router",
+        "shape": "[H,E]",
+        "dtype": "bf16/fp32"
+      }
     },
     {
       "id": "topk_expert_select",
@@ -156,10 +206,33 @@
       "op_type": "MLP"
     },
     {
+      "id": "expert_weights",
+      "kind": "state",
+      "label": "Routed Expert Weights",
+      "state_type": "parameter",
+      "role": "routed expert parameter bank",
+      "attrs": {
+        "parameter_of": "expert_mlp",
+        "routed_experts": 256,
+        "dtype": "bf16"
+      }
+    },
+    {
       "id": "shared_expert",
       "kind": "op",
       "label": "Shared Expert MLP",
       "op_type": "MLP"
+    },
+    {
+      "id": "shared_expert_weights",
+      "kind": "state",
+      "label": "Shared Expert Weights",
+      "state_type": "parameter",
+      "role": "shared expert MLP parameter tensors",
+      "attrs": {
+        "parameter_of": "shared_expert",
+        "dtype": "bf16"
+      }
     },
     {
       "id": "moe_combine",
@@ -178,6 +251,18 @@
       "kind": "op",
       "label": "LM Head Linear",
       "op_type": "Linear"
+    },
+    {
+      "id": "lm_head_weight",
+      "kind": "state",
+      "label": "LM Head Weight",
+      "state_type": "parameter",
+      "role": "vocabulary output projection parameter tensor",
+      "attrs": {
+        "parameter_of": "lm_head",
+        "shape": "[H,V]",
+        "dtype": "bf16"
+      }
     },
     {
       "id": "logits",
@@ -206,6 +291,21 @@
         "dtype": "int64",
         "constraints": [
           "V=129280"
+        ]
+      }
+    },
+    {
+      "id": "e_embedding_weight",
+      "source": "embedding_weight",
+      "target": "embedding",
+      "tensor": {
+        "name": "embedding.weight",
+        "shape": "[V,H]",
+        "dtype": "bf16",
+        "role": "parameter",
+        "constraints": [
+          "V=129280",
+          "H=7168"
         ]
       }
     },
@@ -260,6 +360,16 @@
         "name": "kv_input",
         "shape": "[B,T,H]",
         "dtype": "bf16"
+      }
+    },
+    {
+      "id": "e_attention_weights_q",
+      "source": "attention_projection_weights",
+      "target": "query_projection",
+      "tensor": {
+        "name": "q/kv/o projection weights",
+        "dtype": "bf16",
+        "role": "parameter"
       }
     },
     {
@@ -383,6 +493,19 @@
       }
     },
     {
+      "id": "e_dense_weights",
+      "source": "dense_mlp_weights",
+      "target": "dense_mlp",
+      "tensor": {
+        "name": "dense_mlp_weights",
+        "dtype": "bf16",
+        "role": "parameter",
+        "constraints": [
+          "layers=0-2"
+        ]
+      }
+    },
+    {
       "id": "e_selector_moe",
       "source": "ffn_selector",
       "target": "moe",
@@ -403,6 +526,20 @@
         "name": "router_input",
         "shape": "[B*T,H]",
         "dtype": "bf16"
+      }
+    },
+    {
+      "id": "e_router_weight",
+      "source": "router_weight",
+      "target": "router",
+      "tensor": {
+        "name": "router.weight",
+        "shape": "[H,E]",
+        "dtype": "bf16/fp32",
+        "role": "parameter",
+        "constraints": [
+          "E=256"
+        ]
       }
     },
     {
@@ -432,6 +569,19 @@
       }
     },
     {
+      "id": "e_expert_weights",
+      "source": "expert_weights",
+      "target": "expert_mlp",
+      "tensor": {
+        "name": "expert_bank.weights",
+        "dtype": "bf16",
+        "role": "parameter",
+        "constraints": [
+          "E=256"
+        ]
+      }
+    },
+    {
       "id": "e_moe_shared",
       "source": "moe",
       "target": "shared_expert",
@@ -439,6 +589,16 @@
         "name": "shared_expert_input",
         "shape": "[B,T,H]",
         "dtype": "bf16"
+      }
+    },
+    {
+      "id": "e_shared_expert_weights",
+      "source": "shared_expert_weights",
+      "target": "shared_expert",
+      "tensor": {
+        "name": "shared_expert.weights",
+        "dtype": "bf16",
+        "role": "parameter"
       }
     },
     {
@@ -489,6 +649,20 @@
         "name": "hidden_states",
         "shape": "[B,T,H]",
         "dtype": "bf16"
+      }
+    },
+    {
+      "id": "e_lm_head_weight",
+      "source": "lm_head_weight",
+      "target": "lm_head",
+      "tensor": {
+        "name": "lm_head.weight",
+        "shape": "[H,V]",
+        "dtype": "bf16",
+        "role": "parameter",
+        "constraints": [
+          "V=129280"
+        ]
       }
     },
     {
@@ -558,6 +732,10 @@
         "x": 480,
         "y": 260
       },
+      "embedding_weight": {
+        "x": 210,
+        "y": 260
+      },
       "decoder_layer": {
         "x": 480,
         "y": 365
@@ -578,13 +756,17 @@
         "x": 480,
         "y": 640
       },
+      "attention_projection_weights": {
+        "x": 40,
+        "y": 640
+      },
       "rope_cache": {
-        "x": 130,
+        "x": 780,
         "y": 640
       },
       "kv_cache": {
-        "x": 670,
-        "y": 640
+        "x": 780,
+        "y": 825
       },
       "sparse_indexer": {
         "x": 385,
@@ -614,12 +796,20 @@
         "x": 290,
         "y": 1220
       },
+      "dense_mlp_weights": {
+        "x": 90,
+        "y": 1220
+      },
       "moe": {
         "x": 650,
         "y": 1220
       },
       "router": {
         "x": 560,
+        "y": 1325
+      },
+      "router_weight": {
+        "x": 320,
         "y": 1325
       },
       "topk_expert_select": {
@@ -630,8 +820,16 @@
         "x": 560,
         "y": 1510
       },
+      "expert_weights": {
+        "x": 90,
+        "y": 1510
+      },
       "shared_expert": {
-        "x": 745,
+        "x": 780,
+        "y": 1510
+      },
+      "shared_expert_weights": {
+        "x": 1000,
         "y": 1510
       },
       "moe_combine": {
@@ -644,6 +842,10 @@
       },
       "lm_head": {
         "x": 480,
+        "y": 1830
+      },
+      "lm_head_weight": {
+        "x": 210,
         "y": 1830
       },
       "logits": {
@@ -659,9 +861,11 @@
           "token_ids",
           "transformer",
           "embedding",
+          "embedding_weight",
           "decoder_layer",
           "final_norm",
           "lm_head",
+          "lm_head_weight",
           "logits"
         ],
         "children": [
@@ -692,6 +896,7 @@
           "mla",
           "query_projection",
           "kv_projection",
+          "attention_projection_weights",
           "rope_cache",
           "kv_cache",
           "sparse_indexer",
@@ -707,6 +912,7 @@
           "ffn_norm",
           "ffn_selector",
           "dense_mlp",
+          "dense_mlp_weights",
           "moe"
         ],
         "children": [
@@ -719,9 +925,12 @@
         "label": "MoE",
         "nodes": [
           "router",
+          "router_weight",
           "topk_expert_select",
           "expert_mlp",
+          "expert_weights",
           "shared_expert",
+          "shared_expert_weights",
           "moe_combine"
         ],
         "badge": "routed + shared experts"

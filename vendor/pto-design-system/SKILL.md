@@ -9,7 +9,7 @@ description: "PTO 设计系统优先的页面创建与改造规范。用于创�
 
 ## 使用方式
 
-1. 把整个 `design-system-share/` 文件夹交给 AI，包括这个文件、`DESIGN.md`、`design-system-preview.html`、`tokens/`、`css/`、`references/`、`patterns/`。
+1. 把整个 `design-system-share/` 文件夹交给 AI，包括这个文件、`references/DESIGN.md`、`design-system-preview.html`、`tokens/`、`css/`、`references/`、`patterns/`。
 2. 先判断任务入口，但所有 PTO 页面最终都进入「工作流 C：统一 Pattern-first 页面流程」：
    - 从产品需求新建页面：先用「工作流 A」做需求拆解，再进入工作流 C。
    - 把已有 demo 改成 PTO 风格：先用「工作流 B」做 shell-first retrofit，再进入工作流 C。
@@ -17,6 +17,8 @@ description: "PTO 设计系统优先的页面创建与改造规范。用于创�
 3. 所有完整 PTO 页面都必须以 `patterns/ide-frame` 作为基础 shell。`design-system-preview.html` 只用于查基础组件外观；完整页面、复杂图谱、workbench、timeline、architecture 必须读取对应 `patterns/<pattern-id>/pattern.json`。
 
 核心原则：所有 PTO 页面 = `ide-frame` 基础 shell + pattern-first 内容组合。产品页只负责 domain data、pane content、commands 和必要 glue code；不要新造按钮、toggle、badge、card、panel、间距、色彩或边框语言。
+
+可读性基线：正文、描述、Inspector 说明、帮助与空状态文案使用 `--type-body`，即 14px / 1.5；紧凑控件、表格、树、表单 label、代码和 metadata 不低于 12px；11px 只用于短 badge、eyebrow、坐标轴等 micro label，不得承载正文。低于 11px 默认禁止，只有可缩放 data-viz 内部标注可以作为 pattern contract 中有理由、有 tooltip/detail fallback 的显式例外。不要用 `zoom`、`transform: scale(...)` 或更小正文 token 解决拥挤，应调整 pane、换行、截断或滚动。
 
 页面 chrome 基线：PTO 页面默认使用 `ide-frame` 提供的透明顶栏和 workarea。不要加实色 header 背景、装饰性 header band，或 header 下方额外大间距，除非用户明确要求分离式页面 chrome。第一个内容 shell 应贴近 header，下钻到 shell/pane 内部再使用 token 间距。
 
@@ -30,7 +32,7 @@ IDE frame 基线：所有 PTO 页面必须用 `patterns/ide-frame` 作为外框�
 
 按顺序读取：
 
-1. `DESIGN.md`：完整系统规范，包括 theme、surface、palette、typography、spacing、component、governance。
+1. `references/DESIGN.md`：完整系统规范，包括 theme、surface、palette、typography、spacing、component、governance。
 2. `references/quick-reference.md`：tokens 和 class 速查。
 3. `references/retrofit-container-audit.md`：retrofit 时删除 legacy card/panel decoration 的强制规则。
 4. `patterns/patterns.json`：IDE frame、workbench split、graph、timeline、architecture、playback 等 pattern 注册表。
@@ -39,6 +41,8 @@ IDE frame 基线：所有 PTO 页面必须用 `patterns/ide-frame` 作为外框�
 7. `design-system-preview.html`：只作为基础组件辅助预览，不作为完整页面或复杂 pattern 的权威来源。
 
 layout-heavy 或 visualization-heavy 工作必须先读匹配的 `patterns/<pattern-id>/pattern.json`。`pattern.json` 是 allowed overrides、forbidden overrides、required APIs 的权威 contract。
+
+完成前从设计系统根目录运行 `rtk node scripts/audit-typography.mjs <module-or-css-path>`；修复所有 prose 低于 14px、普通 UI 低于 12px、未批准的低于 11px 字号、typography token 混用和页面根缩放。修改共享 tokens 或 patterns 时，同时运行不带 target 的 `rtk node scripts/audit-typography.mjs`。
 
 ## 工作流 A：需求拆解（随后进入统一 Pattern-first 流程）
 
@@ -53,6 +57,7 @@ layout-heavy 或 visualization-heavy 工作必须先读匹配的 `patterns/<patt
 - labels / badges
 - card、inspector、popup
 - input、select
+- typography roles：body、body-sm、label、micro、mono
 - data-viz-only patterns
 - IDE frame、workbench split、graph、timeline、architecture、playback patterns
 
@@ -74,6 +79,7 @@ layout-heavy 或 visualization-heavy 工作必须先读匹配的 `patterns/<patt
 
 - `css/style.css` 里的 HTML class。
 - `tokens/*.css` 里的 CSS variables，例如 `var(--surface-2)`、`var(--foreground-secondary)`、`var(--space-3)`。
+- typography 使用 `font: var(--type-body)`、`var(--type-body-sm)`、`var(--type-label)`、`var(--type-micro)`、`var(--type-mono)`；不要把 font shorthand、font family 和 text color 混用在同一个 custom property。
 - flex/grid 做局部 layout；模块私有 layout class 可以存在。
 - 必须以 `patterns/ide-frame` 作为页面 shell，再消费匹配的 `patterns/`，例如 graph node、swimlane、memory tier、floating playback、workbench split kernel。
 
@@ -115,6 +121,7 @@ standalone PTO 页面加载 `patterns/ide-frame/pattern.css` 后，应直接继�
 - Initialization：先加载 `patterns/workbench-shell/pattern.js`，再加载 `patterns/ide-frame/pattern.js`，然后调用 `window.PtoIdeFrame.init(frame)` 或 `initAll()`。
 - Cursor tracking：有 `data-cursor-dots="true"` 时，pointer movement 必须更新 `--ide-cursor-x/y`、`--ide-cursor-alpha`、`--ide-dot-opacity`，pointer leave 必须把 alpha 和 dot opacity 重置为 `0`。
 - Theme：dark/light 必须一致。不要默认状态里出现 light business canvas + dark IDE pane 的混搭，除非页面明确提供 theme switch，并且两个状态都检查过。
+- Typography：dense 只限 pane header、tab、status strip 等 chrome；pane 正文和 Inspector prose 使用 14px `--type-body`。最终在 100% browser zoom 下检查 computed font size。
 
 architecture、graph、map pane 在 IDE frame 内时还要检查：
 
@@ -130,9 +137,18 @@ architecture、graph、map pane 在 IDE frame 内时还要检查：
 | PTO IDE / workbench shell | `patterns/ide-frame/pattern.json` |
 | 可拖拽 horizontal / vertical / nested panes | `patterns/workbench-shell/pattern.json` |
 | execution trace、swimlane、timeline task bars | `patterns/swimlane-task/pattern.json` |
+| NCHW / A1 / Load3D / Conv / tiling / code-recovery 三维 Tensor 体素 | `patterns/tensor-volume-canvas/pattern.json` |
 | Pass-IR op、tensor、incast、outcast、group node cards | `patterns/pass-ir-graph-node/pattern.json` |
+| 二维 Matrix Tensor、逐元素格、大矩阵聚合格 | `patterns/matrix-canvas/pattern.json` |
 | TorchVista、model Graphviz、Qwen-7B / openPangu-2.0-Flash 折叠模型架构图、report overlays | `patterns/model-graphviz/pattern.json` |
+| 模型训练 evidence、phase、edge tags、related-node overlay | `patterns/model-training-graphviz/pattern.json` |
+| openPangu 深度堆叠模型架构、iso/front/right、平行标注 | `patterns/model-architecture-3d-deck/pattern.json` |
+| Three.js model-to-rank 放置、TP/PP/EP/EDP ownership | `patterns/model-parallel-rank-deck/pattern.json` |
+| 模型训练流、梯度、loss、metric、Layer telemetry sidecar | `patterns/model-architecture-training-sidecar/pattern.json` |
+| 训练指标曲线、异常、brush、step cursor | `patterns/training-metrics-chart/pattern.json` |
 | 完整 memory architecture diagrams | `patterns/memory-architecture/pattern.json` |
+| 硬件架构 viewport toolbar、zoom readout、iframe readiness、消息协议 | `patterns/hardware-architecture-viewport/pattern.json` |
+| UB / L1 / L0C tensor lifetime、buffer offset、peak usage、reuse links | `patterns/memory-reuse-viewer/pattern.json` |
 | AIC / AIV 内部对象壳 | `patterns/aic-core-object/pattern.json` 或 `patterns/aiv-core-object/pattern.json` |
 | Floating playback、step、pause、scrubber、collapsed playback chrome | 先问是否需要 playback；需要时再读 `patterns/floating-playback-control/pattern.json` |
 
@@ -146,6 +162,14 @@ architecture、graph、map pane 在 IDE frame 内时还要检查：
 4. 确认 `patterns/<pattern-id>/pattern.html` 在 preview 中调用 API，能被视觉验证。
 
 四点不一致时，先修共享 pattern contract 或 preview，再给产品页消费。不要让 preview card 承诺未导出、未执行的行为。
+
+#### Tensor Volume Canvas 复用规则
+
+For fixed-view three-dimensional tensor volumes, reuse pattern id `tensor-volume-canvas`. Load `patterns/tensor-volume-canvas/pattern.css` and `patterns/tensor-volume-canvas/pattern.js`, then call `window.PtoTensorVolumeCanvas.render(canvas, scene, options)`. The consuming page owns Load3D, Conv, tiling, code-recovery, playback, and selection rules and maps them only to the business-neutral `extent`, `axes`, and `voxels` scene contract. Use the returned controller's `update`, `resize`, and `destroy` lifecycle methods, and call `resize()` after theme changes so Canvas paint resolves the new semantic token values. Do not copy the fixed projection, voxel geometry, depth sorting, DPR, or ResizeObserver logic; do not add an iframe, camera, pan, zoom, drag interaction, private palette, or product chrome to the Pattern.
+
+#### Memory Reuse Viewer 复用规则
+
+For UB, L1, and L0C tensor lifetime or reuse analysis, reuse pattern id `memory-reuse-viewer`. Load its `pattern.css` and `pattern.js`, then call `window.PtoMemoryReuseViewer.render(container, data, options)` with Memory.txt-derived data or the preview fixture from `createDemoData`. Keep the returned `resize` and `destroy` lifecycle attached to the host. Mount the viewer directly inside an unscaled panel; do not place it inside the pan/zoom architecture canvas, copy its Canvas lifetime renderer, mutate generated tensor rectangles, or wrap it in an additional bordered preview frame.
 
 #### Memory Architecture 发布规则
 
@@ -221,6 +245,10 @@ PTO frame blocks 规则：
 - 所有 PTO 页面都必须 pattern-first；产品页只负责数据、pane content、domain commands 和 glue code，不要从空白 HTML/CSS 发明页面结构。
 - 不要创建私有 button / toggle / badge / card 系统。
 - 有现成 token 时，不要 hard-code colors、radii、shadows、font sizes、borders、spacing。
+- 正文、描述、Inspector prose、帮助和空状态文案必须使用 14px `--type-body`；不能用 `body-sm`、label、micro 或 metadata 样式代替。
+- 表单 label、按钮、表格、树、代码与 metadata 不得低于 12px；11px 只用于短 micro label；低于 11px 必须是 pattern contract 明确批准的 data-viz 例外。
+- 不要用 `zoom`、`transform: scale(...)`、页面根字号缩放或更小字号解决布局拥挤。
+- `--type-*` 只用于 `font`，`--font-*` 只用于 font family，`--foreground*` 只用于 text color；不要创建或覆盖同时承担多种含义的 typography token。
 - 不要保留 legacy card / panel decoration 后只把颜色换成 token。
 - generic cards / panels / inspector blocks 不要保留 `border-left`、`border-inline-start`、inset left `box-shadow`、pseudo-element rails、side gradients，除非它们编码数据或是获批的 selected state。
 - 不要把 border 或 outline 作为主要视觉语言。避免 border-heavy cards、outlined panels、outline-only buttons、nested stroked containers、decorative outlines。优先用共享 fills、elevation、spacing、typography、opacity、state tokens。只在必要 pane boundaries、form controls、accessibility focus rings、table/grid separators、data-viz encodings，或 pattern contract 明确要求时保留细 border/outline。
@@ -248,6 +276,7 @@ PTO frame blocks 规则：
 - 改 activity rail icon set、漏掉左侧 rail，或用页面私有 icon 替代 Explorer / Search / Source control / Terminal。
 - 添加用户没要求的右上角工具 icon 或 tag chips。
 - 做成 border/outline-heavy 页面，所有 card、panel、button、nested container 都描边，而不是用 PTO fills 和 spacing。
+- 为了塞下更多内容把正文降到 12px 或更小，把 11px label 用于整段说明，或缩放整个 pane。
 - 文件树视觉上关闭了，但 gutter 或窄残留 pane 还在。
 - inspector、explorer、bottom panel 按钮只能打开一次，第二次不能关闭。
 - 启用 cursor dots 但没有 pointer tracking 和 pointer-leave reset。
@@ -286,6 +315,7 @@ PTO frame blocks 规则：
 - 获批视觉是否已吸收到共享系统。
 - 工作流 B：完整 migration table。
 - 工作流 B：container decoration residue check 结果。
+- Typography audit 结果：正文 computed font size、最小普通 UI 字号，以及所有低于 11px 的 data-viz 例外。
 
 ## 参考文件
 
@@ -294,4 +324,4 @@ PTO frame blocks 规则：
 - `references/preview-gate.md`：审批流程。
 - `patterns/patterns.json`：共享 pattern registry。
 - `patterns/<pattern-id>/pattern.json`：每个 pattern 的权威复用 contract。
-- `DESIGN.md`：设计系统权威规范。
+- `references/DESIGN.md`：设计系统权威规范。
