@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Product_Planning/模型推理相关访谈洞察.md",
+                "file": "Product_Planning/推理工程诊断工作台_产品设计.md",
                 "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "模型推理相关访谈洞察"
+              "title": "推理工程诊断工作台_产品设计"
             }
           }
         ]
@@ -187,6 +187,9 @@
   },
   "active": "0c4452cf167e25a6",
   "lastOpenFiles": [
+    "Product_Planning/模型推理相关访谈洞察.md",
+    "Product_Planning/推理工程诊断工作台_产品设计.md",
+    "Product_Planning/推理工程诊断工作台_产品设计.md.tmp.18908.d45d263d9605",
     "vendor/pto-design-system/patterns/patterns.json",
     "vendor/pto-design-system/patterns/model-graphviz/pattern.json",
     "vendor/pto-design-system/patterns/model-graphviz/pattern.js",
@@ -197,8 +200,6 @@
     "vendor/pto-design-system/tokens/tokens.json",
     "vendor/pto-design-system/tokens/tokens.js",
     "vendor/pto-design-system/tokens/semantic.css",
-    "vendor/pto-design-system/tokens/generate_tokens.py",
-    "vendor/pto-design-system/tokens/components.css",
     "vendor/pto-design-system/references/quick-reference.md",
     "vendor/pto-design-system/references/retrofit-container-audit.md",
     "vendor/pto-design-system/references/pto-design-system-map.md",
@@ -228,7 +229,6 @@
     "vendor/pto-design-system.backup-20260806-115127/SKILL.md",
     "vendor/pto-design-system.backup-20260806-115127/README.md",
     "Product_Planning/PyPTO3.0_Toolkit_产品功能规划.md",
-    "Product_Planning/模型推理相关访谈洞察.md",
     "Design/assets/toolkit-studio.png",
     "Design/assets/memory-viz-demo.png"
   ]
