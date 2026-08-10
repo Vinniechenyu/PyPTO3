@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Product_Planning/推理工程诊断工作台_产品设计.md",
+                "file": "Product_Planning/PyPTO3.0_Toolkit_产品功能规划.md",
                 "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "推理工程诊断工作台_产品设计"
+              "title": "PyPTO3.0_Toolkit_产品功能规划"
             }
           }
         ]
@@ -187,19 +187,26 @@
   },
   "active": "0c4452cf167e25a6",
   "lastOpenFiles": [
+    "Data/_jit_decode_fwd_layers_20260625_184941/__pycache__/kernel_config.cpython-310.pyc",
+    "Data/_jit_decode_fwd_layers_20260625_184941/__pycache__",
+    "Data/_jit_decode_fwd_layers_20260625_184941/report/perf_hints.log",
+    "Data/_jit_decode_fwd_layers_20260625_184941/report/memory_after_AllocateMemoryAddr.txt",
+    "Data/_jit_decode_fwd_layers_20260625_184941/report",
+    "Data/_jit_decode_fwd_layers_20260625_184941/ptoas/x_gamma0.pto",
+    "Data/_jit_decode_fwd_layers_20260625_184941/ptoas/x_gamma0.cpp",
+    "Data/_jit_decode_fwd_layers_20260625_184941/ptoas/v_seed.pto",
+    "Data/_jit_decode_fwd_layers_20260625_184941/ptoas/v_seed.cpp",
+    "Data/_jit_decode_fwd_layers_20260625_184941/ptoas/v_proj.pto",
+    "Data/_jit_decode_fwd_layers_20260625_184941/ptoas/v_proj.cpp",
+    "docs/华为昇腾CANN_Runtime与硬件关系学习指南.md",
+    "design-qa.md",
+    "AGENTS.md",
+    "Product_Planning/PyPTO3.0_Toolkit_产品功能规划.md",
+    "agent.md",
+    "Product_Planning/PyPTO_Studio_推理场景_产品设计.md",
     "Product_Planning/模型推理相关访谈洞察.md",
     "Product_Planning/推理工程诊断工作台_产品设计.md",
-    "Product_Planning/推理工程诊断工作台_产品设计.md.tmp.18908.d45d263d9605",
-    "vendor/pto-design-system/patterns/patterns.json",
-    "vendor/pto-design-system/patterns/model-graphviz/pattern.json",
-    "vendor/pto-design-system/patterns/model-graphviz/pattern.js",
-    "vendor/pto-design-system/patterns/model-graphviz/pattern.html",
-    "vendor/pto-design-system/patterns/model-graphviz/pattern.css",
     "vendor/pto-design-system/README.md",
-    "vendor/pto-design-system/tokens/foundation.css",
-    "vendor/pto-design-system/tokens/tokens.json",
-    "vendor/pto-design-system/tokens/tokens.js",
-    "vendor/pto-design-system/tokens/semantic.css",
     "vendor/pto-design-system/references/quick-reference.md",
     "vendor/pto-design-system/references/retrofit-container-audit.md",
     "vendor/pto-design-system/references/pto-design-system-map.md",
@@ -221,14 +228,7 @@
     "vendor/pto-design-system.backup-20260806-115127/patterns/model-graphviz/assets/openpangu_2_0_flash_model_architecture_validation.md",
     "vendor/pto-design-system.backup-20260806-115127/patterns/swimlane-task/README.md",
     "vendor/pto-design-system.backup-20260806-115127/references/retrofit-container-audit.md",
-    "vendor/pto-design-system.backup-20260806-115127/references/quick-reference.md",
-    "vendor/pto-design-system.backup-20260806-115127/references/pto-design-system-map.md",
-    "vendor/pto-design-system.backup-20260806-115127/references/DESIGN.md",
-    "vendor/pto-design-system.backup-20260806-115127/references/preview-gate.md",
     "vendor/pto-design-system.backup-20260806-115127/assets/fx.svg",
-    "vendor/pto-design-system.backup-20260806-115127/SKILL.md",
-    "vendor/pto-design-system.backup-20260806-115127/README.md",
-    "Product_Planning/PyPTO3.0_Toolkit_产品功能规划.md",
     "Design/assets/toolkit-studio.png",
     "Design/assets/memory-viz-demo.png"
   ]

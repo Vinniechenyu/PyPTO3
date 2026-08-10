@@ -715,7 +715,119 @@ MVP 必须形成闭环，不能只交付分散命令。
 
 ---
 
-## 13. 最终产品判断
+## 13. 术语解释
+
+本节解释本文中的核心术语。定义以 PyPTO 3.0 Toolkit 的产品语境为准；同一术语在其他系统中可能有更宽泛或不同的含义。
+
+### 13.1 产品、编译与硬件
+
+| 术语 | 解释 |
+|---|---|
+| PyPTO 3.0 Toolkit | 面向 NPU 模型与算子开发的一体化工具平台，串联开发、编译、运行、正确性验证、性能优化和服务化验证。文中的 Toolkit 指该产品整体，而非单个命令行工具。 |
+| NPU | Neural Processing Unit，神经网络处理器。针对矩阵、向量等 AI 计算优化的专用处理器。 |
+| DSL | Domain-Specific Language，领域专用语言。本文指用于描述算子计算、shape、layout、并行、依赖和内存意图的编程接口。 |
+| PyPTO / PTOAS / pto-isa | PyPTO 提供高层 Python DSL、IR 与编译编排；PTOAS 提供更低层的算子表达、同步和代码生成；pto-isa 提供机器可读的指令语义与硬件约束。 |
+| IR | Intermediate Representation，中间表示。源码在编译过程中转换成的结构化程序形式，供分析、优化和继续 lowering。 |
+| lowering | 将较高层、较抽象的程序表示逐步转换为更接近目标硬件的低层表示。 |
+| codegen | Code Generation，代码生成。把 IR 或 PTOAS 表示转换为目标指令或可执行产物的过程。 |
+| ISA | Instruction Set Architecture，指令集架构。规定硬件指令的语义、操作数、容量、同步要求及平台限制。 |
+| Pass | 编译流水线中的一次分析或变换步骤，例如改写 layout、融合算子或分配 buffer。 |
+| Pass Contract | Pass 契约。声明某个 Pass 所需的输入条件、允许进行的变化，以及输出必须保持的不变量。 |
+| verifier | 校验器。按规则检查 IR、Pass 结果、分布式上下文或服务配置是否合法；Pass verifier 特指每个编译 Pass 前后的语义与结构检查。 |
+| 不变量（invariant） | 在特定编译阶段前后必须始终成立的条件，例如输出不可丢失、依赖必须完整、shape 必须匹配。 |
+| op / kernel | op（operator）是计算图或 IR 中的操作；kernel 是在设备上执行某个算子或融合计算的具体程序。一个 kernel 可能实现一个或多个 op。 |
+| shape / dtype / layout | shape 表示张量各维度大小；dtype 表示元素数据类型；layout 表示数据在内存或硬件计算单元中的组织与映射方式。 |
+| tile / split / fusion | tile 是把大计算切成适合片上资源的小块；split 是按维度或工作量拆分计算；fusion 是把多个操作合并执行，以减少中间数据搬运和调度开销。 |
+| scope / memory space | scope 表示对象、依赖或操作生效的作用范围；memory space 表示数据所在的存储层级或区域，如 GM、UB、host memory。 |
+| GM / UB | GM（Global Memory）是容量较大但访问相对较慢的设备全局内存；UB（Unified Buffer）是容量较小、访问较快的片上缓冲区。 |
+| use-def | “使用—定义”关系，描述一个值在哪里产生、又在哪里被使用，是检查数据流完整性的基础。 |
+| alias | 两个名称或视图指向同一块底层内存的关系；处理不当可能导致意外覆盖或读到陈旧数据。 |
+| liveness | 活跃性分析。判断某个值或 buffer 在程序的哪些区间仍会被使用，用于安全复用内存。 |
+| buffer reuse | 在生命周期不冲突时，让多个数据对象复用同一块内存，以降低内存占用。 |
+| RAW / WAR / WAW | 三类数据冒险：RAW 为“写后读”、WAR 为“读后写”、WAW 为“写后写”。若依赖或同步不正确，可能产生错值或非确定性结果。 |
+| sync / barrier / event / fence | 用于协调任务执行先后关系的同步机制。sync 是泛称；barrier 让一组执行单元在某点会合；event/fence 通常用于表示异步任务完成及其等待条件。 |
+| DFX | Design for X 的工程缩写，在本文主要指面向调试、诊断、可测试性和可维护性的运行时能力。 |
+| foot-gun | 看似可用但很容易被误用并造成严重后果的接口或默认行为。 |
+| escape hatch | 为专家提供的底层显式覆写入口，例如手动指定同步、layout 或 ISA；使用时需要记录理由和风险。 |
+| errata | 已知硬件或指令行为勘误，通常包含受影响平台、触发条件和规避方式。 |
+
+### 13.2 正确性、证据与诊断
+
+| 术语 | 解释 |
+|---|---|
+| oracle | 判定被测结果是否正确的参照来源。本文中的 oracle 可以是 CPU/reference 实现、成熟算子库、模拟器、设备路径或服务输出；多个 oracle 交叉对比可缩小错误所在层级。 |
+| reference / golden / baseline | reference 是用于对照的参考实现；golden 是被认可为正确的期望结果或生成路径；baseline 是用于比较的既有基准，可能用于正确性或性能。三者不必相同。 |
+| Oracle Independence | Oracle 独立性。检查参考路径与被测路径是否共享实现或关键依赖；若共享，双方可能产生同样的错误而无法相互发现。 |
+| Correctness Lab | 分层正确性验证中心，负责运行多个 oracle、比较 token/节点/kernel/tensor，并定位首次分歧。 |
+| Correctness Gate | 正确性门禁。只有满足统一精度与完整性规则的产物或调优候选才能进入后续性能排名或发布流程。 |
+| atol / rtol / ULP | 数值比较指标。atol 是绝对误差容限，rtol 是相对误差容限，ULP 衡量浮点数表示上相邻可表示值的距离。 |
+| Runtime Sentinel | 运行时哨兵。debug 模式下检测未初始化读、越界、丢写、异常全零或重复 token 等动态问题。 |
+| Tensor Diff | 张量差异分析。比较两个 tensor 的数值、分布、异常位置和来源 producer，帮助找到首次错值。 |
+| delta debugging | 在保持失败仍可复现的前提下，自动缩减输入、shape、op 或 Pass，得到更小的失败样例。 |
+| provenance | 来源追踪信息，记录一个值、操作、任务或结果由什么输入和变换产生。 |
+| Development Evidence Graph | 开发证据图。通过统一 ID 关联请求、模型节点、源码、IR、指令、运行时任务、tensor 和指标，是跨层定位与归因的公共数据底座。 |
+| Run ID / correlation ID | Run ID 标识一次完整 build/run/实验；correlation ID 用于关联跨组件事件，例如把一个服务请求关联到 batch、decode step、KV block 和 runtime task。 |
+| artifact / Manifest | artifact 是编译、运行或诊断产生的工件；Manifest 是描述一次实验所用版本、配置、输入摘要、产物和证据索引的结构化清单。 |
+| source span / source map | source span 是源码中的具体位置范围；source map 保存源码与 IR、指令或运行时任务之间的映射。 |
+| trace / timeline / dump | trace 是按时间采集的运行事件；timeline 是对这些事件的时间线展示；dump 是某阶段完整或局部状态的导出，通常信息更多、开销也更高。 |
+| Semantic Diff | 语义差异比较。关注 op 消失、输出改向、依赖或 layout 改变等行为变化，而非只比较文本行。 |
+| 首个分歧 / 首个异常 | 两条执行路径第一次出现不同结果的位置，或证据链中最早违反规则的阶段。优先定位它可避免被后续连锁症状干扰。 |
+| Repro Bundle | 可复现证据包。包含环境指纹、命令、最小源码、配置、trace 和输入摘要，供他人重放问题；默认应脱敏。 |
+| fail loud, fail early | 尽早且明确地失败。发现必要信息缺失或无法证明安全时立即中止并解释，而不是继续执行并留下静默错值风险。 |
+| hang / deadlock / starvation | hang 是程序长期无进展的表象；deadlock 是任务相互等待形成闭环；starvation 是任务长期得不到执行资源。 |
+| backpressure | 下游处理能力不足时对上游施加的限速或阻塞。缺少控制可能导致队列、内存或 ring heap 耗尽。 |
+
+### 13.3 模型推理与分布式执行
+
+| 术语 | 解释 |
+|---|---|
+| token / tokenizer | token 是模型处理的离散文本单元；tokenizer 负责在文本与 token ID 序列之间转换。 |
+| logits / logprobs | logits 是模型对下一个 token 给出的未归一化分数；logprobs 是归一化后概率的对数表示。它们比最终文本更适合定位生成路径的早期分歧。 |
+| prefill / decode | prefill 一次处理输入 prompt 并建立初始 KV cache；decode 在已有上下文上逐步生成后续 token。 |
+| decode step | 生成一个新 token 的单次解码迭代，通常包括读取 KV cache、模型前向计算、采样和更新缓存。 |
+| greedy / sampling / beam | 常见解码策略：greedy 每步选最高分 token；sampling 按概率随机采样；beam search 同时保留多条高分候选序列。 |
+| temperature / top-k / top-p | 采样控制参数。temperature 调整概率分布的平滑程度；top-k 只在最高分的 k 个 token 中采样；top-p 在累计概率达到阈值的最小候选集合中采样。 |
+| fallback | 当目标节点没有可用的原生 PyPTO 实现时，临时使用其他实现路径。fallback 能帮助模型跑通，但其性能、支持范围和版本必须显式可见。 |
+| native / fused / unsupported | 算子覆盖状态：native 表示有原生实现；fused 表示被合并进其他 kernel；unsupported 表示当前路径无法执行。 |
+| Inference Runner | 统一模型推理运行器，用同一入口执行 prompt、对话、批量或数据集推理，并保存可比较的输入、输出与指标。 |
+| Inference Bundle | 经过验证、可交付给服务构建流程的推理产物包，包含模型与 tokenizer 指纹、编译产物、算子覆盖、fallback、适用硬件和验证证据。 |
+| KV cache | Transformer 推理中缓存历史 token 的 Key/Value 张量，避免 decode 时重复计算；其容量、复用、碎片和生命周期直接影响可服务并发与长序列能力。 |
+| paged attention | 以分页或块化方式管理 KV cache 的 attention 实现，减少连续大内存分配要求并提高缓存利用率。 |
+| prefix cache | 缓存多个请求可共享的公共 prompt 前缀对应的 KV 数据，以减少重复 prefill 计算。 |
+| chunked prefill | 将很长的 prefill 拆成多个较小区块执行，以改善调度公平性、内存峰值或与 decode 的交错。 |
+| offload | 将部分权重、KV cache 或中间数据临时转移到 host 等较慢但容量更大的存储，以换取设备内存空间。 |
+| speculative decoding | 先由较轻量的草稿模型提出多个候选 token，再由目标模型并行验证，以提高解码吞吐。 |
+| TP / EP / MoE | TP（Tensor Parallelism）把单个张量计算分到多个设备；EP（Expert Parallelism）把不同专家分到不同设备；MoE（Mixture of Experts）按路由选择部分专家参与计算。 |
+| rank / collective | rank 是分布式执行中的进程或设备编号；collective 是多个 rank 共同参与的通信操作，如聚合、广播或全交换。 |
+| DistributedTensor | 携带 rank、分布式 context、来源、alias 和生命周期等元数据的张量抽象，用于验证跨设备数据关系。 |
+| conformance matrix | 一致性矩阵。说明单卡仿真、多卡仿真和真机对各项行为的支持程度，以及每种验证路径能够证明什么。 |
+
+### 13.4 服务、容量与性能
+
+| 术语 | 解释 |
+|---|---|
+| Service Builder | 从 Inference Bundle 生成并校验本地单卡、多卡或多实例推理服务配置的工具。 |
+| Capacity Planner | 容量规划器。根据模型、硬件、精度、并行策略、序列长度、并发和 SLO，估算权重、workspace、KV cache、ring heap 等资源，并给出可服务的 batch、并发和 token 边界。其输出需区分推算值与实测值。 |
+| Workload Lab | 负载实验室。用交互式、离线批处理、均匀到达、突发、长短请求混合等工作负载验证服务性能和稳定性。 |
+| SLO | Service Level Objective，服务级目标。例如在约定负载下，P99 TTFT 小于某阈值且错误率低于某比例。 |
+| TTFT | Time To First Token，从请求进入服务到用户收到首个输出 token 的时间，包含排队、合批和 prefill 等开销。 |
+| TPOT | Time Per Output Token，首 token 之后生成每个输出 token 的平均时间，主要反映 decode 阶段速度。 |
+| latency / throughput / goodput | latency 是单次请求或操作耗时；throughput 是单位时间完成的请求数或 token 数；goodput 是满足 SLO 且结果有效的实际吞吐。 |
+| P50 / P90 / P99 | 延迟分位数。例如 P99 表示 99% 的样本耗时不超过该值，用于观察均值无法体现的尾延迟。 |
+| batching / continuous batching | batching 将多个请求合并执行；continuous batching 在运行过程中动态加入、移除已完成或新到达的序列，以提高设备利用率。 |
+| batch efficiency | 合批效率，衡量 batch 中有效计算的比例；padding、序列长度差异或等待合批都可能降低该指标。 |
+| queue wait | 请求或任务进入队列后到实际开始执行之间的等待时间。 |
+| cache hit / miss / eviction / thrashing | hit 表示所需缓存已存在；miss 表示需要重新计算或加载；eviction 是为腾出空间而淘汰缓存；thrashing 是缓存频繁装入和淘汰，导致性能显著下降。 |
+| workspace | 算子、模型或服务运行期间需要的临时工作内存，不包含长期保存的权重和常驻 KV cache。 |
+| ring heap / dependency pool | ring heap 是运行时环形任务或消息结构使用的内存池；dependency pool 保存任务依赖相关对象。容量不足可能造成提交阻塞或死锁风险。 |
+| Resource Preflight | 资源预检。在正式运行前估算并检查 GM、UB、workspace、ring heap、依赖池和 KV cache 是否可能越界。 |
+| benchmark / profile | benchmark 在受控条件下测量性能；profile 采集更细粒度的时间、资源和调用信息，用于解释性能原因。 |
+| autotune / tuning recipe | autotune 在明确的参数搜索空间内自动寻找较优配置；tuning recipe 保存搜索空间、约束、获胜配置、适用条件及验证证据。 |
+| Capacity/Safety Margin | 容量或安全余量。规划时不把资源用到理论极限，为波动、碎片、并发峰值和测量误差保留空间。 |
+| Serving Readiness Gate | 服务就绪门禁。发布前统一检查 API 兼容、正确性、容量、并发稳定性、性能 SLO、安全余量和长稳结果。 |
+| TTTT | Time to Trusted Target，从首次运行到产出“环境可复现、正确性通过、性能/资源达标且证据完整”的可信产物所需时间，是本文的北极星指标。 |
+
+## 14. 最终产品判断
 
 PyPTO 3.0 的先进性不应体现在“加入一个 AI 聊天框”，而应体现在系统本身具备以下能力：
 

@@ -2,16 +2,228 @@
   const recipes = [
     { id: 'prefill', label: 'Prefill', meta: 'dense attention' },
     { id: 'decode', label: 'Decode', meta: 'single token' },
-    { id: 'paged_attention', label: 'Paged Attention', meta: 'selected · layer.18' },
+    { id: 'decode_layer', label: 'Decode Layer', meta: 'selected · Qwen3-14B' },
     { id: 'rmsrope', label: 'RMSNorm + RoPE', meta: 'fused recipe' },
     { id: 'moe', label: 'MoE Expert', meta: 'grouped GEMM' },
     { id: 'lm_head', label: 'LM Head', meta: 'vocab parallel' }
   ];
   const passes = ['Semantic Lowering', 'Layout Planning', 'Parallel Mapping', 'Memory Scheduling', 'ISA Emission'];
-  const guards = ['Op legality', 'Dependencies', 'Scope', 'Liveness', 'Layout', 'Output direction', 'ISA capacity', 'Precision'];
-  const state = { step: 0, activityView: 'explorer', productMode: 'ide', selectedRecipe: 'paged_attention', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context' };
+  const guards = ['Op legality', 'Dependencies', 'Manual scope', 'Liveness', 'Paged layout', 'Index width', 'ISA capacity', 'FP32 carry'];
+  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape' };
+  const EXPLORER_STEP = 1;
+  const WORKFLOW_STEPS = [0, 2, 3, 4];
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+  function setEditorTab(tab) {
+    state.editorTab = tab;
+    $$('[data-editor-tab]').forEach((button) => button.classList.toggle('is-active', button.dataset.editorTab === tab));
+    $$('[data-editor-panel]').forEach((panel) => { panel.hidden = panel.dataset.editorPanel !== tab; });
+  }
+
+  const intentSourceLines = { 176: 'layout', 223: 'resource', 305: 'shape', 410: 'scope', 732: 'deps' };
+  const matmulSource = `@pl.jit.incore
+def mm(
+    a: pl.Tensor[[32, 32], pl.FP16],
+    b: pl.Tensor[[32, 32], pl.FP16],
+    out: pl.Out[pl.Tensor[[32, 32], pl.FP32]],
+):
+    a_l1 = pl.load(a, [0, 0], [32, 32], target_memory=pl.Mem.Mat)
+    b_l1 = pl.load(b, [0, 0], [32, 32], target_memory=pl.Mem.Mat)
+    a_l0a = pl.move(a_l1, target_memory=pl.Mem.Left)
+    b_l0b = pl.move(b_l1, target_memory=pl.Mem.Right)
+    c_acc = pl.matmul(a_l0a, b_l0b)      # 落在 Acc
+    pl.store(c_acc, [0, 0], out)         # Acc -> DDR
+    return out`;
+  const matmulHardwarePreset = {
+    id: 'matmul-aic-ddr',
+    name: 'Matmul AIC + DDR Memory Path',
+    rails: [{
+      key: 'DDR',
+      label: 'DDR',
+      tone: 'memory-shell',
+      grid: { rows: 24, cols: 4, cellSize: 12, gap: 4, shape: 'hex' },
+    }],
+    cores: [{
+      id: 'matmul-aic-core',
+      kind: 'aic',
+      title: 'AIC',
+      presetKey: 'aicDraftV1',
+    }],
+    routes: [
+      {
+        id: 'matmul-load-a',
+        label: 'load A / B',
+        tone: 'transport',
+        from: '[data-mem950-node="rail:DDR"]',
+        to: '#matmul-aic-core [data-aic-node="buffer:L1"]',
+        fromSide: 'right',
+        toSide: 'left',
+        style: 'lane-h-target',
+        labelDy: -18,
+      },
+      {
+        id: 'matmul-store-out',
+        label: 'store out',
+        tone: 'directReturn',
+        from: '#matmul-aic-core [data-aic-node="buffer:L0C"]',
+        to: '[data-mem950-node="rail:DDR"]',
+        fromSide: 'left',
+        toSide: 'right',
+        style: 'lane-h-source',
+        labelDy: 18,
+      },
+    ],
+    hoverTips: {
+      'rail:DDR': { title: 'DDR', body: '算子输入 A、B 的来源，以及 FP32 输出 out 的写回位置。' },
+      'core:AIC': { title: 'AIC', body: '完成 Mat、Left、Right、Acc 层级中的矩阵乘与累加。' },
+    },
+  };
+  const matmulLineFlows = {
+    1: { label: 'JIT in-core：算子将在 AIC 内执行', selectors: ['#matmul-aic-core'] },
+    2: { label: 'mm 契约：DDR 张量进入 AIC 计算', selectors: ['[data-mem950-node="rail:DDR"]', '#matmul-aic-core'], routes: ['matmul-load-a'] },
+    3: { label: '输入 a：FP16 张量位于 DDR', selectors: ['[data-mem950-node="rail:DDR"]'] },
+    4: { label: '输入 b：FP16 张量位于 DDR', selectors: ['[data-mem950-node="rail:DDR"]'] },
+    5: { label: '输出 out：FP32 张量写回 DDR', selectors: ['[data-mem950-node="rail:DDR"]'] },
+    6: { label: '签名完成：建立 DDR ⇄ AIC 数据边界', selectors: ['[data-mem950-node="rail:DDR"]', '#matmul-aic-core'], routes: ['matmul-load-a', 'matmul-store-out'] },
+    7: { label: 'load a：DDR → L1（Mat）', routes: ['matmul-load-a'] },
+    8: { label: 'load b：DDR → L1（Mat）', routes: ['matmul-load-a'] },
+    9: { label: 'move a：L1 → L0A（Left）', selectors: ['#matmul-aic-core [data-aic-node="buffer:L1"]', '#matmul-aic-core [data-aic-node="buffer:L0A"]'] },
+    10: { label: 'move b：L1 → L0B（Right）', selectors: ['#matmul-aic-core [data-aic-node="buffer:L1"]', '#matmul-aic-core [data-aic-node="buffer:L0B"]'] },
+    11: { label: 'matmul：L0A + L0B → CUBE → L0C（Acc）', selectors: ['#matmul-aic-core [data-aic-node="buffer:L0A"]', '#matmul-aic-core [data-aic-node="buffer:L0B"]', '#matmul-aic-core [data-aic-node="cube:CUBE"]', '#matmul-aic-core [data-aic-node="buffer:L0C"]'] },
+    12: { label: 'store：L0C（Acc）→ DDR', routes: ['matmul-store-out'] },
+    13: { label: 'return out：结果驻留 DDR', selectors: ['[data-mem950-node="rail:DDR"]'] },
+  };
+  let matmulHardwareGraphInstance = null;
+
+  // Minimal Python syntax highlighter — stateful across lines so triple-quoted
+  // docstrings that span multiple rows stay a single string token. Returns one
+  // HTML string per source line (token spans styled by `.kf-code .tok-*`).
+  const PY_KEYWORDS = new Set([
+    'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue', 'def',
+    'del', 'elif', 'else', 'except', 'finally', 'for', 'from', 'global', 'if',
+    'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise',
+    'return', 'try', 'while', 'with', 'yield', 'match', 'case'
+  ]);
+
+  function highlightPythonLines(source) {
+    const esc = (s) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const span = (cls, s) => `<span class="${cls}">${esc(s)}</span>`;
+    const lines = source.split('\n');
+    const out = [];
+    let triple = null; // active multi-line string delimiter: '"""' or "'''"
+
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li];
+      let html = '';
+      let i = 0;
+
+      if (triple) {
+        const close = line.indexOf(triple);
+        if (close === -1) { out.push(span('tok-str', line)); continue; }
+        html += span('tok-str', line.slice(0, close + 3));
+        i = close + 3;
+        triple = null;
+      }
+
+      let expectName = null; // 'func' | 'class' — next identifier is a definition name
+      let plain = '';
+      const flush = () => { if (plain) { html += esc(plain); plain = ''; } };
+
+      while (i < line.length) {
+        const rest = line.slice(i);
+        const ch = line[i];
+
+        // comment
+        if (ch === '#') { flush(); html += span('tok-com', line.slice(i)); i = line.length; break; }
+
+        // string (optional r/b/u/f prefix)
+        const sm = /^([rRbBuUfF]{0,2})("""|'''|"|')/.exec(rest);
+        if (sm) {
+          flush();
+          const q = sm[2];
+          const startQuote = i + sm[1].length;
+          if (q.length === 3) {
+            const after = line.indexOf(q, startQuote + 3);
+            if (after === -1) { html += span('tok-str', line.slice(i)); triple = q; i = line.length; break; }
+            html += span('tok-str', line.slice(i, after + 3));
+            i = after + 3;
+          } else {
+            let j = startQuote + 1;
+            while (j < line.length) {
+              if (line[j] === '\\') { j += 2; continue; }
+              if (line[j] === q) { j++; break; }
+              j++;
+            }
+            html += span('tok-str', line.slice(i, j));
+            i = j;
+          }
+          continue;
+        }
+
+        // number
+        const nm = /^(0[xXoObB][0-9a-fA-F_]+|(?:\d[\d_]*\.?\d*|\.\d+)(?:[eE][+-]?\d+)?[jJ]?)/.exec(rest);
+        if (nm && /\d/.test(nm[0])) { flush(); html += span('tok-num', nm[0]); i += nm[0].length; continue; }
+
+        // decorator (only at the visual start of a line)
+        if (ch === '@') {
+          const dm = /^@[A-Za-z_][\w.]*/.exec(rest);
+          if (dm && line.slice(0, i).trim() === '') { flush(); html += span('tok-dec', dm[0]); i += dm[0].length; continue; }
+        }
+
+        // identifier / keyword
+        const im = /^[A-Za-z_]\w*/.exec(rest);
+        if (im) {
+          const word = im[0];
+          flush();
+          let cls = null;
+          if (expectName) { cls = expectName === 'class' ? 'tok-cls' : 'tok-fn'; expectName = null; }
+          else if (word === 'def') { cls = 'tok-kw'; expectName = 'func'; }
+          else if (word === 'class') { cls = 'tok-kw'; expectName = 'class'; }
+          else if (PY_KEYWORDS.has(word)) cls = 'tok-kw';
+          else if (word === 'True' || word === 'False' || word === 'None') cls = 'tok-const';
+          else if (word === 'self' || word === 'cls') cls = 'tok-self';
+          else if (/^\s*\(/.test(line.slice(i + word.length))) cls = 'tok-fn';
+          if (cls) html += span(cls, word); else plain += word;
+          i += word.length;
+          continue;
+        }
+
+        plain += ch;
+        i++;
+      }
+      flush();
+      out.push(html);
+    }
+    return out;
+  }
+
+  function renderFullSource() {
+    const source = state.activeFile === 'matmul.py' ? matmulSource : (window.PTO_DECODE_LAYER_SOURCE || '');
+    const editor = $('#dslEditor');
+    const highlighted = highlightPythonLines(source);
+    const fragment = document.createDocumentFragment();
+    highlighted.forEach((lineHtml, index) => {
+      const lineNumber = index + 1;
+      const row = document.createElement('div');
+      const gutter = document.createElement('i');
+      const code = document.createElement('code');
+      gutter.textContent = lineNumber;
+      code.innerHTML = lineHtml || ' ';
+      if (intentSourceLines[lineNumber]) row.dataset.intentLine = intentSourceLines[lineNumber];
+      if (state.activeFile === 'matmul.py') {
+        row.dataset.hardwareLine = String(lineNumber);
+        row.tabIndex = 0;
+        row.title = matmulLineFlows[lineNumber]?.label || `第 ${lineNumber} 行硬件映射`;
+      }
+      row.append(gutter, code);
+      fragment.append(row);
+    });
+    editor.replaceChildren(fragment);
+    $('[data-editor-tab="source"]').textContent = state.activeFile;
+    editor.setAttribute('aria-label', `${state.activeFile} 全量源码`);
+    editor.closest('[data-stage="1"]').setAttribute('aria-label', `${state.activeFile} 全量源码`);
+  }
 
   function renderRecipes() {
     $('#recipeGrid').innerHTML = recipes.map((r, index) => `<button class="kf-recipe${r.id === state.selectedRecipe ? ' is-active' : ''}" data-recipe="${r.id}"><span>0${index + 1}</span><b>${r.label}</b><small>${r.meta}</small></button>`).join('');
@@ -24,17 +236,17 @@
 
   function renderOracles() {
     const cards = [
-      ['CPU', 'CPU / Torch reference', '12 checkpoints', 'MATCH', false],
-      ['LIB', 'FlashInfer baseline', '12 checkpoints', 'MATCH', false],
-      ['PTO', 'PyPTO device', '11 / 12 match', state.verified ? 'MATCH' : 'DIFF', !state.verified]
+      ['CPU', 'Torch golden_decode_layer', 'argmax · B16', 'MATCH', false],
+      ['HOST', 'FP32 carry reference', 'ratio tolerance', 'MATCH', false],
+      ['PTO', 'PyPTO device', state.verified ? '16 / 16 argmax' : 'codegen blocked', state.verified ? 'MATCH' : 'BLOCKED', !state.verified]
     ];
     $('#oracleCards').innerHTML = cards.map(c => `<article class="kf-oracle${c[4] ? ' is-fail' : ''}"><span>${c[0]}</span><div><b>${c[1]}</b><small>${c[2]}</small></div><em>${c[3]}</em></article>`).join('');
   }
 
   function renderTensorCompare() {
-    const values = ['-.041', '.104', '.236', '-.118', '.009', '.482', '.171', '-.056', '.093', '.015', '-.274', '.332', '.145', '-.081', '.226', '.019'];
-    const tensor = (title, device) => `<section class="kf-tensor"><header><span>${title}</span><span>BF16 · 16 values</span></header><div class="kf-tensor-grid">${values.map((v, i) => `<span class="${device && i === 10 ? 'diff' : ''}">${device && i === 10 ? '-.258' : v}</span>`).join('')}</div></section>`;
-    $('#tensorCompare').innerHTML = tensor('CPU / library oracle', false) + tensor('PyPTO device output', true);
+    const values = ['1081', '431', '982', '77', '1532', '94', '611', '128', '205', '731', '44', '899', '1304', '62', '540', '311'];
+    const tensor = (title, blocked) => `<section class="kf-tensor"><header><span>${title}</span><span>argmax · batch 16</span></header><div class="kf-tensor-grid">${values.map((v, i) => `<span class="${blocked && i === 10 ? 'diff' : ''}">${blocked && i === 10 ? '—' : v}</span>`).join('')}</div></section>`;
+    $('#tensorCompare').innerHTML = tensor('Torch golden argmax', false) + tensor('PyPTO device argmax', !state.verified);
   }
 
   function renderGraph() {
@@ -43,48 +255,434 @@
     const helper = window.PtoPassIrGraphNodePattern;
     if (helper) {
       const cards = [
-        { type: 'tensor', data: { symbol: 'q_tile', shape: [1, 8, 1, 128], rawShape: [1, 32, 1, 128], dtype: 'bf16', format: 'BHSD' } },
-        { type: 'op', data: { opType: 'MatMul', stage: 'qk_matmul', latency: '2.8 μs', outShape: [1, 8, 1, 2048], subgraphId: 18 }, accent: '#4369EF' },
-        { type: 'op', data: { opType: 'Softmax', stage: 'softmax', latency: '1.1 μs', outShape: [1, 8, 1, 2048], subgraphId: 18 }, accent: '#9B60AA' },
-        { type: 'outcast', data: { name: 'out', shape: [1, 32, 1, 128], rawShape: [1, 32, 1, 128], dtype: 'bf16', format: 'BHSD', slotIdx: 0 } }
+        { type: 'tensor', data: { symbol: 'hidden_states', shape: [16, 5120], rawShape: [16, 5120], dtype: 'fp32', format: 'ND' } },
+        { type: 'op', data: { opType: 'RMSNorm + QKV', stage: 'scope_1', latency: 'pending', outShape: [16, 5120], subgraphId: 1 }, accent: '#4369EF' },
+        { type: 'op', data: { opType: 'Paged FA', stage: 'fa_fused', latency: 'pending', outShape: [16, 5120], subgraphId: 2 }, accent: '#9B60AA' },
+        { type: 'op', data: { opType: 'MLP + dcr_xgamma', stage: 'scope_3', latency: 'pending', outShape: [16, 5120], subgraphId: 3 }, accent: '#2F9E7A' },
+        { type: 'outcast', data: { name: 'out', shape: [16, 5120], rawShape: [16, 5120], dtype: 'fp32', format: 'ND', slotIdx: 0 } }
       ];
       cards.forEach(card => mount.appendChild(helper.buildNodeCardElement(card, { compact: true })));
     } else {
-      mount.innerHTML = '<code>q_tile → qk_matmul → softmax → out</code>';
+      mount.innerHTML = '<code>hidden_states → RMS/QKV → fa_fused → online_softmax → MLP → dcr_xgamma</code>';
     }
   }
 
+  // ---- Unified run detail data (design spec §6.1) ----
+  const gateMeta = { compile: '编译', correctness: '正确性', resource: '资源', perf: '性能' };
+  const gateOrder = ['compile', 'correctness', 'resource', 'perf'];
+  const gateSymbol = { pass: '✓', warn: '!', fail: '✕', idle: '·' };
+  const gateTag = { pass: 'PASS', warn: 'WARN', fail: 'FAIL', idle: 'IDLE' };
+  const evidenceMeta = {
+    source: ['SRC', '源码'], ir: ['IR', 'IR / Pass'], trace: ['TRC', '设备 Trace'], tensor: ['TSR', 'Tensor'], metric: ['MTR', '指标']
+  };
+
+  const runs = [
+    {
+      id: 'run_8f2c', token: 'ptok://qwen3-14b/decode-layer@run_8f2c', title: 'Decode Layer · FP32 carry',
+      verdict: 'blocked', verdictLabel: '被阻塞', subtitle: 'qwen3-14b', branch: 'kernel/decode-layer', time: '08/07 10:24', duration: '4m12s',
+      gates: {
+        env: ['pass', '指纹一致', 'env:8da1bf09'],
+        compile: ['fail', 'Codegen 阻塞', 'INDEX / i64'],
+        correctness: ['idle', '尚未运行', '被 codegen 阻塞'],
+        resource: ['warn', '24 + 48 cores', '混合 Cube / Vector'],
+        perf: ['idle', '未评估', '待编译通过']
+      },
+      conclusions: [
+        ['high', '动态 work-table 索引阻塞 codegen', '<code>cursor + wp</code> 由设备侧读取驱动并进入 GM store offset，当前工具链触发 <code>GetOrCreateTensorView / index vs i64</code>。'],
+        ['med', 'manual_scope 依赖必须显式保持', '<code>fa_work_build → fa_fused → online_softmax</code> 以及 <code>down_tids → dcr_xgamma</code> 依赖不能由 tensormap 自动补全。'],
+        ['low', 'FP32 跨层传递改变数值基线', 'hidden_states / out 在层间保持 FP32，仅在输入和 LM Head 边界转为 BF16，应使用 argmax 与比例容差验证。']
+      ],
+      impact: [
+        ['errValue', '错值风险', 'med', '待验证', 'FP32 carry 更精确，但与 BF16 旧基线不再逐位一致。'],
+        ['repro', '复现风险', 'low', '低', '输入 seed、平台和编译参数已固化。'],
+        ['perf', '性能影响', 'med', '待测', '目标是减少跨层 GM round-trip 并改善 ragged decode 负载均衡。']
+      ],
+      next: [
+        ['cmd', '运行编译烟测', 'python decode_layer.py --smoke', '验证 parser 与 Pass 链并保留 codegen 证据'],
+        ['fix', '切换静态仿射 work-table fallback', 'kernels/decode_layer.py:514', '绕过数据依赖 store offset 限制'],
+        ['exp', '建议实验：block-level vs affine', 'pypto exp queue --schedule dense,affine', '比较负载均衡收益与编译可行性']
+      ],
+      evidence: { source: '1 span', ir: '5 pass', trace: '1 store', tensor: '12 ckpt', metric: '4 层' }
+    },
+    {
+      id: 'run_d9a1', token: 'ptok://qwen3-32b/l14/rmsnorm-rope@run_d9a1', title: 'RMSNorm + RoPE 融合内核',
+      verdict: 'trusted', verdictLabel: '可信基线', subtitle: 'qwen3-32b', branch: 'kernel/rmsnorm-rope', time: '08/01 10:07', duration: '1m52s',
+      gates: {
+        env: ['pass', '指纹一致', 'env:8da1bf09'],
+        compile: ['pass', '4 / 4 Pass', '7 约束通过'],
+        correctness: ['pass', '3 / 3 oracle', '16 / 16 match'],
+        resource: ['pass', 'UB 61%', '预算内'],
+        perf: ['pass', '+8% vs 基线', 'fusion 收益']
+      },
+      conclusions: [
+        ['low', '融合内核已可信并优于基线', '三路 oracle 一致，且 RMSNorm 与 RoPE 融合较分开执行减少一次 GM round trip，端到端 +8%。']
+      ],
+      impact: [
+        ['errValue', '错值风险', 'low', '无', '16 / 16 checkpoint 一致，最大绝对误差 0.0004883。'],
+        ['repro', '复现风险', 'low', '低', '证据包已封存，指纹与工件哈希齐备。'],
+        ['perf', '性能收益', 'low', '+8%', '相对未融合基线，收益可归因至减少的 GM 往返。']
+      ],
+      next: [
+        ['cmd', '一键复现该基线', 'pypto trust replay ptok://qwen3-32b/l14/rmsnorm-rope@7c31e2a', '在任意锁定环境中重放'],
+        ['exp', '基于此基线开始优化', 'pypto opt start --from 7c31e2a', '正确性契约将自动随实验比对']
+      ],
+      evidence: { source: '1 span', ir: '4 pass', trace: '2 store', tensor: '16 ckpt', metric: '4 层' }
+    },
+    {
+      id: 'run-0729-m', token: 'ptok://qwen3-32b/moe/grouped-gemm@b8160fd', title: 'MoE Expert Grouped GEMM',
+      verdict: 'trusted', verdictLabel: '可信基线', subtitle: 'qwen3-32b', branch: 'kernel/moe-expert', time: '07/29 16:41', duration: '3m04s',
+      gates: {
+        env: ['pass', '指纹一致', 'env:8da1bf09'],
+        compile: ['pass', '5 / 5 Pass', '8 约束通过'],
+        correctness: ['pass', '3 / 3 oracle', '24 / 24 match'],
+        resource: ['pass', 'UB 73%', '预算内'],
+        perf: ['pass', 'skip-empty 生效', '-19% 冗余计算']
+      },
+      conclusions: [
+        ['low', 'Grouped GEMM 已可信', 'dispatch predicate 与 skip-empty-expert 正确表达，空专家被跳过，正确性与资源均在预算内。']
+      ],
+      impact: [
+        ['errValue', '错值风险', 'low', '无', '24 / 24 checkpoint 一致。'],
+        ['repro', '复现风险', 'low', '低', '证据包已封存。'],
+        ['perf', '性能收益', 'low', '-19%', '跳过空专家减少冗余 grouped GEMM 计算。']
+      ],
+      next: [
+        ['cmd', '一键复现该基线', 'pypto trust replay ptok://qwen3-32b/moe/grouped-gemm@b8160fd', '在锁定环境中重放']
+      ],
+      evidence: { source: '2 span', ir: '5 pass', trace: '3 store', tensor: '24 ckpt', metric: '4 层' }
+    },
+    {
+      id: 'run-0726-d', token: 'ptok://qwen3-32b/decode-attn@run-0726-d', title: 'Decode Attention 延迟回归',
+      verdict: 'stopped', verdictLabel: '已中止', subtitle: 'qwen3-32b', branch: 'perf/decode-attn', time: '07/26 09:18', duration: '0m47s',
+      gates: {
+        env: ['pass', '指纹一致', 'env:8da1bf09'],
+        compile: ['pass', '5 / 5 Pass', '8 约束通过'],
+        correctness: ['warn', '首个分歧待处理', 'step 128 logits'],
+        resource: ['pass', 'UB 58%', '预算内'],
+        perf: ['fail', '-31% 回退', 'slot wait 激增']
+      },
+      conclusions: [
+        ['high', 'Decode 延迟相对基线回退 31%', 'Runtime Timeline 显示 slot wait 激增，dispatch 排队时间占比升至 44%，疑似 continuous batching 调度参数变更引入。'],
+        ['med', 'step 128 出现首个 logits 分歧', '采样路径下 step 128 的 logits 与 reference 偏离，需先区分采样噪声与系统错误。']
+      ],
+      impact: [
+        ['errValue', '错值风险', 'med', '中', 'logits 分歧可能改变停止条件，需 delta debugging 裁剪确认。'],
+        ['repro', '复现风险', 'low', '低', '已生成脱敏复现包，含 task graph 与 trace。'],
+        ['perf', '性能损失', 'high', '-31%', 'TPOT 相对可信基线明显回退，已中止以避免污染基线。']
+      ],
+      next: [
+        ['cmd', '与可信基线做因果 diff', 'pypto diff run-0726-d ptok://…moe/grouped-gemm@b8160fd', '定位调度参数与 sync 变化'],
+        ['exp', '回滚 batching 参数复测', 'pypto exp queue --batching continuous:prev', '验证回退是否来自调度变更']
+      ],
+      evidence: { source: '1 span', ir: '5 pass', trace: '1 timeline', tensor: '8 ckpt', metric: '4 层' }
+    }
+  ];
+
+  const getRun = () => runs.find(r => r.id === state.currentRun) || runs[0];
+
+  function renderRunList() {
+    $('#runList').innerHTML = runs.map(run => `
+      <button class="kf-run-item verdict-${run.verdict}${run.id === state.currentRun ? ' is-selected' : ''}" type="button" role="option" aria-selected="${run.id === state.currentRun}" data-run="${run.id}">
+        <i></i><span><b>${escapeHtml(run.id)}</b><small>${escapeHtml(run.subtitle)} · ${escapeHtml(run.title)}</small><em>${escapeHtml(run.time)} · ${escapeHtml(run.duration)}</em></span><time>${escapeHtml(run.verdictLabel)}</time>
+      </button>`).join('');
+  }
+
+  function renderRunDetail() {
+    const run = getRun();
+    const gatesHtml = gateOrder.map(key => {
+      const [status, headline, detail] = run.gates[key];
+      return `<button class="kf-gate ${status}" type="button" data-gate="${key}"><span class="kf-gate-icon">${gateSymbol[status]}</span><b>${gateMeta[key]}</b><span class="kf-gate-status">${gateTag[status]} · ${escapeHtml(headline)}</span><code>${escapeHtml(detail)}</code><span class="kf-gate-chevron">›</span></button>`;
+    }).join('');
+    const conclusionsHtml = run.conclusions.map((c, i) => {
+      const sevLabel = { high: '阻塞', med: '风险', low: '提示' }[c[0]];
+      return `<article class="kf-conclusion sev-${c[0]}"><span class="kf-conclusion-rank">${i + 1}</span><div><b>${escapeHtml(c[1])}</b><p>${c[2]}</p></div><span class="kf-conclusion-sev">${sevLabel}</span></article>`;
+    }).join('');
+    const impactLevelTag = { high: 'HIGH', med: 'MED', low: 'LOW' };
+    const impactHtml = run.impact.map(im => `<div class="kf-impact"><span>${escapeHtml(im[1])}</span><b class="${im[2]}">${escapeHtml(im[3])}</b><small>${escapeHtml(im[4])}</small></div>`).join('');
+    const selectedIndex = Math.max(0, run.next.findIndex(n => n[0] === state.runActionTab));
+    const selectedNext = run.next[selectedIndex] || run.next[0];
+    const nextTabs = run.next.map(n => `<button type="button" class="${n[0] === selectedNext[0] ? 'is-active' : ''}" data-run-action-tab="${n[0]}">${({ cmd: '执行命令', fix: '源码修复建议', exp: '实验验证' })[n[0]]}</button>`).join('');
+    const evidenceHtml = Object.keys(evidenceMeta).map(key => {
+      const [badge, label] = evidenceMeta[key];
+      return `<button class="kf-evidence-node${state.selectedEvidence === key ? ' is-selected' : ''}" type="button" data-evidence="${key}"><span>${key}</span><b>${label}</b><em>${escapeHtml(run.evidence[key] || '—')}</em></button>`;
+    }).join('');
+
+    $('#runDetail').innerHTML = `
+      <header class="kf-run-head">
+        <div class="kf-run-head-main">
+          <div class="kf-run-title-line"><span class="kf-run-verdict ${run.verdict}">${escapeHtml(run.verdictLabel)}</span><h1>${escapeHtml(run.id)}</h1><button type="button" id="copyRunToken">复制链接</button></div>
+          <div class="kf-run-meta"><span><code>${escapeHtml(run.subtitle)}</code></span><span>${escapeHtml(run.title)}</span><span>分支 <code>${escapeHtml(run.branch)}</code></span><span>${escapeHtml(run.time)}</span><span>耗时 ${escapeHtml(run.duration)}</span></div>
+        </div>
+        <div class="kf-run-head-actions">
+          <button type="button" id="runShare">分享</button>
+          <button type="button" id="runCompare2" class="is-primary">对比运行</button>
+        </div>
+      </header>
+
+      <button class="kf-run-baseline" type="button" id="baselinePicker"><span>对比基线</span><b>run_d9a1 · trusted</b><em>更换</em></button>
+
+      <section class="kf-run-section kf-gates-section"><header><h2>四项运行门禁</h2><span class="kf-eyebrow">环境由右上角全局环境统一管理</span></header><div class="kf-run-gates">${gatesHtml}</div></section>
+
+      <div class="kf-run-summary-grid">
+        <div class="kf-run-summary-column">
+          <section class="kf-run-section kf-conclusion-section"><header><h2>主要阻塞</h2><span class="kf-eyebrow">按影响排序</span></header><div class="kf-conclusion-list">${conclusionsHtml}</div></section>
+          <section class="kf-run-section kf-impact-section"><header><h2>影响评估</h2></header><div class="kf-impact-grid">${impactHtml}</div></section>
+        </div>
+        <section class="kf-run-section kf-recommendation">
+          <header><h2>推荐下一步</h2></header>
+          <div class="kf-action-tabs">${nextTabs}</div>
+          <div class="kf-action-workspace"><span class="kf-eyebrow">优先处理正确性失败位置</span><b>${escapeHtml(selectedNext[1])}</b><code>${escapeHtml(selectedNext[2])}</code><small>${escapeHtml(selectedNext[3])}</small><div class="kf-patch-preview" aria-label="源码修复预览"><span>184</span><del>out = fused_attention(q, k, v, mask)</del><span>185</span><ins>out = fused_attention(q.contiguous(), k.contiguous(), v.contiguous(), mask)</ins></div></div>
+          <div class="kf-experiment-row"><button type="button">禁用融合验证</button><button type="button">切换 Kernel 版本</button><button type="button">调整并行度</button></div>
+          <button class="kf-execute" type="button" data-next-action="${selectedNext[0]}" data-next-index="${selectedIndex}">执行所选建议</button>
+        </section>
+      </div>
+
+      <section class="kf-run-section kf-evidence-section"><header><h2>证据链</h2><span class="kf-eyebrow">可逐层钻取</span></header><div class="kf-evidence-chain">${evidenceHtml}</div></section>`;
+  }
+
+  function updateRunInspector() {
+    const run = getRun();
+    $('#inspectorTitle').textContent = '证据检查器';
+    $('#inspector').innerHTML = `
+      <section class="kf-inspector-section kf-compare-explain"><h2 class="kf-inspector-title">为什么会变化</h2><p>IR 融合策略调整后，输出张量 stride 与基线不一致，数值误差随之放大；Kernel 调度变化同时造成吞吐下降。</p></section>
+      <section class="kf-inspector-section"><h2 class="kf-inspector-title">关键指标对比</h2><div class="kf-metric-table"><div><span>指标</span><span>本次</span><span>基线</span></div><div><b>max_abs_error</b><em>2.7e-2</em><small>9.3e-8</small></div><div><b>mean_abs_error</b><em>4.1e-3</em><small>1.2e-8</small></div><div><b>吞吐 (tok/s)</b><em>8,432</em><small>10,454</small></div><div><b>HBM (GB)</b><em>9.72</em><small>9.11</small></div></div></section>
+      <section class="kf-inspector-section"><h2 class="kf-inspector-title">复现信息</h2><dl><div><dt>确定性级别</dt><dd>非确定性</dd></div><div><dt>复现概率</dt><dd>~62%</dd></div><div><dt>相关性</dt><dd>高</dd></div><div><dt>受影响用例</dt><dd>3 / 12</dd></div><div><dt>首次出现</dt><dd>2026-08-06 14:32</dd></div></dl></section>
+      <section class="kf-inspector-section"><h2 class="kf-inspector-title">当前证据</h2><div class="kf-run-inspector-hero ${run.verdict}"><b>${evidenceMeta[state.selectedEvidence][1]}</b><small>${escapeHtml(run.evidence[state.selectedEvidence] || '—')} · ${escapeHtml(run.id)}</small></div></section>`;
+    $('#inspectorMeta').textContent = 'vs run_d9a1';
+  }
+
   const inspectorContent = [
-    `<section class="kf-inspector-section"><h2 class="kf-inspector-title">目标契约</h2><dl><div><dt>Source</dt><dd>Qwen3 · layer.18</dd></div><div><dt>Recipe</dt><dd>paged_attention</dd></div><div><dt>Target</dt><dd>Ascend 950B</dd></div><div><dt>Precision</dt><dd>rtol 1e-3</dd></div></dl></section><section class="kf-inspector-section"><h2 class="kf-inspector-title">Toolkit 读取</h2><div class="kf-evidence-list"><div class="kf-evidence"><span>✓</span><b>12 tensors</b><small>shape</small></div><div class="kf-evidence"><span>✓</span><b>3 dtypes</b><small>contract</small></div><div class="kf-evidence"><span>✓</span><b>7 constraints</b><small>hardware</small></div></div></section><div class="kf-inspector-card"><b>为什么从契约开始？</b><p>后续每条诊断、测试结果和基线签名都会引用同一份输入事实，避免“修好一个 shape，破坏另一个 shape”。</p></div>`,
-    `<section class="kf-inspector-section"><h2 class="kf-inspector-title">语义意图</h2><dl><div><dt>Compute</dt><dd>QK → Softmax → PV</dd></div><div><dt>Layout</dt><dd>tile [1,8,1,128]</dd></div><div><dt>Parallel</dt><dd>head × core</dd></div><div><dt>Memory</dt><dd>L1 reuse · 2 stages</dd></div></dl></section><section class="kf-inspector-section"><h2 class="kf-inspector-title">即时诊断</h2><div class="kf-inspector-card"><b style="color:var(--warning)">PTO-DIR-001</b><p id="inspectorDiagnostic">输出方向使用 AUTO。编译可继续，但 Correctness Lab 将把它标记为风险来源。</p></div></section>`,
+    `<section class="kf-inspector-section"><h2 class="kf-inspector-title">目标契约</h2><dl><div><dt>Source</dt><dd>Qwen3-14B · 40 layers</dd></div><div><dt>Recipe</dt><dd>decode_layer</dd></div><div><dt>Target</dt><dd>Ascend A2/A3/A5</dd></div><div><dt>Precision</dt><dd>FP32 carry · BF16 edge</dd></div></dl></section><section class="kf-inspector-section"><h2 class="kf-inspector-title">Toolkit 读取</h2><div class="kf-evidence-list"><div class="kf-evidence"><span>✓</span><b>29 inputs</b><small>signature</small></div><div class="kf-evidence"><span>✓</span><b>4 scopes</b><small>schedule</small></div><div class="kf-evidence"><span>✓</span><b>explicit TaskIds</b><small>deps</small></div></div></section><div class="kf-inspector-card"><b>为什么从契约开始？</b><p>Decode Layer 同时跨越 RMSNorm、QKV、Paged Attention、MLP 与层间 carry，任何局部修改都必须保持整条依赖链。</p></div>`,
+    `<section class="kf-inspector-section"><h2 class="kf-inspector-title">语义意图</h2><dl><div><dt>Compute</dt><dd>RMS → QKV → FA → MLP</dd></div><div><dt>Carry</dt><dd>FP32 inter-layer</dd></div><div><dt>Schedule</dt><dd>dense block-level</dd></div><div><dt>Output</dt><dd>out + normed_out</dd></div></dl></section><section class="kf-inspector-section"><h2 class="kf-inspector-title">即时诊断</h2><div class="kf-inspector-card"><b style="color:var(--warning)">PTO-CODEGEN-INDEX</b><p id="inspectorDiagnostic">设备侧动态索引进入 GM store offset；当前工具链可能出现 INDEX / i64 类型冲突。</p></div></section>`,
     `<section class="kf-inspector-section"><h2 class="kf-inspector-title">卫士覆盖</h2><div class="kf-evidence-list">${guards.map(g => `<div class="kf-evidence"><span>○</span><b>${g}</b><small>pending</small></div>`).join('')}</div></section><div class="kf-inspector-card"><b>验证粒度</b><p>卫士在每个 Pass 之后运行。失败时保留前后 IR、约束快照与最小复现入口。</p></div>`,
-    `<section class="kf-inspector-section"><h2 class="kf-inspector-title">分歧证据</h2><dl><div><dt>First layer</dt><dd>layer.18</dd></div><div><dt>Kernel</dt><dd>paged_attention</dd></div><div><dt>Tensor</dt><dd>out</dd></div><div><dt>Tile</dt><dd>[0,7,0,96:112]</dd></div></dl></section><section class="kf-inspector-section"><h2 class="kf-inspector-title">关联证据</h2><div class="kf-evidence-list"><div class="kf-evidence"><span>↗</span><b>DSL line 6</b><small>direction</small></div><div class="kf-evidence"><span>↗</span><b>Layout Pass</b><small>outcast</small></div><div class="kf-evidence"><span>↗</span><b>Device trace</b><small>store</small></div></div></section>`,
+    `<section class="kf-inspector-section"><h2 class="kf-inspector-title">阻塞证据</h2><dl><div><dt>Operator</dt><dd>decode_layer</dd></div><div><dt>Task</dt><dd>fa_work_build</dd></div><div><dt>Tensor</dt><dd>fa_work_table</dd></div><div><dt>Offset</dt><dd>cursor + wp</dd></div></dl></section><section class="kf-inspector-section"><h2 class="kf-inspector-title">关联证据</h2><div class="kf-evidence-list"><div class="kf-evidence"><span>↗</span><b>Source line 520</b><small>dynamic index</small></div><div class="kf-evidence"><span>↗</span><b>Lowering Pass</b><small>INDEX / i64</small></div><div class="kf-evidence"><span>↗</span><b>Codegen log</b><small>TensorView</small></div></div></section>`,
     `<section class="kf-inspector-section"><h2 class="kf-inspector-title">可信状态</h2><div class="kf-inspector-card"><b style="color:var(--success)">可用于性能优化</b><p>此基线冻结 correctness 契约。之后的 tile、pipeline 或内存优化都可与它自动比对。</p></div></section><section class="kf-inspector-section"><h2 class="kf-inspector-title">签名摘要</h2><dl><div><dt>Evidence</dt><dd>sha256:91b4…0e2c</dd></div><div><dt>Environment</dt><dd>sha256:8da1…bf09</dd></div><div><dt>Artifact</dt><dd>sha256:13fe…8c71</dd></div></dl></section>`
   ];
 
+  const intentPreview = {
+    shape: {
+      label: 'Shape', meta: 'Qwen3-14B · contracted',
+      rows: [['hidden / out', '[16, 5120] · FP32'], ['Q / KV hidden', '5120 / 1024'], ['Heads', '40 Q / 8 KV · dim 128'], ['Layer carry', 'out + normed_out']],
+      note: '层间 hidden 与 residual 保持 FP32；仅外部 embedding 输入和最终 LM Head 边界进行 BF16 转换。'
+    },
+    layout: {
+      label: 'Layout', meta: 'paged · split-K · tiled',
+      rows: [['Paged KV', 'SEQ_TILE 128'], ['Q head batch', '5 real / 16 padded'], ['QKV tile', 'TM16 · TN256 · TK256'], ['MLP tile', 'TN1024 · chunk256']],
+      note: 'SEQ_TILE 与 serving page_size 绑定；每个 dense work item 只处理一个真实 sequence block。'
+    },
+    scope: {
+      label: 'Scope', meta: 'manual · auto-dep boundary',
+      rows: [['Scope 1', 'RMSNorm + Q/K/V'], ['Scope 2', 'Paged FA + online softmax'], ['Scope 3', 'out_proj + MLP'], ['Boundary', 'dcr_xgamma outside manual']],
+      note: 'manual_scope 内 tensormap 自动依赖被抑制，跨 scope 的任务顺序必须通过显式 TaskId 传递。'
+    },
+    deps: {
+      label: '依赖', meta: 'explicit TaskId chain',
+      rows: [['prev_out_tids', 'rms_recip'], ['work_tid', 'fa_fused'], ['fa_tid', 'online_softmax'], ['down_tids', 'dcr_xgamma']],
+      note: '核心链路是 fa_work_build → fa_fused → online_softmax；层间 carry 由 dcr_xgamma 的单次 SPMD dispatch 完成。'
+    },
+    resource: {
+      label: '资源', meta: 'declared scheduling intent',
+      rows: [['FA grid', '24 persistent cores'], ['Softmax grid', '48 vector blocks'], ['dcr_xgamma', '5 parallel slabs'], ['FA table cap', 'BATCH × MAX_CTX_BLOCKS']],
+      note: '资源意图优先平衡 ragged decode；A2/A3 的 Cube↔Vector 边界仍会经过 GM pipe buffer。'
+    }
+  };
+
+  function renderIntentInspector() {
+    matmulHardwareGraphInstance?.destroy?.();
+    matmulHardwareGraphInstance = null;
+    if (state.activeFile === 'matmul.py') {
+      $('#inspectorTitle').textContent = '意图预览';
+      $('#inspectorMeta').textContent = 'matmul.py';
+      $('#inspector').innerHTML = `
+        <section class="kf-intent-hero"><span class="kf-eyebrow">CURRENT OPERATOR</span><b>mm</b><small>kernels/matmul.py · in-core matrix multiply</small></section>
+        <section class="kf-inspector-section kf-intent-detail"><header><h2>Shape</h2><span>32 × 32 · contracted</span></header><dl><div><dt>Input A</dt><dd>[32, 32] · FP16</dd></div><div><dt>Input B</dt><dd>[32, 32] · FP16</dd></div><div><dt>Output</dt><dd>[32, 32] · FP32</dd></div></dl></section>
+        <section class="kf-matmul-hardware" aria-labelledby="matmulHardwareTitle">
+          <header><b id="matmulHardwareTitle">内存路径</b><div class="kf-matmul-hardware__tools" data-no-pan><button type="button" data-matmul-fit aria-pressed="true">最佳视图</button><button type="button" data-matmul-actual aria-pressed="false">100%</button><span data-matmul-zoom-readout>—</span></div></header>
+          <div class="pto-memory-architecture-viewport kf-matmul-hardware__viewport" id="matmulHardwareViewport" data-pto-mem-arch-viewport>
+            <div class="pto-memory-architecture-sizer" id="matmulHardwareSizer" data-pto-mem-arch-sizer>
+              <div class="pto-memory-architecture-canvas" id="matmulHardwareGraph" data-pto-mem-arch-canvas></div>
+            </div>
+          </div>
+          <footer id="matmulFlowStatus"><span><i></i>悬停源码行查看数据流，点击可锁定</span></footer>
+        </section>
+        <section class="kf-inspector-section kf-intent-contract"><h2 class="kf-inspector-title">编码契约</h2><div class="kf-evidence-list"><div class="kf-evidence"><span>01</span><b>FP16 双输入</b><small>shape</small></div><div class="kf-evidence"><span>02</span><b>FP32 累加输出</b><small>dtype</small></div><div class="kf-evidence"><span>03</span><b>In-core 执行</b><small>memory</small></div></div></section>`;
+      renderMatmulHardwareGraph();
+      return;
+    }
+    const active = intentPreview[state.intentTab] || intentPreview.shape;
+    const tabs = Object.entries(intentPreview).map(([key, item]) => `<button type="button" class="${key === state.intentTab ? 'is-active' : ''}" data-intent-tab="${key}">${item.label}</button>`).join('');
+    $('#inspectorTitle').textContent = '意图预览';
+    $('#inspectorMeta').textContent = 'decode_layer.py';
+    $('#inspector').innerHTML = `
+      <section class="kf-intent-hero"><span class="kf-eyebrow">CURRENT OPERATOR</span><b>decode_layer</b><small>kernels/decode_layer.py · selected source anchors</small></section>
+      <div class="kf-intent-tabs" role="tablist" aria-label="算子意图类型">${tabs}</div>
+      <section class="kf-inspector-section kf-intent-detail"><header><h2>${active.label}</h2><span>${active.meta}</span></header><dl>${active.rows.map(row => `<div><dt>${row[0]}</dt><dd>${row[1]}</dd></div>`).join('')}</dl></section>
+      <div class="kf-inspector-card kf-intent-note"><b>实时推导</b><p>${active.note}</p></div>
+      <section class="kf-inspector-section kf-intent-contract"><h2 class="kf-inspector-title">编码契约</h2><div class="kf-evidence-list"><div class="kf-evidence"><span>01</span><b>FP32 carry 已锁定</b><small>shape</small></div><div class="kf-evidence"><span>02</span><b>显式 TaskId 链</b><small>deps</small></div><div class="kf-evidence"><span>03</span><b>动态索引待降级</b><small>codegen</small></div></div></section>`;
+  }
+
+  function renderMatmulHardwareGraph() {
+    const memoryPattern = window.PtoMemoryArchitecturePattern;
+    const canvas = $('#matmulHardwareGraph');
+    const viewport = $('#matmulHardwareViewport');
+    const sizer = $('#matmulHardwareSizer');
+    const host = $('.kf-matmul-hardware');
+    const fitButton = $('[data-matmul-fit]');
+    const actualButton = $('[data-matmul-actual]');
+    const readout = $('[data-matmul-zoom-readout]');
+    const flowStatus = $('#matmulFlowStatus');
+    if (!memoryPattern || !canvas || !viewport || !sizer) return;
+
+    memoryPattern.renderArchitecture(canvas, matmulHardwarePreset);
+    const routes = memoryPattern.createRouteOverlay(canvas, matmulHardwarePreset);
+    const hover = memoryPattern.attachHoverInteractions(canvas, matmulHardwarePreset, {
+      selector: '[data-mem950-node="rail:DDR"], #matmul-aic-core',
+    });
+    let viewMode = 'fit';
+    const syncViewMode = () => {
+      fitButton?.classList.toggle('is-active', viewMode === 'fit');
+      actualButton?.classList.toggle('is-active', viewMode === 'actual');
+      fitButton?.setAttribute('aria-pressed', String(viewMode === 'fit'));
+      actualButton?.setAttribute('aria-pressed', String(viewMode === 'actual'));
+    };
+    const zoom = memoryPattern.createZoomController({
+      root: $('#inspector'),
+      viewport,
+      sizer,
+      canvas,
+      defaultZoom: 0.25,
+      min: 0.16,
+      max: 1.2,
+      step: 0.08,
+      pan: true,
+      wheelZoom: false,
+      centerTarget: '.pto-mem950__layout',
+      readout,
+      onZoom: () => syncViewMode(),
+    });
+
+    const fit = () => {
+      const graph = canvas.querySelector('.pto-mem950');
+      if (!graph) return;
+      const widthScale = (viewport.clientWidth - 10) / Math.max(graph.scrollWidth, 1);
+      const heightScale = (viewport.clientHeight - 10) / Math.max(graph.scrollHeight, 1);
+      viewMode = 'fit';
+      zoom?.setZoom(Math.max(0.16, Math.min(1, widthScale, heightScale)));
+      zoom?.center();
+      routes?.render();
+      syncViewMode();
+    };
+    const actual = () => {
+      viewMode = 'actual';
+      zoom?.setZoom(1);
+      zoom?.center();
+      routes?.render();
+      syncViewMode();
+    };
+    const onWheel = (event) => {
+      event.preventDefault();
+      viewMode = 'custom';
+      const direction = event.deltaY > 0 ? -1 : 1;
+      const magnitude = Math.min(3, Math.max(1, Math.abs(event.deltaY) / 120));
+      zoom?.zoomAtPoint(zoom.getZoom() + 0.08 * direction * magnitude, event.clientX, event.clientY);
+      routes?.render();
+      syncViewMode();
+    };
+    const activateFlow = (lineNumber) => {
+      const flow = matmulLineFlows[lineNumber];
+      if (!flow) return;
+      memoryPattern.setPathFocus(canvas, matmulHardwarePreset, flow);
+      host?.classList.add('is-code-flowing');
+      $$('#dslEditor [data-hardware-line]').forEach((row) => row.classList.toggle('is-hardware-selected', Number(row.dataset.hardwareLine) === lineNumber));
+      if (flowStatus) flowStatus.innerHTML = `<span><i></i>第 ${lineNumber} 行 · ${flow.label}</span>`;
+      state.hardwareFlowLine = lineNumber;
+    };
+    const clearFlow = () => {
+      memoryPattern.clearPathFocus(canvas);
+      host?.classList.remove('is-code-flowing');
+      $$('#dslEditor [data-hardware-line]').forEach((row) => row.classList.remove('is-hardware-selected'));
+      if (flowStatus) flowStatus.innerHTML = '<span><i></i>悬停源码行查看数据流，点击可锁定</span>';
+      state.hardwareFlowLine = 0;
+    };
+    fitButton?.addEventListener('click', fit);
+    actualButton?.addEventListener('click', actual);
+    viewport.addEventListener('wheel', onWheel, { passive: false });
+    const fitObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { if (viewMode === 'fit') fit(); }) : null;
+    fitObserver?.observe(viewport);
+    requestAnimationFrame(fit);
+
+    matmulHardwareGraphInstance = {
+      activateFlow,
+      clearFlow,
+      fit,
+      actual,
+      destroy() {
+        fitButton?.removeEventListener('click', fit);
+        actualButton?.removeEventListener('click', actual);
+        viewport.removeEventListener('wheel', onWheel);
+        fitObserver?.disconnect();
+        routes?.destroy?.();
+        hover?.destroy?.();
+        zoom?.destroy?.();
+      },
+    };
+  }
+
   function updateInspector() {
+    if (state.step === 1) {
+      renderIntentInspector();
+      if (state.fixed) $('.kf-intent-note p').textContent = '已切换到静态仿射 work-table fallback；动态 GM store offset 已移除。';
+      return;
+    }
+    $('#inspectorTitle').textContent = ['上下文预览', '意图预览', '编译约束', '正确性定位', '可信摘要'][state.step];
     $('#inspector').innerHTML = inspectorContent[state.step];
     $('#inspectorMeta').textContent = state.step === 4 ? 'sealed' : 'live';
     if (state.step === 1 && state.fixed) {
-      $('#inspectorDiagnostic').textContent = '输出方向已显式设为 BHSD。即时诊断已清除。';
+      $('#inspectorDiagnostic').textContent = '动态索引已替换为静态仿射 slot；codegen 限制已绕过。';
     }
   }
 
   function setActivityView(view) {
     state.activityView = view;
+    const isRuns = view === 'runs';
+    if (view === 'explorer' && state.step !== EXPLORER_STEP) renderStage(EXPLORER_STEP);
+    if (view === 'workflow' && state.step === EXPLORER_STEP) renderStage(state.workflowStep);
     $$('[data-side-view]').forEach((panel) => {
       const active = panel.dataset.sideView === view;
       panel.hidden = !active;
       panel.classList.toggle('is-active', active);
     });
     $$('[data-activity-view]').forEach((button) => {
-      const active = button.dataset.activityView === view;
+      const active = button.dataset.activityView === view || (view === 'runs' && button.dataset.activityView === 'workflow');
       button.classList.toggle('is-selected', active);
       button.setAttribute('aria-pressed', String(active));
       button.setAttribute('aria-expanded', String(active));
     });
-    $('#sidePaneTitle').textContent = view === 'explorer' ? '资源管理器' : '任务路线';
-    $('#sidePaneMeta').textContent = view === 'explorer' ? 'workspace' : `${state.step + 1} / 5`;
+    $('.kf-main-body').classList.toggle('is-runs', isRuns);
+    $('.kf-main-body').classList.toggle('is-explorer', view === 'explorer');
+    $('.kf-main-body').classList.toggle('is-workflow', view === 'workflow');
+    $('#tabs').parentElement.hidden = view !== 'explorer';
+    $('#stageTitle').closest('.pto-ide-frame__pane-header').hidden = view === 'explorer';
+    $('.kf-command').textContent = isRuns ? 'RUNS · 统一运行详情' : '⌘ K　搜索命令、tensor 或 pass';
+    const sideTitle = { explorer: '资源管理器', workflow: '任务路线', runs: '运行列表' }[view] || '资源管理器';
+    $('#sidePaneTitle').textContent = sideTitle;
+    const workflowPosition = Math.max(0, WORKFLOW_STEPS.indexOf(state.step));
+    $('#sidePaneMeta').textContent = view === 'explorer' ? 'workspace' : isRuns ? `${runs.length} runs` : `${workflowPosition + 1} / ${WORKFLOW_STEPS.length}`;
+    if (isRuns) {
+      renderRunList();
+      renderRunDetail();
+      $('#stageTitle').textContent = '统一运行详情页';
+      $('#stageMeta').textContent = getRun().id;
+      updateRunInspector();
+    } else {
+      $('#stageTitle').textContent = titles[state.step][0];
+      $('#stageMeta').textContent = titles[state.step][1];
+      updateInspector();
+    }
+    if (view === 'explorer') {
+      $$('[data-file]').forEach((item) => item.classList.toggle('is-selected', item.dataset.file === state.activeFile));
+      setEditorTab(state.editorTab);
+    }
   }
 
   function toggleTreeGroup(name, expanded) {
@@ -98,26 +696,41 @@
   }
 
   const titles = [
-    ['定义目标', 'recipe · paged_attention'],
-    ['编写 Kernel', 'kernels/paged_attention.pypto'],
+    ['定义目标', 'recipe · decode_layer'],
+    ['编写 Kernel', 'kernels/decode_layer.py'],
     ['编译卫士', '5 passes · 8 guards'],
     ['Correctness Lab', '3 oracles · tensor checkpoints'],
     ['可信基线', 'ptok · signed evidence']
   ];
 
-  function goTo(step) {
+  function renderStage(step) {
     state.step = Math.max(0, Math.min(4, step));
+    if (state.step !== EXPLORER_STEP) state.workflowStep = state.step;
     $$('.kf-stage').forEach((el, i) => el.classList.toggle('is-active', i === state.step));
-    $$('#stepNav button').forEach((button, i) => {
-      button.classList.toggle('is-active', i === state.step);
-      button.classList.toggle('is-complete', i < state.step || (i === 3 && state.verified));
+    const workflowPosition = WORKFLOW_STEPS.indexOf(state.step);
+    $$('#stepNav [data-step]').forEach((button) => {
+      const buttonStep = Number(button.dataset.step);
+      if (buttonStep === EXPLORER_STEP) {
+        button.classList.remove('is-active', 'is-complete');
+        return;
+      }
+      const buttonPosition = WORKFLOW_STEPS.indexOf(buttonStep);
+      button.classList.toggle('is-active', buttonStep === state.step);
+      button.classList.toggle('is-complete', buttonPosition < workflowPosition || (buttonStep === 3 && state.verified));
     });
-    $('#progressBar').style.width = `${(state.step + 1) * 20}%`;
-    if (state.activityView === 'workflow') $('#sidePaneMeta').textContent = `${state.step + 1} / 5`;
+    $('#progressBar').style.width = `${((workflowPosition + 1) / WORKFLOW_STEPS.length) * 100}%`;
+    if (state.activityView === 'workflow') $('#sidePaneMeta').textContent = `${workflowPosition + 1} / ${WORKFLOW_STEPS.length}`;
     $('#stageTitle').textContent = titles[state.step][0];
     $('#stageMeta').textContent = titles[state.step][1];
     $('#statusText').textContent = ['目标契约已就绪', 'DSL 即时诊断运行中', 'Pass 不变量验证', 'Oracle 三角比对', '可信基线已签发'][state.step];
     updateInspector();
+  }
+
+  function goTo(step) {
+    const targetStep = Math.max(0, Math.min(4, step));
+    const targetView = targetStep === EXPLORER_STEP ? 'explorer' : 'workflow';
+    if (state.activityView !== targetView) setActivityView(targetView);
+    renderStage(targetStep);
   }
 
   function toast(message) {
@@ -136,10 +749,10 @@
   }
 
   const soloToolNames = { context: '工程上下文', editor: 'Kernel Editor', guard: 'Compiler Guard', lab: 'Correctness Lab' };
-  const soloToolStatus = { context: 'Context indexed', editor: 'Editing paged_attention.pypto', guard: 'Validating pass invariants', lab: 'Comparing three oracles' };
+  const soloToolStatus = { context: 'Context indexed', editor: 'Editing decode_layer.py', guard: 'Validating pass invariants', lab: 'Comparing three oracles' };
   const soloRunSteps = [
     { tool: 'context', title: '上下文与目标契约已锁定', detail: '读取 12 个 tensor contract、Ascend 950B 容量约束和 BF16 精度目标。' },
-    { tool: 'editor', title: 'Kernel DSL 已生成并自修复', detail: '生成语义 DSL，并将危险默认 direction=AUTO 修正为显式 BHSD。' },
+    { tool: 'editor', title: 'Decode Layer 源码已解析', detail: '识别 FP32 carry、manual_scope 与动态 work-table 索引，并准备静态仿射 fallback。' },
     { tool: 'guard', title: '所有编译 Pass 不变量成立', detail: 'Semantic、Layout、Parallel、Memory 与 ISA 五个 Pass 的 8 类卫士全部通过。' },
     { tool: 'lab', title: '三路 Oracle 已完成交叉验证', detail: '定位并消除首个 tensor 分歧；12 / 12 checkpoint 满足 rtol 1e-3。' },
     { tool: 'lab', title: '可信基线已签发', detail: '生成环境指纹 env:8da1bf09、证据链和可复现命令，基线已封存。' }
@@ -292,7 +905,7 @@
         $('#soloGuardState').textContent = '5 / 5 PASS';
       } else if (index === 3) {
         $('#soloLabResult').className = 'kf-solo-lab-result is-running';
-        $('#soloLabResult').innerHTML = '<span class="kf-solo-spinner"></span><h3>正在比对 Tensor checkpoints</h3><p>CPU reference · FlashInfer · PyPTO device</p>';
+        $('#soloLabResult').innerHTML = '<span class="kf-solo-spinner"></span><h3>正在比对 Decode Layer argmax</h3><p>Torch golden · FP32 carry reference · PyPTO device</p>';
         await soloDelay(650);
         $('#soloDeviceResult').textContent = 'PASS';
         $('#soloLabResult').className = 'kf-solo-lab-result is-pass';
@@ -328,14 +941,8 @@
 
   function applyDslFix() {
     state.fixed = true;
-    $('#directionToken').textContent = 'direction="BHSD"';
-    $('#directionToken').style.color = 'var(--success)';
-    $('#warningLine').classList.remove('has-warning');
-    $('#dslDiagnostic').innerHTML = '<span style="color:var(--success)">✓</span><div><b style="color:var(--success)">输出方向已显式固定为 BHSD</b><small>危险默认已清除；布局契约将在每个 Pass 后持续验证。</small></div>';
-    $('#dslStatus').textContent = '诊断已清除';
-    $('#dslStatus').className = 'kf-state-chip good';
     updateInspector();
-    toast('已应用修复：direction="BHSD"');
+    toast('已应用仿射 fallback：动态索引已移除');
   }
 
   async function runCompile() {
@@ -368,7 +975,7 @@
     $('#labStatus').textContent = '3 / 3 oracle 一致';
     $('#labStatus').className = 'kf-state-chip good';
     $('.kf-divergence').style.opacity = '.42';
-    $('.kf-root-cause').innerHTML = '<span style="color:var(--success)">✓</span><div><b style="color:var(--success)">修复已验证</b><p>12 / 12 tensor checkpoints 一致，最大绝对误差 0.0009766，满足 rtol 1e-3。</p></div><button class="btn btn-solid" id="issueBaseline">签发可信基线 →</button>';
+    $('.kf-root-cause').innerHTML = '<span style="color:var(--success)">✓</span><div><b style="color:var(--success)">Fallback 已验证</b><p>16 / 16 batch argmax 一致；FP32 carry reference 的比例容差满足预期。</p></div><button class="btn btn-solid" id="issueBaseline">签发可信基线 →</button>';
     $('#issueBaseline').addEventListener('click', () => goTo(4));
     toast('复验通过：首个分歧已消除');
   }
@@ -378,7 +985,8 @@
   renderOracles();
   renderTensorCompare();
   renderGraph();
-  goTo(0);
+  renderFullSource();
+  goTo(1);
   setProductMode('ide');
 
   $$('[data-activity-view]').forEach((button) => button.addEventListener('click', (event) => {
@@ -386,6 +994,7 @@
     setActivityView(button.dataset.activityView);
   }, true));
   setActivityView('explorer');
+  $('[data-file="decode_layer.py"]')?.classList.add('is-selected');
 
   document.addEventListener('click', (event) => {
     if (!event.target.closest('#envControl') && !event.target.closest('#envFingerprintPanel')) setEnvironmentPanel(false);
@@ -393,6 +1002,8 @@
     if (recipe) { state.selectedRecipe = recipe.dataset.recipe; renderRecipes(); toast(`已选择 ${$('b', recipe).textContent}`); }
     const step = event.target.closest('[data-step]');
     if (step) { setActivityView('workflow'); goTo(Number(step.dataset.step)); }
+    if (event.target.closest('[data-open-runs]')) setActivityView('runs');
+    if (event.target.closest('[data-back-workflow]')) setActivityView('workflow');
     const treeToggle = event.target.closest('[data-tree-toggle]');
     if (treeToggle) toggleTreeGroup(treeToggle.dataset.treeToggle, treeToggle.getAttribute('aria-expanded') !== 'true');
     const file = event.target.closest('[data-file]');
@@ -401,8 +1012,12 @@
       file.classList.add('is-selected');
       const openStep = file.dataset.openStep;
       if (openStep != null) {
-        setActivityView('workflow');
+        state.activeFile = file.dataset.file;
+        state.hardwareFlowLine = 0;
+        state.hardwareFlowPinned = false;
+        renderFullSource();
         goTo(Number(openStep));
+        $('#stageMeta').textContent = `kernels/${state.activeFile}`;
         toast(`已打开 ${file.dataset.file} · 定位到${titles[Number(openStep)][0]}`);
       } else {
         toast(`已选择 ${file.dataset.file}`);
@@ -410,8 +1025,99 @@
     }
     if (event.target.closest('[data-next]')) goTo(state.step + 1);
     if (event.target.closest('[data-prev]')) goTo(state.step - 1);
+
+    const runItem = event.target.closest('[data-run]');
+    if (runItem) {
+      state.currentRun = runItem.dataset.run;
+      renderRunList();
+      renderRunDetail();
+      updateRunInspector();
+      $('#stageMeta').textContent = state.currentRun;
+      toast(`已打开运行详情：${getRun().title}`);
+    }
+    const nextAction = event.target.closest('[data-next-action]');
+    if (nextAction) {
+      const run = getRun();
+      const entry = run.next[Number(nextAction.dataset.nextIndex)];
+      if (nextAction.dataset.nextAction === 'fix') {
+        setActivityView('workflow');
+        goTo(1);
+        toast(`已在 IDE 中打开 ${entry[2]}`);
+      } else {
+        navigator.clipboard?.writeText(entry[2]);
+        toast(nextAction.dataset.nextAction === 'exp' ? `已加入实验队列：${entry[2]}` : `已复制命令：${entry[2]}`);
+      }
+    }
+    const evidenceNode = event.target.closest('[data-evidence]');
+    if (evidenceNode) {
+      const run = getRun();
+      const key = evidenceNode.dataset.evidence;
+      state.selectedEvidence = key;
+      renderRunDetail();
+      updateRunInspector();
+      toast(`下钻 ${evidenceMeta[key][1]} 证据 · ${run.evidence[key] || '—'} · ${run.id}`);
+    }
+    const runActionTab = event.target.closest('[data-run-action-tab]');
+    if (runActionTab) {
+      state.runActionTab = runActionTab.dataset.runActionTab;
+      renderRunDetail();
+    }
+    const intentTab = event.target.closest('[data-intent-tab]');
+    if (intentTab) {
+      state.intentTab = intentTab.dataset.intentTab;
+      renderIntentInspector();
+      toast(`意图预览已切换到 ${intentPreview[state.intentTab].label}`);
+    }
+    const intentLine = event.target.closest('[data-intent-line]');
+    if (intentLine) {
+      state.intentTab = intentLine.dataset.intentLine;
+      $$('[data-intent-line]').forEach(line => line.classList.toggle('is-intent-selected', line === intentLine));
+      renderIntentInspector();
+      toast(`第 ${$('i', intentLine).textContent} 行 · ${intentPreview[state.intentTab].label} 意图`);
+    }
+    const hardwareLine = event.target.closest('[data-hardware-line]');
+    if (hardwareLine) {
+      const lineNumber = Number(hardwareLine.dataset.hardwareLine);
+      const isSamePinnedLine = state.hardwareFlowPinned && state.hardwareFlowLine === lineNumber;
+      state.hardwareFlowPinned = !isSamePinnedLine;
+      if (isSamePinnedLine) matmulHardwareGraphInstance?.clearFlow?.();
+      else matmulHardwareGraphInstance?.activateFlow?.(lineNumber);
+      toast(isSamePinnedLine ? '已取消硬件路径锁定' : `已锁定第 ${lineNumber} 行硬件数据流`);
+    }
+    if (event.target.closest('#baselinePicker')) toast('已打开可信基线选择器 · 当前 run_d9a1');
+    if (event.target.closest('#copyRunToken')) { navigator.clipboard?.writeText(getRun().token); toast('运行链接已复制，可共享或跨 Run diff'); }
+    if (event.target.closest('#runShare')) { navigator.clipboard?.writeText(getRun().token); toast('已生成可共享运行详情链接'); }
+    if (event.target.closest('#runCompare2') || event.target.closest('#compareRuns')) {
+      const trusted = runs.find(r => r.verdict === 'trusted');
+      toast(`对比 ${getRun().id} ↔ ${trusted ? trusted.id : '可信基线'} · 因果 diff 已就绪`);
+    }
   });
-  $('#applyFix').addEventListener('click', applyDslFix);
+  document.addEventListener('pointerover', (event) => {
+    const line = event.target.closest?.('[data-hardware-line]');
+    if (!line || line.contains(event.relatedTarget) || state.hardwareFlowPinned) return;
+    matmulHardwareGraphInstance?.activateFlow?.(Number(line.dataset.hardwareLine));
+  });
+  document.addEventListener('pointerout', (event) => {
+    const line = event.target.closest?.('[data-hardware-line]');
+    if (!line || line.contains(event.relatedTarget) || state.hardwareFlowPinned) return;
+    matmulHardwareGraphInstance?.clearFlow?.();
+  });
+  document.addEventListener('focusin', (event) => {
+    const line = event.target.closest?.('[data-hardware-line]');
+    if (!line || state.hardwareFlowPinned) return;
+    matmulHardwareGraphInstance?.activateFlow?.(Number(line.dataset.hardwareLine));
+  });
+  document.addEventListener('focusout', (event) => {
+    if (!event.target.closest?.('[data-hardware-line]') || state.hardwareFlowPinned) return;
+    matmulHardwareGraphInstance?.clearFlow?.();
+  });
+  document.addEventListener('keydown', (event) => {
+    const line = event.target.closest?.('[data-hardware-line]');
+    if (!line || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    line.click();
+  });
+  $('#applyFix')?.addEventListener('click', applyDslFix);
   $$('[data-product-mode]').forEach((button) => button.addEventListener('click', () => {
     const mode = button.dataset.productMode;
     if (mode === 'ide' && state.soloRunning) {
@@ -515,10 +1221,10 @@
   $('#runCompile').addEventListener('click', runCompile);
   $('#toLab').addEventListener('click', () => goTo(3));
   $('#fixAndRerun').addEventListener('click', verifyAndFinish);
-  $('#copyBaseline').addEventListener('click', () => { navigator.clipboard?.writeText('ptok://qwen3-32b/l18/paged-attn@9f2a71c'); toast('基线 ID 已复制'); });
-  $('#copyRepro').addEventListener('click', () => { navigator.clipboard?.writeText('pypto trust replay ptok://qwen3-32b/l18/paged-attn@9f2a71c'); toast('复现命令已复制'); });
+  $('#copyBaseline').addEventListener('click', () => { navigator.clipboard?.writeText('ptok://qwen3-14b/decode-layer@9f2a71c'); toast('基线 ID 已复制'); });
+  $('#copyRepro').addEventListener('click', () => { navigator.clipboard?.writeText('pypto trust replay ptok://qwen3-14b/decode-layer@9f2a71c'); toast('复现命令已复制'); });
   $('#viewEvidence').addEventListener('click', () => toast('证据包：24 项事实 · 3 个 oracle · 5 个 Pass 快照'));
-  $('#newBaseline').addEventListener('click', () => toast('已创建性能优化分支：opt/paged-attn-from-9f2a71c'));
+  $('#newBaseline').addEventListener('click', () => toast('已创建调度优化分支：opt/decode-layer-from-9f2a71c'));
   $('#resetDemo').addEventListener('click', () => window.location.reload());
   $('#collapseTree').addEventListener('click', () => {
     $$('[data-tree-toggle]').forEach(toggle => toggleTreeGroup(toggle.dataset.treeToggle, false));
@@ -540,7 +1246,10 @@
       $('#envControl').focus();
     }
   });
-  $$('#tabs button').forEach((button, index) => button.addEventListener('click', () => { $$('#tabs button').forEach(b => b.classList.remove('is-active')); button.classList.add('is-active'); if (index === 1) { goTo(4); toast('已打开签名证据摘要'); } }));
+  $$('[data-editor-tab]').forEach((button) => button.addEventListener('click', () => {
+    goTo(EXPLORER_STEP);
+    setEditorTab(button.dataset.editorTab);
+  }));
 
   // Product interactions are bound before the shared frame initializes so a
   // non-critical resize/chrome failure can never disable the workbench UI.
@@ -549,6 +1258,7 @@
   } catch (error) {
     console.warn('IDE frame enhancement unavailable; core interactions remain active.', error);
   }
+  setActivityView(state.activityView);
   try {
     window.kernelForgeSoloSplit = window.PtoWorkbenchShell?.initResizablePanes({
       root: $('#soloWorkarea'),
