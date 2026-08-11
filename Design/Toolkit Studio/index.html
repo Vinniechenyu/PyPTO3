@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/aic-core-object/pattern.css" />
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/memory-architecture/pattern.css" />
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/model-graphviz/pattern.css" />
-  <link rel="stylesheet" href="./styles/demo.css?v=20260811-13" />
+  <link rel="stylesheet" href="./styles/demo.css?v=20260811-17" />
 </head>
 <body>
   <section class="pto-ide-frame" data-ide-frame data-host="standalone" data-cursor-dots="true" aria-label="PyPTO Studio 可信 Kernel 工作台">
@@ -95,7 +95,7 @@
               <span>模型规格</span>
               <dl><div><dt>Decoder</dt><dd>40 层</dd></div><div><dt>Decode batch</dt><dd>16</dd></div><div><dt>Hidden</dt><dd>5,120</dd></div><div><dt>Attention</dt><dd>40 Q / 8 KV</dd></div><div><dt>Head dim</dt><dd>128</dd></div><div><dt>FFN</dt><dd>17,408</dd></div></dl>
             </div>
-            <div class="kf-model-legend"><span>节点类型</span><i class="is-op">任务 / 算子</i><i class="is-tensor">Tensor / State</i><small>点击节点查看信息 · 点击节点右侧 ＋ 下钻 · 容器右上角 − 收起</small></div>
+            <div class="kf-model-legend"><span>节点类型</span><i class="is-op">任务 / 算子</i><i class="is-tensor">Tensor / State</i><i class="is-flow-solid">实线 · 主数据流</i><i class="is-flow-dashed">虚线 · 辅助依赖</i><small>点击节点查看信息 · 点击节点右侧 ＋ 下钻 · 容器右上角 − 收起</small></div>
           </aside>
 
           <main class="kf-model-canvas">
@@ -491,7 +491,7 @@
   <script src="./js/decode-layer-source.js?v=20260807-4"></script>
   <script src="./js/passes-dump-source.js?v=20260810-1"></script>
   <script src="./js/passes-graph.js?v=20260810-7"></script>
-  <script src="./js/qwen3-model-viz.js?v=20260811-4"></script>
+  <script src="./js/qwen3-model-viz.js?v=20260811-7"></script>
   <script src="./js/demo.js?v=20260811-7"></script>
 </body>
 </html>

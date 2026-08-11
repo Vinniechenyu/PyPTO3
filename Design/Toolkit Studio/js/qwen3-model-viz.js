@@ -5,7 +5,7 @@
     width: 1180,
     height: 2050,
     clusters: [
-      { id: 'decoder-stack', label: '_decode_layer × 40', x: 185, y: 300, width: 810, height: 1450, repeat: 40 },
+      { id: 'decoder-stack', label: '_decode_layer × 40', x: 210, y: 300, width: 830, height: 1550, repeat: 40 },
       { id: 'scope-1-cluster', label: 'Scope 1 · Input RMS + QKV', x: 245, y: 440, width: 690, height: 330, parent: 'decoder-stack' },
       { id: 'scope-2-cluster', label: 'Scope 2 · Paged Flash Attention', x: 245, y: 790, width: 690, height: 430, parent: 'decoder-stack' },
       { id: 'scope-3-cluster', label: 'Scope 3 · Output + MLP', x: 245, y: 1240, width: 690, height: 440, parent: 'decoder-stack' },
@@ -115,11 +115,102 @@
     };
   }
 
+  const routeHints = {
+    'layer-input->fa-work-build': { side: 'left', lane: 222 },
+    'layer-input->residual-cast': { side: 'right', lane: 960 },
+    'layer-input->post-rms-reduce': { side: 'right', lane: 925 },
+    'residual-cast->dcr-xgamma': { side: 'right', lane: 885 },
+    'fp32-carry-out->layer-input': { side: 'left', lane: 232 },
+    'next-normed->layer-input': { side: 'right', lane: 1015 },
+  };
+
+  function routeGraph(graph) {
+    const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+    const outgoing = new Map();
+    const incoming = new Map();
+    graph.edges.forEach((edge) => {
+      if (!outgoing.has(edge.source)) outgoing.set(edge.source, []);
+      if (!incoming.has(edge.target)) incoming.set(edge.target, []);
+      outgoing.get(edge.source).push(edge);
+      incoming.get(edge.target).push(edge);
+    });
+    outgoing.forEach((edges) => edges.sort((a, b) => (nodeById.get(a.target)?.x || 0) - (nodeById.get(b.target)?.x || 0)));
+    incoming.forEach((edges) => edges.sort((a, b) => (nodeById.get(a.source)?.x || 0) - (nodeById.get(b.source)?.x || 0)));
+
+    function portOffset(edge, collection, node, axis) {
+      const list = collection.get(axis === 'source' ? edge.source : edge.target) || [];
+      if (list.length < 2) return 0;
+      const index = list.indexOf(edge);
+      const raw = (index - (list.length - 1) / 2) * 24;
+      return Math.max(-(node.width / 2 - 24), Math.min(node.width / 2 - 24, raw));
+    }
+
+    const edges = graph.edges.map((edge) => {
+      const source = nodeById.get(edge.source);
+      const target = nodeById.get(edge.target);
+      if (!source || !target) return { ...edge };
+      const key = edge.routeKey || `${edge.source}->${edge.target}`;
+      const hint = routeHints[key];
+      const routed = { ...edge, waypoints: undefined, curve: undefined, route: 'rounded', cornerRadius: 14 };
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+
+      if (hint) {
+        routed.sourceAnchor = { side: hint.side, dy: 0 };
+        routed.targetAnchor = { side: hint.side, dy: 0 };
+        routed.waypoints = [{ x: hint.lane, y: source.y }, { x: hint.lane, y: target.y }];
+        routed.routeClass = 'side-lane';
+        return routed;
+      }
+
+      if (dy < -40 || Math.abs(dy) > 360) {
+        const useLeft = (source.x + target.x) / 2 < graph.width / 2;
+        const lane = useLeft ? 170 : graph.width - 145;
+        const side = useLeft ? 'left' : 'right';
+        routed.sourceAnchor = side;
+        routed.targetAnchor = side;
+        routed.waypoints = [{ x: lane, y: source.y }, { x: lane, y: target.y }];
+        routed.routeClass = 'side-lane';
+        return routed;
+      }
+
+      if (Math.abs(dy) <= 54 && Math.abs(dx) > 40) {
+        const sourceSide = dx > 0 ? 'right' : 'left';
+        const targetSide = dx > 0 ? 'left' : 'right';
+        routed.sourceAnchor = sourceSide;
+        routed.targetAnchor = targetSide;
+        if (Math.abs(dy) > 4) {
+          const midX = (source.x + target.x) / 2;
+          routed.waypoints = [{ x: midX, y: source.y }, { x: midX, y: target.y }];
+        } else {
+          routed.curve = 'straight';
+          routed.route = undefined;
+        }
+        routed.routeClass = 'horizontal-lane';
+        return routed;
+      }
+
+      const sourceDx = portOffset(edge, outgoing, source, 'source');
+      const targetDx = portOffset(edge, incoming, target, 'target');
+      routed.sourceAnchor = { side: dy >= 0 ? 'bottom' : 'top', dx: sourceDx };
+      routed.targetAnchor = { side: dy >= 0 ? 'top' : 'bottom', dx: targetDx };
+      const startY = source.y + (dy >= 0 ? source.height / 2 : -source.height / 2);
+      const endY = target.y + (dy >= 0 ? -target.height / 2 : target.height / 2);
+      const midY = (startY + endY) / 2;
+      routed.waypoints = [
+        { x: source.x + sourceDx, y: midY },
+        { x: target.x + targetDx, y: midY },
+      ];
+      routed.routeClass = Math.abs(dx) < 32 ? 'spine-lane' : 'branch-lane';
+      return routed;
+    });
+    return { ...graph, edges };
+  }
+
   function buildExpandedGraph(nodeId) {
     const drill = buildDrillDefinition(nodeId);
-    if (!drill) return { ...baseGraph, nodes: baseGraph.nodes.map((node) => ({ ...node })), edges: baseGraph.edges.map((edge) => ({ ...edge })), clusters: baseGraph.clusters.map((cluster) => ({ ...cluster })) };
+    if (!drill) return routeGraph({ ...baseGraph, nodes: baseGraph.nodes.map((node) => ({ ...node })), edges: baseGraph.edges.map((edge) => ({ ...edge })), clusters: baseGraph.clusters.map((cluster) => ({ ...cluster })) });
     const threshold = drill.target.y;
-    const shiftY = (y) => y >= threshold ? y + drill.delta : y;
     const shouldShiftNode = (node) => node.y > threshold || (
       node.y === threshold
       && Math.abs(node.x - drill.target.x) < (drill.width + node.width) / 2
@@ -139,18 +230,18 @@
     clusters.push(drill.cluster);
     const edges = baseGraph.edges.map((edge) => ({
       ...edge,
+      routeKey: `${edge.source}->${edge.target}`,
       source: edge.source === nodeId ? drill.exit : edge.source,
       target: edge.target === nodeId ? drill.entry : edge.target,
-      waypoints: edge.waypoints?.map((point) => ({ ...point, y: shiftY(point.y) })),
     }));
-    return {
+    return routeGraph({
       ...baseGraph,
       height: baseGraph.height + drill.delta,
       nodes: [...nodes, ...shiftedDrillNodes],
       clusters,
       edges: [...edges, ...drill.edges],
       activeDrill: nodeId,
-    };
+    });
   }
 
   const phaseCopy = {
@@ -204,6 +295,22 @@
     document.querySelectorAll('[data-model-focus]').forEach((button) => button.classList.toggle('is-active', button.dataset.modelFocus === nodeId));
   }
 
+  function applyNodeFocus(nodeId) {
+    const stage = document.getElementById('qwen3ModelGraph');
+    if (!stage || !nodeId) return;
+    stage.classList.add('has-node-focus');
+    stage.dataset.focusedNode = nodeId;
+    nodeDetail(nodeId);
+  }
+
+  function clearNodeFocus() {
+    const stage = document.getElementById('qwen3ModelGraph');
+    stage?.classList.remove('has-node-focus');
+    if (stage) delete stage.dataset.focusedNode;
+    controller?.clearSelection();
+    document.querySelectorAll('[data-model-focus]').forEach((button) => button.classList.remove('is-active'));
+  }
+
   function focusPhaseViewport(phase) {
     if (!controller) return;
     if (phase === 'all' || !phaseBounds[phase]) {
@@ -254,7 +361,7 @@
       element.classList.toggle('is-phase-muted', phase !== 'all' && source?.phase !== phase && target?.phase !== phase);
       element.classList.toggle('is-phase-active', phase !== 'all' && (source?.phase === phase || target?.phase === phase));
     });
-    controller?.clearSelection();
+    clearNodeFocus();
     if (activeDrill) focusDrillViewport(activeDrill);
     else focusPhaseViewport(phase);
     renderInspector(copy[0], copy[2], copy[3], [['源码', 'decode_layer.py'], ['模型', 'Qwen3-14B · 40 layers']]);
@@ -263,14 +370,16 @@
   function renderGraph() {
     const stage = document.getElementById('qwen3ModelGraph');
     if (!stage || !window.PtoModelGraphvizPattern) return;
+    stage.classList.remove('has-node-focus');
+    delete stage.dataset.focusedNode;
     controller?.destroy();
     currentGraph = buildExpandedGraph(activeDrill);
     controller = window.PtoModelGraphvizPattern.renderController(stage, currentGraph, {
       ariaLabel: 'Qwen3 14B fused decode execution graph',
       colormap: window.PtoModelGraphvizPattern.modelArchitectureColormap(currentGraph),
       fitMode: 'full', viewportPadding: 36, autoFit: false,
-      interaction: { panZoom: true, selectableClusters: true }, overlays: { edgeTags: true },
-      onSelect: ({ nodeId }) => nodeDetail(nodeId),
+      interaction: { panZoom: true, selectableClusters: false }, overlays: { edgeTags: true },
+      onSelect: ({ nodeId }) => applyNodeFocus(nodeId),
     });
     requestAnimationFrame(() => {
       applyPhase(activePhase);
@@ -305,6 +414,11 @@
     }
   }
 
+  function handleCanvasSelectionClear(event) {
+    if (event.target.closest('.pto-model-graphviz-node, .pto-model-graphviz-edge, .pto-model-graphviz-edge-tag')) return;
+    clearNodeFocus();
+  }
+
   function selectPhase(phase) {
     activePhase = phase;
     if (activeDrill) {
@@ -328,6 +442,7 @@
     const stage = document.getElementById('qwen3ModelGraph');
     if (!stage || !window.PtoModelGraphvizPattern) return;
     stage.addEventListener('click', handleDrillToggle, true);
+    stage.addEventListener('pointerdown', handleCanvasSelectionClear, true);
     document.querySelectorAll('[data-model-phase]').forEach((button) => button.addEventListener('click', () => selectPhase(button.dataset.modelPhase)));
     document.querySelectorAll('[data-model-focus]').forEach((button) => button.addEventListener('click', () => controller?.selectNode(button.dataset.modelFocus, { source: 'outline' })));
     document.querySelector('[data-model-fit]')?.addEventListener('click', () => { controller?.fit(); document.getElementById('modelZoomReadout').textContent = '适应'; });

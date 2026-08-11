@@ -1022,6 +1022,8 @@ button { color: inherit; }
 .kf-model-legend i { display: flex; align-items: center; gap: 8px; color: var(--foreground-secondary); font-size: var(--kf-type-xs); font-style: normal; }
 .kf-model-legend i::before { content: ''; width: 18px; height: 9px; border-radius: 999px; background: var(--primary); }
 .kf-model-legend i.is-tensor::before { border: 1px solid var(--border-strong); border-radius: 3px; background: var(--surface-4); }
+.kf-model-legend i.is-flow-solid::before, .kf-model-legend i.is-flow-dashed::before { width: 22px; height: 0; border: 0; border-top: 2px solid var(--foreground); border-radius: 0; background: none; }
+.kf-model-legend i.is-flow-dashed::before { border-top-style: dashed; opacity: .52; }
 .kf-model-legend small { margin-top: 5px; color: var(--foreground-muted); font-size: var(--kf-type-2xs); line-height: 1.5; }
 .kf-model-canvas { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--background); }
 .kf-model-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 76px; padding: 12px 18px; border-bottom: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--panel-shell-bg) 92%, transparent); }
@@ -1053,6 +1055,8 @@ button { color: inherit; }
 .kf-model-outline button small { color: var(--foreground-muted); font: var(--kf-type-2xs)/1.3 var(--font-mono); }
 .kf-model-workspace .pto-model-graphviz-node.is-model-selected rect { stroke: var(--model-architecture-selected-stroke) !important; stroke-width: 2.4px !important; }
 .kf-model-workspace .pto-model-graphviz-node.is-model-related { opacity: .86; }
+.kf-model-workspace .pto-model-graphviz-edge { stroke-linecap: round; stroke-linejoin: round; }
+.kf-model-workspace .pto-model-graphviz-edge[stroke-dasharray] { opacity: .52; }
 .kf-model-workspace .pto-model-graphviz-node.is-collapsed .pto-model-graphviz-toggle,
 .kf-model-workspace .pto-model-graphviz-node.is-collapsed .pto-model-graphviz-toggle-icon,
 .kf-model-workspace .pto-model-graphviz-cluster[data-cluster-id^='drill-'] .pto-model-graphviz-toggle,
@@ -1063,5 +1067,15 @@ button { color: inherit; }
 .kf-model-workspace .pto-model-graphviz-node.is-phase-muted, .kf-model-workspace .pto-model-graphviz-edge.is-phase-muted, .kf-model-workspace .pto-model-graphviz-edge-tag.is-phase-muted { opacity: .1; }
 .kf-model-workspace .pto-model-graphviz-node.is-phase-active { filter: brightness(1.14); }
 .kf-model-workspace .pto-model-graphviz-edge.is-phase-active { opacity: .9; stroke-width: 2; }
+.kf-model-workspace .pto-model-graphviz-edge[stroke-dasharray].is-phase-active { opacity: .62; }
 .kf-model-workspace .pto-model-graphviz-edge-tag { pointer-events: none; }
+.kf-model-workspace .kf-model-stage.has-node-focus .pto-model-graphviz-node:not(.is-model-selected):not(.is-model-related),
+.kf-model-workspace .kf-model-stage.has-node-focus .pto-model-graphviz-edge:not(.is-model-related),
+.kf-model-workspace .kf-model-stage.has-node-focus .pto-model-graphviz-edge-tag:not(.is-model-related) { opacity: .12; filter: saturate(.35); }
+.kf-model-workspace .kf-model-stage.has-node-focus .pto-model-graphviz-cluster:not(.is-model-related):not(.is-model-selected) { opacity: .2; }
+.kf-model-workspace .kf-model-stage.has-node-focus .pto-model-graphviz-node.is-model-related { opacity: .72; }
+.kf-model-workspace .kf-model-stage.has-node-focus .pto-model-graphviz-node.is-model-selected { opacity: 1; filter: brightness(1.16); }
+.kf-model-workspace .kf-model-stage.has-node-focus .pto-model-graphviz-edge.is-model-related { opacity: 1; stroke: var(--primary); stroke-width: 2.8px; filter: drop-shadow(0 0 3px color-mix(in srgb, var(--primary) 62%, transparent)); }
+.kf-model-workspace .kf-model-stage.has-node-focus .pto-model-graphviz-edge[stroke-dasharray].is-model-related { opacity: .82; filter: drop-shadow(0 0 2px color-mix(in srgb, var(--primary) 46%, transparent)); }
+.kf-model-workspace .kf-model-stage.has-node-focus .pto-model-graphviz-edge-tag.is-model-related { opacity: 1; }
 @media (max-width: 1180px) { .kf-model-workspace { grid-template-columns: 200px minmax(520px, 1fr) 250px; } .kf-model-library { padding-inline: 10px; } }
