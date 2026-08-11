@@ -770,6 +770,7 @@ def mm(
   function setActivityView(view) {
     state.activityView = view;
     const isRuns = view === 'runs';
+    const isModel = view === 'model';
     if (view === 'explorer' && state.step !== EXPLORER_STEP) renderStage(EXPLORER_STEP);
     if (view === 'workflow' && state.step === EXPLORER_STEP) renderStage(state.workflowStep);
     $$('[data-side-view]').forEach((panel) => {
@@ -783,6 +784,14 @@ def mm(
       button.setAttribute('aria-pressed', String(active));
       button.setAttribute('aria-expanded', String(active));
     });
+    $('#ideMainSplit').hidden = isModel;
+    $('#ideStatusStrip').hidden = isModel;
+    $('#modelArchitectureView').hidden = !isModel;
+    if (isModel) {
+      $('.kf-command').textContent = 'MODEL · Qwen3 14B 架构可视化';
+      window.PtoQwen3ModelViz?.show();
+      return;
+    }
     $('.kf-main-body').classList.toggle('is-runs', isRuns);
     $('.kf-main-body').classList.toggle('is-explorer', view === 'explorer');
     $('.kf-main-body').classList.toggle('is-workflow', view === 'workflow');

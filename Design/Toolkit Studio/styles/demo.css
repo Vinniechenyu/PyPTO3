@@ -980,3 +980,82 @@ button { color: inherit; }
 .kf-cg-detail .kf-cg-srcline { color: var(--ark-blue-500, #4369ef); font-weight: 600; }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* ---- Qwen3 model architecture workspace ---- */
+.kf-model-workspace[hidden], #ideMainSplit[hidden], #ideStatusStrip[hidden] { display: none !important; }
+.kf-model-workspace {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(210px, 15.5vw) minmax(560px, 1fr) minmax(270px, 19vw);
+  overflow: hidden;
+  background: var(--background);
+}
+.kf-model-workspace h1, .kf-model-workspace h2, .kf-model-workspace p { margin: 0; }
+.kf-model-library, .kf-model-inspector { min-width: 0; overflow: auto; background: var(--panel-shell-bg); scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.kf-model-library { padding: 20px 14px; border-right: 1px solid var(--border-subtle); }
+.kf-model-library > header, .kf-model-inspector > header { margin-bottom: 18px; }
+.kf-model-library h2, .kf-model-inspector h2 { margin-top: 5px; font-size: var(--kf-type-lg); }
+.kf-model-card { width: 100%; display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-2); color: var(--foreground); text-align: left; cursor: default; }
+.kf-model-card.is-active { border-color: color-mix(in srgb, var(--primary) 54%, var(--border-strong)); background: color-mix(in srgb, var(--primary) 8%, var(--surface-2)); box-shadow: inset 2px 0 0 var(--primary); }
+.kf-model-card__icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; background: color-mix(in srgb, var(--primary) 18%, var(--surface-4)); color: var(--primary); font: 700 var(--kf-type-sm)/1 var(--font-mono); }
+.kf-model-card > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
+.kf-model-card b { font-size: var(--kf-type-sm); }
+.kf-model-card small { overflow: hidden; color: var(--foreground-muted); font-size: var(--kf-type-2xs); text-overflow: ellipsis; white-space: nowrap; }
+.kf-model-card em { color: var(--success); font: 600 var(--kf-type-2xs)/1 var(--font-sans); font-style: normal; }
+.kf-model-facts, .kf-model-legend, .kf-model-phases { margin-top: 20px; }
+.kf-model-facts > span, .kf-model-legend > span, .kf-model-outline > span, .kf-model-phases > span { display: block; margin-bottom: 9px; color: var(--foreground-muted); font: 600 var(--kf-type-2xs)/1 var(--font-sans); letter-spacing: .08em; text-transform: uppercase; }
+.kf-model-phases { display: grid; gap: 3px; }
+.kf-model-phases > button { display: grid; grid-template-columns: 25px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 42px; padding: 6px 8px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--foreground-secondary); text-align: left; cursor: pointer; }
+.kf-model-phases > button:hover, .kf-model-phases > button:focus-visible { background: var(--surface-3); color: var(--foreground); outline: none; }
+.kf-model-phases > button.is-active { background: color-mix(in srgb, var(--primary) 10%, var(--surface-2)); color: var(--foreground); box-shadow: inset 2px 0 0 var(--primary); }
+.kf-model-phases > button > i { display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid var(--border-subtle); border-radius: 7px; color: var(--foreground-muted); font: 600 var(--kf-type-2xs)/1 var(--font-mono); font-style: normal; }
+.kf-model-phases > button.is-active > i { border-color: color-mix(in srgb, var(--primary) 45%, transparent); background: color-mix(in srgb, var(--primary) 13%, transparent); color: var(--primary); }
+.kf-model-phases > button > span { min-width: 0; display: grid; gap: 2px; }
+.kf-model-phases b { font-size: var(--kf-type-xs); }
+.kf-model-phases small { overflow: hidden; color: var(--foreground-muted); font: var(--kf-type-2xs)/1.2 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.kf-model-facts dl { margin: 0; }
+.kf-model-facts dl > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 33px; border-bottom: 1px solid var(--border-subtle); }
+.kf-model-facts dt { color: var(--foreground-muted); font-size: var(--kf-type-xs); }
+.kf-model-facts dd { margin: 0; color: var(--foreground); font: 600 var(--kf-type-xs)/1 var(--font-mono); }
+.kf-model-legend { display: grid; gap: 7px; }
+.kf-model-legend i { display: flex; align-items: center; gap: 8px; color: var(--foreground-secondary); font-size: var(--kf-type-xs); font-style: normal; }
+.kf-model-legend i::before { content: ''; width: 18px; height: 9px; border-radius: 999px; background: var(--primary); }
+.kf-model-legend i.is-tensor::before { border: 1px solid var(--border-strong); border-radius: 3px; background: var(--surface-4); }
+.kf-model-legend small { margin-top: 5px; color: var(--foreground-muted); font-size: var(--kf-type-2xs); line-height: 1.5; }
+.kf-model-canvas { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--background); }
+.kf-model-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 76px; padding: 12px 18px; border-bottom: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--panel-shell-bg) 92%, transparent); }
+.kf-model-toolbar h1 { margin-top: 3px; font-size: var(--kf-type-lg); }
+.kf-model-toolbar p { margin-top: 3px; color: var(--foreground-muted); font-size: var(--kf-type-xs); }
+.kf-model-toolbar__actions { display: inline-flex; align-items: center; gap: 3px; padding: 3px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-2); }
+.kf-model-toolbar__actions button { min-width: 28px; height: 28px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: var(--foreground-secondary); cursor: pointer; font-size: var(--kf-type-sm); }
+.kf-model-toolbar__actions button:hover, .kf-model-toolbar__actions button:focus-visible { background: var(--surface-4); color: var(--foreground); outline: none; }
+.kf-model-toolbar__actions span { min-width: 42px; color: var(--foreground-muted); font: var(--kf-type-2xs)/1 var(--font-mono); text-align: center; }
+.kf-model-stage { min-height: 0; height: 100%; border: 0; border-radius: 0; background: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--foreground) 9%, transparent) 1px, transparent 0) 0 0 / 24px 24px, var(--background); }
+.kf-model-stage svg { min-height: 0; transform-origin: 0 0; }
+.kf-model-canvas__status { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; padding: 0 12px; border-top: 1px solid var(--border-subtle); color: var(--foreground-muted); background: var(--panel-shell-bg); font-size: var(--kf-type-2xs); }
+.kf-model-canvas__status span { display: flex; align-items: center; gap: 6px; }
+.kf-model-canvas__status i { width: 6px; height: 6px; border-radius: 999px; background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 15%, transparent); }
+.kf-model-inspector { padding: 20px 16px; border-left: 1px solid var(--border-subtle); }
+.kf-model-inspector__hero { display: grid; gap: 7px; padding: 14px; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-2); }
+.kf-model-inspector__hero span { width: fit-content; padding: 3px 7px; border-radius: 999px; background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); font: 700 var(--kf-type-2xs)/1 var(--font-mono); }
+.kf-model-inspector__hero b { font-size: var(--kf-type-sm); }
+.kf-model-inspector__hero p { color: var(--foreground-secondary); font-size: var(--kf-type-xs); line-height: 1.55; }
+.kf-model-node-detail { margin: 12px 0 0; padding: 0 2px; }
+.kf-model-node-detail > div { display: grid; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); }
+.kf-model-node-detail dt { color: var(--foreground-muted); font-size: var(--kf-type-2xs); }
+.kf-model-node-detail dd { margin: 0; color: var(--foreground); font: 600 var(--kf-type-xs)/1.45 var(--font-mono); overflow-wrap: anywhere; }
+.kf-model-outline { display: grid; gap: 4px; margin-top: 22px; }
+.kf-model-outline button { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 2px 8px; align-items: center; padding: 8px 9px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--foreground-secondary); text-align: left; cursor: pointer; }
+.kf-model-outline button:hover, .kf-model-outline button:focus-visible, .kf-model-outline button.is-active { background: var(--surface-3); color: var(--foreground); outline: none; }
+.kf-model-outline button i { grid-row: 1 / 3; width: 6px; height: 6px; border-radius: 999px; background: var(--border-strong); }
+.kf-model-outline button.is-active i { background: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent); }
+.kf-model-outline button small { color: var(--foreground-muted); font: var(--kf-type-2xs)/1.3 var(--font-mono); }
+.kf-model-workspace .pto-model-graphviz-node.is-model-selected rect { stroke: var(--model-architecture-selected-stroke) !important; stroke-width: 2.4px !important; }
+.kf-model-workspace .pto-model-graphviz-node.is-model-related { opacity: .86; }
+.kf-model-workspace .pto-model-graphviz-node, .kf-model-workspace .pto-model-graphviz-edge, .kf-model-workspace .pto-model-graphviz-edge-tag { transition: opacity 180ms ease, filter 180ms ease; }
+.kf-model-workspace .pto-model-graphviz-node.is-phase-muted, .kf-model-workspace .pto-model-graphviz-edge.is-phase-muted, .kf-model-workspace .pto-model-graphviz-edge-tag.is-phase-muted { opacity: .1; }
+.kf-model-workspace .pto-model-graphviz-node.is-phase-active { filter: brightness(1.14); }
+.kf-model-workspace .pto-model-graphviz-edge.is-phase-active { opacity: .9; stroke-width: 2; }
+.kf-model-workspace .pto-model-graphviz-edge-tag { pointer-events: none; }
+@media (max-width: 1180px) { .kf-model-workspace { grid-template-columns: 200px minmax(520px, 1fr) 250px; } .kf-model-library { padding-inline: 10px; } }

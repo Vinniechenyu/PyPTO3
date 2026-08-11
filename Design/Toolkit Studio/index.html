@@ -13,7 +13,8 @@
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/pass-ir-graph-node/pattern.css" />
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/aic-core-object/pattern.css" />
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/memory-architecture/pattern.css" />
-  <link rel="stylesheet" href="./styles/demo.css?v=20260810-10" />
+  <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/model-graphviz/pattern.css" />
+  <link rel="stylesheet" href="./styles/demo.css?v=20260811-12" />
 </head>
 <body>
   <section class="pto-ide-frame" data-ide-frame data-host="standalone" data-cursor-dots="true" aria-label="PyPTO Studio 可信 Kernel 工作台">
@@ -66,13 +67,65 @@
           <svg class="pto-ide-frame__rail-icon" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
         </button>
         <button class="btn btn-icon btn-ghost pto-ide-frame__rail-button" id="activityWorkflow" type="button" data-activity-view="workflow" aria-label="打开可信 Kernel 工作流" aria-controls="kf-explorer" aria-expanded="false" aria-pressed="false" title="可信 Kernel 工作流"><span class="kf-rail-glyph" aria-hidden="true">K</span></button>
+        <button class="btn btn-icon btn-ghost pto-ide-frame__rail-button" id="activityModelViz" type="button" data-activity-view="model" aria-label="打开大模型结构可视化" aria-controls="modelArchitectureView" aria-expanded="false" aria-pressed="false" title="大模型结构可视化">
+          <svg class="pto-ide-frame__rail-icon" viewBox="0 0 24 24"><rect x="8" y="2.5" width="8" height="5" rx="1.5"/><rect x="2.5" y="16.5" width="8" height="5" rx="1.5"/><rect x="13.5" y="16.5" width="8" height="5" rx="1.5"/><path d="M12 7.5v4.5M6.5 16.5V14h11v2.5"/></svg>
+        </button>
         <button class="btn btn-icon btn-ghost pto-ide-frame__rail-button" type="button" aria-label="搜索" title="Search"><svg class="pto-ide-frame__rail-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></button>
         <button class="btn btn-icon btn-ghost pto-ide-frame__rail-button" type="button" aria-label="源码管理" title="Source control"><svg class="pto-ide-frame__rail-icon" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7M6 9v12"/></svg></button>
         <button class="btn btn-icon btn-ghost pto-ide-frame__rail-button" type="button" aria-label="终端" title="Terminal"><svg class="pto-ide-frame__rail-icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 9 3 3-3 3M12 15h5"/></svg></button>
       </nav>
 
       <div class="pto-ide-frame__workarea" id="ideWorkarea">
-        <div class="pto-ide-frame__split" data-ide-split="standalone-main" data-split-direction="horizontal" data-sizes="22,51,27" data-pixel-sizes="286" data-min-size="240,520,300" data-storage-key="kernel-forge-flow-a-v1">
+        <section class="kf-model-workspace pto-model-graphviz-pattern-page" id="modelArchitectureView" aria-label="大模型结构可视化" hidden>
+          <aside class="kf-model-library" aria-label="模型列表">
+            <header><span class="kf-eyebrow">MODEL LIBRARY</span><h2>模型结构</h2></header>
+            <button class="kf-model-card is-active" type="button" aria-current="true">
+              <span class="kf-model-card__icon">Q3</span><span><b>Qwen3 14B</b><small>Fused Decode · 源码校准</small></span><em>已加载</em>
+            </button>
+            <nav class="kf-model-phases" aria-label="执行阶段">
+              <span>执行阶段</span>
+              <button class="is-active" type="button" data-model-phase="all"><i>00</i><span><b>完整链路</b><small>decode_fwd · 40 layers</small></span></button>
+              <button type="button" data-model-phase="boundary-in"><i>01</i><span><b>输入边界</b><small>copy_hidden · x_gamma0</small></span></button>
+              <button type="button" data-model-phase="scope-1"><i>02</i><span><b>Scope 1</b><small>RMS · QKV · QK Norm</small></span></button>
+              <button type="button" data-model-phase="scope-2"><i>03</i><span><b>Scope 2</b><small>Paged Flash Attention</small></span></button>
+              <button type="button" data-model-phase="scope-3"><i>04</i><span><b>Scope 3</b><small>Out Proj · SwiGLU · Carry</small></span></button>
+              <button type="button" data-model-phase="boundary-out"><i>05</i><span><b>输出边界</b><small>cast · RMS LM Head</small></span></button>
+            </nav>
+            <div class="kf-model-facts">
+              <span>模型规格</span>
+              <dl><div><dt>Decoder</dt><dd>40 层</dd></div><div><dt>Decode batch</dt><dd>16</dd></div><div><dt>Hidden</dt><dd>5,120</dd></div><div><dt>Attention</dt><dd>40 Q / 8 KV</dd></div><div><dt>Head dim</dt><dd>128</dd></div><div><dt>FFN</dt><dd>17,408</dd></div></dl>
+            </div>
+            <div class="kf-model-legend"><span>节点类型</span><i class="is-op">算子 / 模块</i><i class="is-tensor">Tensor / State</i><small>点击节点查看结构与张量信息</small></div>
+          </aside>
+
+          <main class="kf-model-canvas">
+            <header class="kf-model-toolbar">
+              <div><span class="kf-eyebrow">DECODE EXECUTION MAP</span><h1>Qwen3 14B · Fused Decode</h1><p id="modelPhaseSummary">decode_fwd 全链路 · 40 × Decoder Layer · FP32 跨层 carry</p></div>
+              <div class="kf-model-toolbar__actions" role="group" aria-label="画布控制">
+                <button type="button" data-model-zoom="out" aria-label="缩小">−</button><span id="modelZoomReadout">适应</span><button type="button" data-model-zoom="in" aria-label="放大">＋</button><button type="button" data-model-fit>适应画布</button>
+              </div>
+            </header>
+            <div class="kf-model-stage pto-model-graphviz-stage" id="qwen3ModelGraph" aria-label="Qwen3 14B 模型架构图"></div>
+            <footer class="kf-model-canvas__status"><span><i></i> Qwen3 14B 架构已预加载</span><span>拖拽平移 · Ctrl/⌘ + 滚轮缩放 · 点击节点聚焦</span></footer>
+          </main>
+
+          <aside class="kf-model-inspector" aria-live="polite">
+            <header><span class="kf-eyebrow">MODEL INSPECTOR</span><h2 id="modelInspectorTitle">Qwen3 14B</h2></header>
+            <div id="modelInspectorBody">
+              <div class="kf-model-inspector__hero"><span>CODE ALIGNED</span><b>decode_layer.py 已校准</b><p>阶段与依赖来自实际的 PyPTO 任务：从 BF16 输入边界开始，经三段 Scope，最终进入 RMS LM Head。</p></div>
+            </div>
+            <nav class="kf-model-outline" aria-label="结构索引">
+              <span>结构索引</span>
+              <button type="button" data-model-focus="copy-hidden"><i></i>copy_hidden<small>BF16 → FP32 · once</small></button>
+              <button type="button" data-model-focus="qkv-proj"><i></i>q/k/v_proj<small>Split-K atomic accumulate</small></button>
+              <button type="button" data-model-focus="fa-fused"><i></i>fa_fused<small>QK → Softmax → SV</small></button>
+              <button type="button" data-model-focus="dcr-xgamma"><i></i>dcr_xgamma<small>out + next normed</small></button>
+              <button type="button" data-model-focus="rms-lm-head"><i></i>rms_lm_head<small>Final norm + vocabulary</small></button>
+            </nav>
+          </aside>
+        </section>
+
+        <div class="pto-ide-frame__split" id="ideMainSplit" data-ide-split="standalone-main" data-split-direction="horizontal" data-sizes="22,51,27" data-pixel-sizes="286" data-min-size="240,520,300" data-storage-key="kernel-forge-flow-a-v1">
           <aside class="pto-ide-frame__pane pto-ide-frame__explorer" data-ide-pane="explorer" id="kf-explorer">
             <header class="pto-ide-frame__pane-header"><span class="pto-ide-frame__pane-title" id="sidePaneTitle">资源管理器</span><span class="pto-ide-frame__pane-meta" id="sidePaneMeta">workspace</span></header>
             <div class="pto-ide-frame__pane-body kf-explorer-body">
@@ -282,7 +335,7 @@
             <div class="pto-ide-frame__pane-body kf-inspector" id="inspector"></div>
           </aside>
         </div>
-        <footer class="pto-ide-frame__status-strip pto-ide-frame__standalone-chrome"><span><i class="kf-status-dot"></i> Compiler Guard 已启用</span><span id="statusText">目标契约已就绪</span><span>UTF-8　Spaces: 2　Ln 1, Col 1</span></footer>
+        <footer class="pto-ide-frame__status-strip pto-ide-frame__standalone-chrome" id="ideStatusStrip"><span><i class="kf-status-dot"></i> Compiler Guard 已启用</span><span id="statusText">目标契约已就绪</span><span>UTF-8　Spaces: 2　Ln 1, Col 1</span></footer>
       </div>
 
       <section class="kf-solo-workarea" id="soloWorkarea" aria-label="PyPTO Studio SOLO 工作台" hidden>
@@ -434,9 +487,11 @@
   <script src="../../vendor/pto-design-system/patterns/pass-ir-graph-node/pattern.js"></script>
   <script src="../../vendor/pto-design-system/patterns/aic-core-object/pattern.js"></script>
   <script src="../../vendor/pto-design-system/patterns/memory-architecture/pattern.js"></script>
+  <script src="../../vendor/pto-design-system/patterns/model-graphviz/pattern.js"></script>
   <script src="./js/decode-layer-source.js?v=20260807-4"></script>
   <script src="./js/passes-dump-source.js?v=20260810-1"></script>
   <script src="./js/passes-graph.js?v=20260810-7"></script>
-  <script src="./js/demo.js?v=20260810-6"></script>
+  <script src="./js/qwen3-model-viz.js?v=20260811-2"></script>
+  <script src="./js/demo.js?v=20260811-7"></script>
 </body>
 </html>

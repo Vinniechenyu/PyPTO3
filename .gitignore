@@ -1,5 +1,6 @@
 # Local development state
 .codex_work/
+.workbuddy/
 .claude/settings.local.json
 .local-server.*.log
 **/__pycache__/
