@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/aic-core-object/pattern.css" />
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/memory-architecture/pattern.css" />
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/model-graphviz/pattern.css" />
-  <link rel="stylesheet" href="./styles/demo.css?v=20260811-12" />
+  <link rel="stylesheet" href="./styles/demo.css?v=20260811-13" />
 </head>
 <body>
   <section class="pto-ide-frame" data-ide-frame data-host="standalone" data-cursor-dots="true" aria-label="PyPTO Studio 可信 Kernel 工作台">
@@ -95,7 +95,7 @@
               <span>模型规格</span>
               <dl><div><dt>Decoder</dt><dd>40 层</dd></div><div><dt>Decode batch</dt><dd>16</dd></div><div><dt>Hidden</dt><dd>5,120</dd></div><div><dt>Attention</dt><dd>40 Q / 8 KV</dd></div><div><dt>Head dim</dt><dd>128</dd></div><div><dt>FFN</dt><dd>17,408</dd></div></dl>
             </div>
-            <div class="kf-model-legend"><span>节点类型</span><i class="is-op">算子 / 模块</i><i class="is-tensor">Tensor / State</i><small>点击节点查看结构与张量信息</small></div>
+            <div class="kf-model-legend"><span>节点类型</span><i class="is-op">任务 / 算子</i><i class="is-tensor">Tensor / State</i><small>点击节点查看信息 · 点击节点右侧 ＋ 下钻 · 容器右上角 − 收起</small></div>
           </aside>
 
           <main class="kf-model-canvas">
@@ -106,7 +106,7 @@
               </div>
             </header>
             <div class="kf-model-stage pto-model-graphviz-stage" id="qwen3ModelGraph" aria-label="Qwen3 14B 模型架构图"></div>
-            <footer class="kf-model-canvas__status"><span><i></i> Qwen3 14B 架构已预加载</span><span>拖拽平移 · Ctrl/⌘ + 滚轮缩放 · 点击节点聚焦</span></footer>
+            <footer class="kf-model-canvas__status"><span><i></i> Qwen3 14B 架构已预加载</span><span>单节点分层下钻 · 拖拽平移 · Ctrl/⌘ + 滚轮缩放</span></footer>
           </main>
 
           <aside class="kf-model-inspector" aria-live="polite">
@@ -491,7 +491,7 @@
   <script src="./js/decode-layer-source.js?v=20260807-4"></script>
   <script src="./js/passes-dump-source.js?v=20260810-1"></script>
   <script src="./js/passes-graph.js?v=20260810-7"></script>
-  <script src="./js/qwen3-model-viz.js?v=20260811-2"></script>
+  <script src="./js/qwen3-model-viz.js?v=20260811-4"></script>
   <script src="./js/demo.js?v=20260811-7"></script>
 </body>
 </html>
