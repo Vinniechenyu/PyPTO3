@@ -18,7 +18,7 @@
 
       { id: 'layer-input', label: 'cur + normed_in', typeLabel: 'FP32 residual / BF16 x×γ', kind: 'tensor', x: 590, y: 354, width: 318, height: 52, parent: 'decoder-stack', phase: 'scope-1' },
       { id: 'rms-recip', label: 'rms_recip', typeLabel: 'Input RMS reciprocal · FP32', kind: 'op', x: 410, y: 500, width: 248, height: 56, colorKey: 'sem:norm', parent: 'scope-1-cluster', phase: 'scope-1' },
-      { id: 'qkv-weight', label: 'Stacked Q/K/V Weights', typeLabel: 'Parameter · per layer slice', kind: 'state', state_type: 'parameter', x: 105, y: 580, width: 188, height: 48, colorKey: 'io:parameter', phase: 'scope-1' },
+      { id: 'qkv-weight', label: 'Stacked Q/K/V Weights', typeLabel: 'Parameter · per layer slice', kind: 'state', state_type: 'parameter', x: 100, y: 580, width: 204, height: 48, colorKey: 'io:parameter', phase: 'scope-1' },
       { id: 'qkv-proj', label: 'q_proj · k_proj · v_proj', typeLabel: 'Split-K + atomic add · FP32', kind: 'op', x: 680, y: 580, width: 326, height: 58, colorKey: 'sem:linear', parent: 'scope-1-cluster', phase: 'scope-1' },
       { id: 'qk-norm', label: 'qk_norm', typeLabel: '8 tasks · gamma + reciprocal', kind: 'op', x: 590, y: 680, width: 270, height: 56, colorKey: 'sem:qknorm', parent: 'scope-1-cluster', phase: 'scope-1' },
 
@@ -28,7 +28,7 @@
       { id: 'fa-fused', label: 'fa_fused', typeLabel: 'QK → local softmax → SV · SPMD', kind: 'op', x: 590, y: 980, width: 316, height: 60, colorKey: 'sem:attention', parent: 'scope-2-cluster', phase: 'scope-2' },
       { id: 'online-softmax', label: 'online_softmax', typeLabel: 'Cross-block reduction · attn_out BF16', kind: 'op', x: 590, y: 1110, width: 316, height: 58, colorKey: 'sem:attention', parent: 'scope-2-cluster', phase: 'scope-2' },
 
-      { id: 'output-weight', label: 'Wo / Gate / Up / Down', typeLabel: 'Stacked parameters · per layer', kind: 'state', state_type: 'parameter', x: 105, y: 1320, width: 194, height: 48, colorKey: 'io:parameter', phase: 'scope-3' },
+      { id: 'output-weight', label: 'Wo / Gate / Up / Down', typeLabel: 'Stacked parameters · per layer', kind: 'state', state_type: 'parameter', x: 100, y: 1320, width: 210, height: 48, colorKey: 'io:parameter', phase: 'scope-3' },
       { id: 'out-proj', label: 'out_proj', typeLabel: '10 × 5 split-N/K · FP32 atomic', kind: 'op', x: 590, y: 1300, width: 298, height: 58, colorKey: 'sem:linear', parent: 'scope-3-cluster', phase: 'scope-3' },
       { id: 'residual-cast', label: 'residual_rms_cast', typeLabel: 'Residual FP32 + post γ → BF16', kind: 'op', x: 430, y: 1390, width: 294, height: 58, colorKey: 'sem:norm', parent: 'scope-3-cluster', phase: 'scope-3' },
       { id: 'post-rms-reduce', label: 'post_rms_reduce', typeLabel: 'Deferred post-RMS reciprocal', kind: 'op', x: 750, y: 1390, width: 278, height: 58, colorKey: 'sem:norm', parent: 'scope-3-cluster', phase: 'scope-3' },
@@ -40,7 +40,7 @@
       { id: 'next-normed', label: 'normed_out', typeLabel: 'BF16 · next layer x×γ', kind: 'tensor', x: 765, y: 1810, width: 242, height: 52, colorKey: 'io:activation', phase: 'scope-3' },
 
       { id: 'cast-lmhead', label: 'cast_lmhead_in', typeLabel: 'Final FP32 → BF16 · once', kind: 'op', x: 590, y: 1885, width: 282, height: 56, colorKey: 'sem:linear', phase: 'boundary-out' },
-      { id: 'lm-weight', label: 'Final Norm + LM Head', typeLabel: 'Parameter', kind: 'state', state_type: 'parameter', x: 105, y: 1960, width: 192, height: 48, colorKey: 'io:parameter', phase: 'boundary-out' },
+      { id: 'lm-weight', label: 'Final Norm + LM Head', typeLabel: 'Parameter', kind: 'state', state_type: 'parameter', x: 105, y: 1960, width: 220, height: 48, colorKey: 'io:parameter', phase: 'boundary-out' },
       { id: 'rms-lm-head', label: 'rms_lm_head', typeLabel: 'Final RMSNorm + vocabulary projection', kind: 'op', x: 590, y: 1960, width: 320, height: 58, colorKey: 'sem:head', phase: 'boundary-out' },
       { id: 'logits', label: 'out · logits', typeLabel: 'Output · [16,VOCAB]', kind: 'tensor', x: 1010, y: 1960, width: 222, height: 52, colorKey: 'io:output', phase: 'boundary-out' },
     ],
@@ -255,9 +255,9 @@
 
   const phaseBounds = {
     'boundary-in': { x: 250, y: 0, width: 680, height: 320 },
-    'scope-1': { x: 190, y: 320, width: 790, height: 470 },
+    'scope-1': { x: 0, y: 320, width: 1040, height: 470 },
     'scope-2': { x: 190, y: 760, width: 970, height: 490 },
-    'scope-3': { x: 175, y: 1200, width: 850, height: 650 },
+    'scope-3': { x: 0, y: 1200, width: 1040, height: 650 },
     'boundary-out': { x: 0, y: 1800, width: 1160, height: 250 },
   };
 
