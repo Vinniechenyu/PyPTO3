@@ -9,7 +9,7 @@
   ];
   const passes = ['Semantic Lowering', 'Layout Planning', 'Parallel Mapping', 'Memory Scheduling', 'ISA Emission'];
   const guards = ['Op legality', 'Dependencies', 'Manual scope', 'Liveness', 'Paged layout', 'Index width', 'ISA capacity', 'FP32 carry'];
-  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape' };
+  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape', passesGraphMode: 'single' };
   const EXPLORER_STEP = 1;
   const WORKFLOW_STEPS = [0, 2, 3, 4];
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -95,6 +95,7 @@ def mm(
     13: { label: 'return out：结果驻留 DDR', selectors: ['[data-mem950-node="rail:DDR"]'] },
   };
   let matmulHardwareGraphInstance = null;
+  let passesGraphInstance = null;
 
   // Minimal Python syntax highlighter — stateful across lines so triple-quoted
   // docstrings that span multiple rows stay a single string token. Returns one
@@ -198,8 +199,21 @@ def mm(
     return out;
   }
 
+  function resolveSource(file) {
+    const passes = window.PTO_PASSES_DUMP_SOURCES;
+    if (passes && Object.prototype.hasOwnProperty.call(passes, file)) return passes[file];
+    if (file === 'matmul.py') return matmulSource;
+    return window.PTO_DECODE_LAYER_SOURCE || '';
+  }
+
+  function isPassesDumpFile(file) {
+    const passes = window.PTO_PASSES_DUMP_SOURCES;
+    return !!(passes && Object.prototype.hasOwnProperty.call(passes, file));
+  }
+
   function renderFullSource() {
-    const source = state.activeFile === 'matmul.py' ? matmulSource : (window.PTO_DECODE_LAYER_SOURCE || '');
+    const isPasses = isPassesDumpFile(state.activeFile);
+    const source = resolveSource(state.activeFile);
     const editor = $('#dslEditor');
     const highlighted = highlightPythonLines(source);
     const fragment = document.createDocumentFragment();
@@ -210,7 +224,8 @@ def mm(
       const code = document.createElement('code');
       gutter.textContent = lineNumber;
       code.innerHTML = lineHtml || ' ';
-      if (intentSourceLines[lineNumber]) row.dataset.intentLine = intentSourceLines[lineNumber];
+      if (!isPasses && intentSourceLines[lineNumber]) row.dataset.intentLine = intentSourceLines[lineNumber];
+      if (isPasses) { row.dataset.passesLine = String(lineNumber); row.tabIndex = 0; }
       if (state.activeFile === 'matmul.py') {
         row.dataset.hardwareLine = String(lineNumber);
         row.tabIndex = 0;
@@ -490,6 +505,12 @@ def mm(
   function renderIntentInspector() {
     matmulHardwareGraphInstance?.destroy?.();
     matmulHardwareGraphInstance = null;
+    passesGraphInstance?.destroy?.();
+    passesGraphInstance = null;
+    if (isPassesDumpFile(state.activeFile)) {
+      renderPassesGraphInspector();
+      return;
+    }
     if (state.activeFile === 'matmul.py') {
       $('#inspectorTitle').textContent = '意图预览';
       $('#inspectorMeta').textContent = 'matmul.py';
@@ -519,6 +540,110 @@ def mm(
       <section class="kf-inspector-section kf-intent-detail"><header><h2>${active.label}</h2><span>${active.meta}</span></header><dl>${active.rows.map(row => `<div><dt>${row[0]}</dt><dd>${row[1]}</dd></div>`).join('')}</dl></section>
       <div class="kf-inspector-card kf-intent-note"><b>实时推导</b><p>${active.note}</p></div>
       <section class="kf-inspector-section kf-intent-contract"><h2 class="kf-inspector-title">编码契约</h2><div class="kf-evidence-list"><div class="kf-evidence"><span>01</span><b>FP32 carry 已锁定</b><small>shape</small></div><div class="kf-evidence"><span>02</span><b>显式 TaskId 链</b><small>deps</small></div><div class="kf-evidence"><span>03</span><b>动态索引待降级</b><small>codegen</small></div></div></section>`;
+  }
+
+  // Ordered passes_dump files (for the evolution/diff timeline).
+  function passesDumpList() {
+    const passes = window.PTO_PASSES_DUMP_SOURCES || {};
+    return Object.keys(passes).map((name) => ({ name, text: passes[name] }));
+  }
+
+  function renderPassesGraphInspector() {
+    const file = state.activeFile;
+    const mode = state.passesGraphMode;
+    const compare = mode === 'compare';
+    $('#inspectorTitle').textContent = compare ? '计算图演进对比' : '计算图';
+    $('#inspectorMeta').textContent = compare ? 'passes_dump · 全部' : file;
+    const sectionSub = compare ? 'Pass 间增删变化' : 'name_hint · deps 链';
+    const note = compare
+      ? '对比 <b>各 Pass</b> 后计算图的结构变化：<span class="kf-cg-add-txt">绿色</span>为新增，<span class="kf-cg-del-txt">红色虚线</span>为被删除并即将消失的节点/边。点击步骤或“播放”查看动态演进。'
+      : '每个节点对应一个 <code>pl.at</code> 任务（name_hint），连线表示 <code>deps</code> 依赖；层级按最长依赖路径排布，<em>上一层输出</em>为跨层 carry 输入。';
+    $('#inspector').innerHTML = `
+      <section class="kf-intent-hero"><span class="kf-eyebrow">COMPUTATION GRAPH</span><b>_jit_decode_fwd_layers</b><small>passes_dump/${compare ? '00 → 01 → 02' : file} · 由 IR 任务依赖推导</small></section>
+      <section class="kf-inspector-section kf-cg-section"><header class="kf-cg-head"><h2 class="kf-inspector-title">任务依赖图</h2><span class="kf-cg-mode" role="group" aria-label="计算图模式"><button type="button" data-cg-mode="single"${!compare ? ' class="is-active"' : ''}>单图</button><button type="button" data-cg-mode="compare"${compare ? ' class="is-active"' : ''}>对比</button></span></header><div class="kf-cg-mount" id="passesGraphMount"></div></section>
+      <div class="kf-inspector-card kf-intent-note"><b>如何解读</b><p>${note}</p></div>`;
+    const graphApi = window.PtoPassesGraph;
+    const mount = $('#passesGraphMount');
+    if (!graphApi || !mount) { if (mount) mount.innerHTML = '<code>计算图渲染模块未加载</code>'; return; }
+
+    if (compare) {
+      const list = passesDumpList();
+      // Default the timeline to the transition that produced the active file.
+      const activeIdx = Math.max(0, list.findIndex((p) => p.name === file));
+      passesGraphInstance = graphApi.buildAndCompare(mount, list, { startStep: activeIdx });
+    } else {
+      passesGraphInstance = graphApi.buildAndRender(mount, resolveSource(file), {
+        onSelect: (node) => highlightSourceLine(node.line, { scroll: true }),
+        onClear: () => clearSourceLineHighlight(),
+        onHover: (line) => hoverSourceLine(line)
+      });
+      bindSourceToGraph(passesGraphInstance);
+    }
+  }
+
+  function setPassesGraphMode(mode) {
+    if (state.passesGraphMode === mode) return;
+    state.passesGraphMode = mode;
+    clearSourceLineHighlight();
+    passesGraphInstance?.destroy?.();
+    passesGraphInstance = null;
+    renderPassesGraphInspector();
+  }
+
+  // ---- source ⇄ computation-graph line mapping ----
+  function editorRowByLine(line) {
+    if (!line) return null;
+    return $(`#dslEditor [data-passes-line="${line}"]`);
+  }
+
+  function clearSourceLineHighlight() {
+    $$('#dslEditor .is-cg-active').forEach((row) => row.classList.remove('is-cg-active'));
+  }
+
+  function hoverSourceLine(line) {
+    $$('#dslEditor .is-cg-hover').forEach((row) => row.classList.remove('is-cg-hover'));
+    const row = editorRowByLine(line);
+    if (row) row.classList.add('is-cg-hover');
+  }
+
+  function highlightSourceLine(line, { scroll } = {}) {
+    clearSourceLineHighlight();
+    const row = editorRowByLine(line);
+    if (!row) return;
+    row.classList.add('is-cg-active');
+    if (scroll) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
+  // Mark which source rows map to a graph node and route their clicks/hovers.
+  function bindSourceToGraph(instance) {
+    const editor = $('#dslEditor');
+    if (!editor || !instance) return;
+    const lineByNode = instance.lineByNode || {};
+    const mappedLines = new Set(Object.values(lineByNode).map(Number));
+    $$('#dslEditor [data-passes-line]').forEach((row) => {
+      const isMapped = mappedLines.has(Number(row.dataset.passesLine));
+      row.classList.toggle('is-cg-mapped', isMapped);
+    });
+    if (editor.dataset.cgBound === 'true') return; // delegate once
+    editor.dataset.cgBound = 'true';
+    editor.addEventListener('click', (event) => {
+      if (!isPassesDumpFile(state.activeFile) || !passesGraphInstance) return;
+      const row = event.target.closest('[data-passes-line]');
+      if (!row) return;
+      const line = Number(row.dataset.passesLine);
+      if (passesGraphInstance.selectByLine(line, true)) {
+        highlightSourceLine(line, { scroll: false });
+      }
+    });
+    editor.addEventListener('mouseover', (event) => {
+      if (!isPassesDumpFile(state.activeFile)) return;
+      const row = event.target.closest('[data-passes-line].is-cg-mapped');
+      if (row) row.classList.add('is-cg-hover');
+    });
+    editor.addEventListener('mouseout', (event) => {
+      const row = event.target.closest('[data-passes-line]');
+      if (row) row.classList.remove('is-cg-hover');
+    });
   }
 
   function renderMatmulHardwareGraph() {
@@ -692,7 +817,7 @@ def mm(
     group.hidden = !expanded;
     toggle.setAttribute('aria-expanded', String(expanded));
     const caret = $('.kf-caret', toggle);
-    if (caret) caret.textContent = expanded ? '⌄' : '›';
+    if (caret) caret.textContent = '›';
   }
 
   const titles = [
@@ -1017,8 +1142,13 @@ def mm(
         state.hardwareFlowPinned = false;
         renderFullSource();
         goTo(Number(openStep));
-        $('#stageMeta').textContent = `kernels/${state.activeFile}`;
-        toast(`已打开 ${file.dataset.file} · 定位到${titles[Number(openStep)][0]}`);
+        const isPasses = file.dataset.passesDump === 'true';
+        $('#stageMeta').textContent = isPasses
+          ? `passes_dump/${state.activeFile}`
+          : `kernels/${state.activeFile}`;
+        toast(isPasses
+          ? `已打开 ${file.dataset.file} · passes_dump 中间代码`
+          : `已打开 ${file.dataset.file} · 定位到${titles[Number(openStep)][0]}`);
       } else {
         toast(`已选择 ${file.dataset.file}`);
       }
@@ -1067,6 +1197,11 @@ def mm(
       state.intentTab = intentTab.dataset.intentTab;
       renderIntentInspector();
       toast(`意图预览已切换到 ${intentPreview[state.intentTab].label}`);
+    }
+    const cgMode = event.target.closest('[data-cg-mode]');
+    if (cgMode) {
+      setPassesGraphMode(cgMode.dataset.cgMode);
+      toast(cgMode.dataset.cgMode === 'compare' ? '已切换到计算图演进对比' : '已切换到单图视图');
     }
     const intentLine = event.target.closest('[data-intent-line]');
     if (intentLine) {

@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/pass-ir-graph-node/pattern.css" />
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/aic-core-object/pattern.css" />
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/memory-architecture/pattern.css" />
-  <link rel="stylesheet" href="./styles/demo.css?v=20260810-2" />
+  <link rel="stylesheet" href="./styles/demo.css?v=20260810-10" />
 </head>
 <body>
   <section class="pto-ide-frame" data-ide-frame data-host="standalone" data-cursor-dots="true" aria-label="PyPTO Studio 可信 Kernel 工作台">
@@ -77,10 +77,27 @@
             <header class="pto-ide-frame__pane-header"><span class="pto-ide-frame__pane-title" id="sidePaneTitle">资源管理器</span><span class="pto-ide-frame__pane-meta" id="sidePaneMeta">workspace</span></header>
             <div class="pto-ide-frame__pane-body kf-explorer-body">
               <section class="kf-side-view is-active" data-side-view="explorer" aria-label="工程目录">
-                <div class="kf-tree-toolbar"><span>文件 <small>pto</small></span><button type="button" id="collapseTree" aria-label="折叠所有目录" title="折叠所有目录">⌃</button></div>
+                <div class="kf-tree-toolbar"><span>文件 <small>Qwen3_14b</small></span><button type="button" id="collapseTree" aria-label="折叠所有目录" title="折叠所有目录">⌃</button></div>
                 <div class="kf-file-tree" id="projectTree" role="tree">
-                  <div class="kf-tree-row is-root"><button type="button" data-tree-toggle="project" aria-expanded="true"><span class="kf-caret">⌄</span><span class="kf-folder-icon"></span><b>pto</b></button></div>
+                  <div class="kf-tree-row is-root"><button type="button" data-tree-toggle="project" aria-expanded="true"><span class="kf-caret">›</span><span class="kf-folder-icon"></span><b>Qwen3_14b</b></button></div>
                   <div class="kf-tree-group" data-tree-group="project">
+                    <div class="kf-tree-row depth-1"><button type="button" data-tree-toggle="jit-decode-fwd" aria-expanded="false"><span class="kf-caret">›</span><span class="kf-folder-icon"></span><span>_jit_decode_fwd_layers_20260625_184941</span></button></div>
+                    <div class="kf-tree-group" data-tree-group="jit-decode-fwd" hidden>
+                      <div class="kf-tree-row depth-2"><button type="button" data-file="Data/_jit_decode_fwd_layers_20260625_184941/__pycache__/"><span class="kf-folder-icon"></span><span>__pycache__</span></button></div>
+                      <div class="kf-tree-row depth-2"><button type="button" data-file="Data/_jit_decode_fwd_layers_20260625_184941/debug/"><span class="kf-folder-icon"></span><span>debug</span></button></div>
+                      <div class="kf-tree-row depth-2"><button type="button" data-file="Data/_jit_decode_fwd_layers_20260625_184941/dfx_outputs/"><span class="kf-folder-icon"></span><span>dfx_outputs</span></button></div>
+                      <div class="kf-tree-row depth-2"><button type="button" data-file="Data/_jit_decode_fwd_layers_20260625_184941/kernels/"><span class="kf-folder-icon"></span><span>kernels</span></button></div>
+                      <div class="kf-tree-row depth-2"><button type="button" data-file="Data/_jit_decode_fwd_layers_20260625_184941/orchestration/"><span class="kf-folder-icon"></span><span>orchestration</span></button></div>
+                      <div class="kf-tree-row depth-2"><button type="button" data-tree-toggle="passes-dump" aria-expanded="false"><span class="kf-caret">›</span><span class="kf-folder-icon"></span><span>passes_dump</span></button></div>
+                      <div class="kf-tree-group" data-tree-group="passes-dump" hidden>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="00_frontend.py" data-open-step="1" data-passes-dump="true"><span class="kf-file-icon py">Py</span><span>00_frontend.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="01_after_InlineFunctions.py" data-open-step="1" data-passes-dump="true"><span class="kf-file-icon py">Py</span><span>01_after_InlineFunctions.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="02_after_UnrollLoops.py" data-open-step="1" data-passes-dump="true"><span class="kf-file-icon py">Py</span><span>02_after_UnrollLoops.py</span></button></div>
+                      </div>
+                      <div class="kf-tree-row depth-2"><button type="button" data-file="Data/_jit_decode_fwd_layers_20260625_184941/ptoas/"><span class="kf-folder-icon"></span><span>ptoas</span></button></div>
+                      <div class="kf-tree-row depth-2"><button type="button" data-file="Data/_jit_decode_fwd_layers_20260625_184941/report/"><span class="kf-folder-icon"></span><span>report</span></button></div>
+                      <div class="kf-tree-row depth-2"><button type="button" data-file="Data/_jit_decode_fwd_layers_20260625_184941/kernel_config.py"><span class="kf-file-icon py">Py</span><span>kernel_config.py</span></button></div>
+                    </div>
                     <div class="kf-tree-row depth-1"><button type="button" data-tree-toggle="claude" aria-expanded="false"><span class="kf-caret">›</span><span class="kf-folder-icon"></span><span>.claude</span></button></div>
                     <div class="kf-tree-group" data-tree-group="claude" hidden>
                       <div class="kf-tree-row depth-2"><button type="button" data-file=".claude/rules/"><span class="kf-folder-icon"></span><span>rules</span></button></div>
@@ -170,7 +187,7 @@
                     <div class="kf-tree-row depth-1"><button type="button" data-file="matmul.py" data-open-step="1"><span class="kf-file-icon py">Py</span><span>matmul.py</span></button></div>
                   </div>
                 </div>
-                <div class="kf-tree-summary" aria-label="项目统计"><span title="14 files"><b>14</b><em>files</em></span><span title="13 folders"><b>13</b><em>folders</em></span><span class="kf-tree-summary__diagnostic" title="1 diagnostic"><b>1</b><em>diagnostic</em></span></div>
+                <div class="kf-tree-summary" aria-label="项目统计"><span title="14 files"><b>14</b><em>files</em></span><span title="14 folders"><b>14</b><em>folders</em></span><span class="kf-tree-summary__diagnostic" title="1 diagnostic"><b>1</b><em>diagnostic</em></span></div>
               </section>
 
               <section class="kf-side-view" data-side-view="workflow" aria-label="可信 Kernel 任务路线" hidden>
@@ -418,6 +435,8 @@
   <script src="../../vendor/pto-design-system/patterns/aic-core-object/pattern.js"></script>
   <script src="../../vendor/pto-design-system/patterns/memory-architecture/pattern.js"></script>
   <script src="./js/decode-layer-source.js?v=20260807-4"></script>
-  <script src="./js/demo.js?v=20260810-2"></script>
+  <script src="./js/passes-dump-source.js?v=20260810-1"></script>
+  <script src="./js/passes-graph.js?v=20260810-7"></script>
+  <script src="./js/demo.js?v=20260810-6"></script>
 </body>
 </html>
