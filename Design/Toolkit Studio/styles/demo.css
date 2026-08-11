@@ -1063,6 +1063,7 @@ button { color: inherit; }
 .kf-model-workspace .pto-model-graphviz-cluster[data-cluster-id^='drill-'] .pto-model-graphviz-toggle-icon { cursor: pointer; }
 .kf-model-workspace .pto-model-graphviz-cluster[data-cluster-id^='drill-'] > rect:first-child { fill: color-mix(in srgb, var(--primary) 4%, transparent); fill-opacity: 1; stroke: color-mix(in srgb, var(--primary) 48%, var(--border-strong)); stroke-width: 1.6px; }
 .kf-model-workspace .pto-model-graphviz-node[data-node-id*='__'] rect { stroke: color-mix(in srgb, var(--foreground) 24%, transparent); }
+.kf-model-workspace .pto-model-graphviz-node:is([data-node-id='qkv-weight'], [data-node-id='output-weight']) .pto-model-graphviz-node-label { font-size: 11.5px; }
 .kf-model-workspace .pto-model-graphviz-node, .kf-model-workspace .pto-model-graphviz-edge, .kf-model-workspace .pto-model-graphviz-edge-tag { transition: opacity 180ms ease, filter 180ms ease; }
 .kf-model-workspace .pto-model-graphviz-node.is-phase-muted, .kf-model-workspace .pto-model-graphviz-edge.is-phase-muted, .kf-model-workspace .pto-model-graphviz-edge-tag.is-phase-muted { opacity: .1; }
 .kf-model-workspace .pto-model-graphviz-node.is-phase-active { filter: brightness(1.14); }
