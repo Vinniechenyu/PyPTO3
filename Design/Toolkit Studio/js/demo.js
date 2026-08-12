@@ -9,7 +9,7 @@
   ];
   const passes = ['Semantic Lowering', 'Layout Planning', 'Parallel Mapping', 'Memory Scheduling', 'ISA Emission'];
   const guards = ['Op legality', 'Dependencies', 'Manual scope', 'Liveness', 'Paged layout', 'Index width', 'ISA capacity', 'FP32 carry'];
-  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape', passesGraphMode: 'single', rmsNormFunction: 'input', rmsNormTab: 'overview', rmsNormFlowStep: 'load', sourceCache: {} };
+  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape', passesGraphMode: 'single', rmsNormFunction: 'input', rmsNormTab: 'overview', rmsNormFlowStep: 'load', attentionTab: 'overview', attentionFocus: 'position', qwenDecodeTab: 'overview', qwenDecodeFocus: 'scope1', sourceCache: {} };
   const EXPLORER_STEP = 1;
   const WORKFLOW_STEPS = [0, 2, 3, 4];
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -143,6 +143,8 @@ def mm(
   };
   let matmulHardwareGraphInstance = null;
   let rmsNormHardwareGraphInstance = null;
+  let attentionGraphController = null;
+  let qwenDecodeGraphController = null;
   let passesGraphInstance = null;
 
   // Minimal Python syntax highlighter — stateful across lines so triple-quoted
@@ -300,12 +302,32 @@ def mm(
         row.tabIndex = 0;
         row.title = lineNumber < 56 ? 'input_rmsnorm · 点击同步右侧分析' : 'post_rmsnorm · 点击同步右侧分析';
       }
+      if (state.activeFile === 'examples/models/qwen3_jit/kernels/attention.py' && lineNumber >= 39) {
+        const focus = lineNumber < 61 ? 'position' : lineNumber < 81 ? 'kv' : lineNumber < 107 ? 'q' : 'contract';
+        row.dataset.attentionLine = String(lineNumber);
+        row.dataset.attentionFocus = focus;
+        row.tabIndex = 0;
+        row.title = `${{ position: '位置与 RoPE 表', kv: 'K/V 旋转与缓存写入', q: 'Q 旋转与 Padding', contract: 'Out 参数写回契约' }[focus]} · 点击同步右侧分析`;
+      }
+      if (state.activeFile === 'examples/models/qwen3_jit/qwen3_decode.py' && lineNumber >= 49) {
+        const focus = lineNumber < 68 ? 'signature' : lineNumber < 79 ? 'scope1' : lineNumber < 101 ? 'scope2' : lineNumber < 115 ? 'scope3' : 'smoke';
+        row.dataset.qwenDecodeLine = String(lineNumber);
+        row.dataset.qwenDecodeFocus = focus;
+        row.tabIndex = 0;
+        row.title = `${{ signature: 'JIT 入口契约', scope1: 'Scope 1 · RMSNorm + QKV', scope2: 'Scope 2 · RoPE + KV Cache', scope3: 'Scope 3 · Output + MLP', smoke: '编译 Smoke Test' }[focus]} · 点击同步右侧分析`;
+      }
       row.append(gutter, code);
       fragment.append(row);
     });
     editor.replaceChildren(fragment);
     if (state.activeFile === RMSNORM_FILE) {
       $$('#dslEditor [data-rms-function]').forEach(row => row.classList.toggle('is-rms-function-active', row.dataset.rmsFunction === state.rmsNormFunction));
+    }
+    if (state.activeFile === ATTENTION_FILE) {
+      $$('#dslEditor [data-attention-focus]').forEach(row => row.classList.toggle('is-attention-line-active', row.dataset.attentionFocus === state.attentionFocus));
+    }
+    if (state.activeFile === QWEN_DECODE_FILE) {
+      $$('#dslEditor [data-qwen-decode-focus]').forEach(row => row.classList.toggle('is-qwen-decode-line-active', row.dataset.qwenDecodeFocus === state.qwenDecodeFocus));
     }
     $('[data-editor-tab="source"]').textContent = state.activeFile;
     editor.setAttribute('aria-label', `${state.activeFile} 全量源码`);
@@ -589,7 +611,244 @@ def mm(
     }
   };
 
+  const ATTENTION_FILE = 'examples/models/qwen3_jit/kernels/attention.py';
+  const QWEN_DECODE_FILE = 'examples/models/qwen3_jit/qwen3_decode.py';
   const RMSNORM_FILE = 'examples/models/qwen3_jit/kernels/rmsnorm.py';
+  const attentionFocusMeta = {
+    position: { label: '位置索引', lines: '52–60', detail: '读取 seq_lens，定位当前 token，并保留 RoPE 行维度' },
+    kv: { label: 'K/V Cache', lines: '62–79', detail: '按 8 个 KV Head 旋转 K，并把 K/V 写入当前 cache_row' },
+    q: { label: 'Q 旋转与补齐', lines: '81–106', detail: '8 个真实 Q Head 旋转后补齐到 16 行，供后续 GQA 使用' },
+    contract: { label: '写回契约', lines: '107–111', detail: '三个 Out 参数原位更新，仅返回 k_cache 的 SSA 句柄' },
+  };
+  const attentionComputationGraph = {
+    width: 620,
+    height: 690,
+    nodes: [
+      { id: 'attn-q', label: 'q_proj', typeLabel: '[16,8192] · FP32', kind: 'tensor', x: 110, y: 65, width: 176, height: 50, colorKey: 'io:activation' },
+      { id: 'attn-k', label: 'k_proj', typeLabel: '[16,1024] · FP32', kind: 'tensor', x: 310, y: 65, width: 176, height: 50, colorKey: 'io:activation' },
+      { id: 'attn-v', label: 'v_proj', typeLabel: '[16,1024] · FP32', kind: 'tensor', x: 510, y: 65, width: 176, height: 50, colorKey: 'io:activation' },
+      { id: 'attn-seq', label: 'seq_lens', typeLabel: '[16] · INT32', kind: 'tensor', x: 110, y: 185, width: 158, height: 46, colorKey: 'io:state' },
+      { id: 'attn-position', label: 'pos = ctx_len − 1', typeLabel: 'Current token index', kind: 'op', x: 110, y: 285, width: 202, height: 54, colorKey: 'sem:linear' },
+      { id: 'attn-rope-table', label: 'RoPE cos / sin', typeLabel: '[1,64] halves · FP32', kind: 'state', state_type: 'constant', x: 310, y: 285, width: 198, height: 50, colorKey: 'io:constant' },
+      { id: 'attn-q-rotate', label: 'Q RoPE rotate', typeLabel: '8 heads × 128 · FP32', kind: 'op', x: 110, y: 440, width: 194, height: 56, colorKey: 'sem:rope' },
+      { id: 'attn-k-rotate', label: 'K RoPE rotate', typeLabel: '1 KV head × 128 · FP32', kind: 'op', x: 310, y: 440, width: 204, height: 56, colorKey: 'sem:rope' },
+      { id: 'attn-v-cast', label: 'V cast', typeLabel: 'FP32 → BF16', kind: 'op', x: 510, y: 440, width: 154, height: 54, colorKey: 'sem:linear' },
+      { id: 'attn-q-pad', label: 'Q pad + assemble', typeLabel: '8 real + 8 zero · BF16', kind: 'op', x: 110, y: 605, width: 198, height: 56, colorKey: 'sem:comm' },
+      { id: 'attn-k-cache', label: 'K Cache', typeLabel: 'Current row write · BF16', kind: 'state', x: 310, y: 605, width: 184, height: 50, colorKey: 'io:state' },
+      { id: 'attn-v-cache', label: 'V Cache', typeLabel: 'Current row write · BF16', kind: 'state', x: 510, y: 605, width: 184, height: 50, colorKey: 'io:state' },
+    ],
+    edges: [
+      { source: 'attn-q', target: 'attn-q-rotate', tag: 'Q block' },
+      { source: 'attn-k', target: 'attn-k-rotate', tag: 'K lo / hi' },
+      { source: 'attn-v', target: 'attn-v-cast', tag: 'V row' },
+      { source: 'attn-seq', target: 'attn-position', tag: 'ctx_len' },
+      { source: 'attn-position', target: 'attn-rope-table', dashed: true, tag: 'pos' },
+      { source: 'attn-rope-table', target: 'attn-q-rotate', dashed: true, tag: 'cos / sin' },
+      { source: 'attn-rope-table', target: 'attn-k-rotate', dashed: true, tag: 'cos / sin' },
+      { source: 'attn-q-rotate', target: 'attn-q-pad', tag: 'cast BF16' },
+      { source: 'attn-k-rotate', target: 'attn-k-cache', tag: 'assemble' },
+      { source: 'attn-v-cast', target: 'attn-v-cache', tag: 'assemble' },
+    ],
+  };
+  const attentionGraphFocus = {
+    'attn-seq': 'position', 'attn-position': 'position', 'attn-rope-table': 'position',
+    'attn-k': 'kv', 'attn-v': 'kv', 'attn-k-rotate': 'kv', 'attn-v-cast': 'kv', 'attn-k-cache': 'kv', 'attn-v-cache': 'kv',
+    'attn-q': 'q', 'attn-q-rotate': 'q', 'attn-q-pad': 'q',
+  };
+
+  function attentionOverview() {
+    return `
+      <section class="kf-attn-context"><span>Q / K / V projection</span><i>→</i><b>RoPE + KV Cache Update</b><i>→</i><span>Grouped-query attention</span></section>
+      <section class="kf-inspector-section kf-attn-contract"><header><h2 class="kf-inspector-title">算子契约</h2><span>Qwen3-32B · decode</span></header><div class="kf-attn-contract-grid"><div><span>Q projection</span><b>[16, 8192]</b><em>FP32</em></div><div><span>K / V projection</span><b>[16, 1024] × 2</b><em>FP32</em></div><div><span>RoPE cos / sin</span><b>[4096, 128] × 2</b><em>FP32</em></div><div><span>K / V cache</span><b>[524288, 128] × 2</b><em>BF16</em></div><div><span>Padded Q</span><b>[2048, 128]</b><em>BF16</em></div><div><span>Scope</span><b>16 batch × 8 KV heads</b><em>CORE_GROUP</em></div></div></section>
+      <section class="kf-inspector-section kf-attn-computation"><header><h2 class="kf-inspector-title">算子计算图</h2><span>设计系统 · Model Graphviz</span></header><div class="pto-model-graphviz-pattern-page pto-model-graphviz-stage kf-attn-computation__stage" id="attentionComputationGraph" aria-label="RoPE 与 KV Cache 更新计算图"></div><footer id="attentionGraphStatus">点击节点可联动对应源码阶段 · 支持拖拽与缩放</footer></section>
+      <section class="kf-inspector-section kf-attn-coverage"><header><h2 class="kf-inspector-title">Attention 覆盖范围</h2><span>当前文件并非完整 Attention</span></header><div class="kf-attn-stage-line"><span class="is-done">RoPE</span><span class="is-done">KV 写入</span><span class="is-done">Q Padding</span><span>QK Matmul</span><span>Mask</span><span>Softmax</span><span>SV Matmul</span></div><p>当前仅实现 Scope 2 的前置子阶段。完整 grouped-query attention 的 QK、Softmax、SV 和 online accumulation 仍未在此文件中实现。</p></section>
+      <div class="kf-inspector-card kf-attn-insight"><b>Agent 结论</b><p>这个函数的主要产物不是 Attention 输出，而是当前 token 的 K/V Cache 增量，以及供后续 GQA 消费的 BF16 padded Q。</p></div>`;
+  }
+
+  function attentionData() {
+    return `
+      <section class="kf-inspector-section kf-attn-precision"><header><h2 class="kf-inspector-title">数据与精度流</h2><span>源码事实</span></header><div class="kf-attn-data-flow"><div><span>Q / K / V</span><b>FP32</b></div><i>＋ FP32 RoPE table</i><div><span>RoPE rotate</span><b>FP32 compute</b></div><i>cast before assemble</i><div><span>K / V Cache · Padded Q</span><b>BF16</b></div></div></section>
+      <section class="kf-inspector-section kf-attn-memory"><header><h2 class="kf-inspector-title">逻辑数据规模</h2><span>EST. · shape × dtype</span></header><dl><div><dt>单个 K Cache</dt><dd>128 MiB · BF16</dd></div><div><dt>单个 V Cache</dt><dd>128 MiB · BF16</dd></div><div><dt>Padded Q</dt><dd>512 KiB · BF16</dd></div><div><dt>每 Batch Q 输入</dt><dd>32 KiB · FP32</dd></div><div><dt>每 Batch K + V 输入</dt><dd>8 KiB · FP32</dd></div><div><dt>每 Batch Cache 增量</dt><dd>4 KiB · BF16</dd></div></dl></section>
+      <section class="kf-attn-pad"><div><span>8 real Q heads</span><b>8 × 128</b></div><i>pad</i><div><span>8 zero rows</span><b>8 × 128</b></div><em>→ 16 × 128 BF16 / KV head</em></section>
+      <div class="kf-inspector-card kf-rms-estimate"><b>可信边界</b><p>字节数是逻辑规模；实际搬运次数、片上占用和 Cache 写合并方式需要结合 Pass 后 IR 与设备指令确认。</p></div>`;
+  }
+
+  function attentionMapping() {
+    const active = attentionFocusMeta[state.attentionFocus] || attentionFocusMeta.position;
+    return `
+      <section class="kf-inspector-section kf-attn-mapping"><header><h2 class="kf-inspector-title">并行与地址映射</h2><span>16 Batch lanes</span></header><div class="kf-attn-lanes">${Array.from({ length: 16 }, (_, index) => `<i>${index}</i>`).join('')}</div><dl><div><dt>外层并行</dt><dd><code>pl.parallel(16)</code></dd></div><div><dt>每 Lane KV 循环</dt><dd><code>pl.range(8)</code></dd></div><div><dt>K/V cache_row</dt><dd><code>b × 8 × 4096 + ki × 4096 + pos</code></dd></div><div><dt>Q pad_row0</dt><dd><code>b × 8 × 16 + ki × 16</code></dd></div></dl></section>
+      <section class="kf-inspector-section kf-attn-source-map"><header><h2 class="kf-inspector-title">源码阶段</h2><span>点击与源码联动</span></header><div>${Object.entries(attentionFocusMeta).map(([key, item]) => `<button type="button" class="${key === state.attentionFocus ? 'is-active' : ''}" data-attention-focus="${key}"><i>${item.lines}</i><span><b>${item.label}</b><small>${item.detail}</small></span></button>`).join('')}</div></section>
+      <div class="kf-inspector-card kf-attn-insight"><b>${active.label}</b><p>${active.detail}。当前选中源码第 ${active.lines} 行。</p></div>`;
+  }
+
+  function attentionValidation() {
+    return `
+      <section class="kf-inspector-section kf-rms-validation"><header><h2 class="kf-inspector-title">当前证据</h2><span>结构 ≠ 数值</span></header><div class="kf-rms-proof"><div class="is-pass"><i>✓</i><p><b>Qwen3 JIT 全管线可编译</b><small>tests/ut/jit/test_qwen3_decode.py</small></p><em>已验证</em></div><div class="is-pass"><i>✓</i><p><b>rope_kv_cache scope 被 outline</b><small>name_hint = rope_kv_cache</small></p><em>已验证</em></div><div><i>○</i><p><b>RoPE 数值 Golden</b><small>Q / K rotation · position edge</small></p><em>缺失</em></div><div><i>○</i><p><b>Cache 地址与增量写入</b><small>pos = 0 / MAX_SEQ - 1</small></p><em>缺失</em></div><div><i>○</i><p><b>Q Padding 内容验证</b><small>8 real + 8 zero rows</small></p><em>缺失</em></div><div><i>○</i><p><b>完整 Attention 数值链路</b><small>QK · mask · softmax · SV</small></p><em>未实现</em></div></div></section>
+      <section class="kf-inspector-section kf-attn-risks"><header><h2 class="kf-inspector-title">编码风险</h2><span>需要显式守卫</span></header><ul><li><b>位置边界</b><span><code>ctx_len</code> 必须位于 1…4096，否则 <code>pos</code> 越界。</span></li><li><b>Rank 约束</b><span>RoPE 表必须保留 [1, 64] 行维，供 <code>col_expand_mul</code> 使用。</span></li><li><b>Out 契约</b><span>V Cache 与 padded Q 依赖原位写回，不能只从返回值判断产物。</span></li></ul></section>
+      <button class="kf-rms-action" type="button" data-attention-action="golden">＋ 生成 RoPE / Cache / Padding 数值测试</button>`;
+  }
+
+  function renderAttentionInspector({ scrollToFocus = false } = {}) {
+    attentionGraphController?.destroy?.();
+    attentionGraphController = null;
+    const tabs = { overview: '概览', data: '数据与精度', mapping: '并行与地址', validation: '验证' };
+    const content = state.attentionTab === 'data' ? attentionData() : state.attentionTab === 'mapping' ? attentionMapping() : state.attentionTab === 'validation' ? attentionValidation() : attentionOverview();
+    $('#inspectorTitle').textContent = 'Attention 分析';
+    $('#inspectorMeta').textContent = 'rope_kv_cache_update · static';
+    $('#inspector').innerHTML = `
+      <section class="kf-attn-hero"><span class="kf-eyebrow">CODING AGENT · SOURCE ANALYSIS</span><div><b>RoPE + KV Cache Update</b><em>PARTIAL ATTENTION</em></div><small>Qwen3-32B decode · Scope 2 · current-token update</small></section>
+      <div class="kf-attn-tabs" role="tablist" aria-label="Attention 分析视图">${Object.entries(tabs).map(([key, label]) => `<button type="button" class="${key === state.attentionTab ? 'is-active' : ''}" data-attention-tab="${key}">${label}</button>`).join('')}</div>
+      <div class="kf-attn-view">${content}</div>
+      <footer class="kf-rms-provenance"><span><i class="fact"></i>源码事实</span><span><i class="resolved"></i>调用点解析</span><span><i class="estimated"></i>静态估算</span></footer>`;
+    $$('#dslEditor [data-attention-focus]').forEach(row => row.classList.toggle('is-attention-line-active', row.dataset.attentionFocus === state.attentionFocus));
+    if (scrollToFocus) $(`#dslEditor [data-attention-focus="${state.attentionFocus}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (state.attentionTab === 'overview') renderAttentionComputationGraph();
+  }
+
+  function renderAttentionComputationGraph() {
+    const pattern = window.PtoModelGraphvizPattern;
+    const stage = $('#attentionComputationGraph');
+    const status = $('#attentionGraphStatus');
+    if (!pattern || !stage) return;
+    attentionGraphController = pattern.renderController(stage, attentionComputationGraph, {
+      ariaLabel: 'RoPE rotation, KV cache update and Q padding computation graph',
+      colormap: pattern.modelArchitectureColormap(attentionComputationGraph),
+      fitMode: 'full', viewportPadding: 18, autoFit: true,
+      interaction: { panZoom: true, selectableClusters: false },
+      overlays: { edgeTags: true },
+      onSelect: ({ nodeId }) => {
+        const focus = attentionGraphFocus[nodeId];
+        if (!focus) return;
+        state.attentionFocus = focus;
+        $$('#dslEditor [data-attention-focus]').forEach(row => row.classList.toggle('is-attention-line-active', row.dataset.attentionFocus === focus));
+        const meta = attentionFocusMeta[focus];
+        if (status && meta) status.textContent = `${meta.label} · 源码第 ${meta.lines} 行 · ${meta.detail}`;
+      },
+    });
+  }
+
+  const qwenDecodeFocusMeta = {
+    signature: { label: '入口契约', lines: '49–67', detail: '单层 decode 的输入、权重、KV Cache 与 BF16 输出契约' },
+    scope1: { label: 'Scope 1 · QKV', lines: '68–77', detail: 'Input RMSNorm 后并行生成 FP32 Q、K、V 投影' },
+    scope2: { label: 'Scope 2 · Attention', lines: '79–99', detail: '完成 RoPE 与 KV Cache 更新；完整 GQA 尚未实现，attn_out 是占位张量' },
+    scope3: { label: 'Scope 3 · MLP', lines: '101–110', detail: '输出投影残差、Post RMSNorm、MLP 与 Down Projection 残差' },
+    smoke: { label: '编译冒烟', lines: '115–144', detail: '构造静态输入并调用 compile_for_test，仅验证编译链路' },
+  };
+  const qwenDecodeComputationGraph = {
+    width: 640,
+    height: 980,
+    nodes: [
+      { id: 'decode-hidden', label: 'hidden_states', typeLabel: '[16,8192] · BF16', kind: 'tensor', x: 320, y: 45, width: 190, height: 50, colorKey: 'io:activation' },
+      { id: 'decode-input-rms', label: 'input_rmsnorm', typeLabel: 'Scope 1 · BF16', kind: 'op', x: 320, y: 135, width: 194, height: 54, colorKey: 'sem:norm' },
+      { id: 'decode-q', label: 'q_projection', typeLabel: '[16,8192] · FP32', kind: 'op', x: 105, y: 245, width: 176, height: 54, colorKey: 'sem:linear' },
+      { id: 'decode-k', label: 'k_projection', typeLabel: '[16,1024] · FP32', kind: 'op', x: 320, y: 245, width: 176, height: 54, colorKey: 'sem:linear' },
+      { id: 'decode-v', label: 'v_projection', typeLabel: '[16,1024] · FP32', kind: 'op', x: 535, y: 245, width: 176, height: 54, colorKey: 'sem:linear' },
+      { id: 'decode-rope', label: 'RoPE + KV Cache Update', typeLabel: 'Scope 2 · BF16 Q/K/V', kind: 'op', x: 320, y: 370, width: 238, height: 58, colorKey: 'sem:rope' },
+      { id: 'decode-cache', label: 'K / V Cache', typeLabel: '2 × 128 MiB · BF16', kind: 'state', x: 535, y: 475, width: 184, height: 50, colorKey: 'io:state' },
+      { id: 'decode-gap', label: 'Full Grouped-query Attention', typeLabel: 'NOT IMPLEMENTED', kind: 'op', x: 320, y: 500, width: 240, height: 58, colorKey: 'io:constant' },
+      { id: 'decode-attn-out', label: 'attn_out placeholder', typeLabel: '[16,8192] · BF16', kind: 'tensor', x: 320, y: 605, width: 210, height: 52, colorKey: 'io:constant' },
+      { id: 'decode-out-proj', label: 'out_projection + residual', typeLabel: '[16,8192] · FP32', kind: 'op', x: 320, y: 700, width: 228, height: 56, colorKey: 'sem:linear' },
+      { id: 'decode-post-rms', label: 'post_rmsnorm', typeLabel: 'BF16', kind: 'op', x: 320, y: 790, width: 176, height: 52, colorKey: 'sem:norm' },
+      { id: 'decode-mlp', label: 'mlp_block', typeLabel: '[16,25600] · BF16', kind: 'op', x: 320, y: 875, width: 188, height: 54, colorKey: 'sem:mlp' },
+      { id: 'decode-out', label: 'down_projection + residual', typeLabel: 'out · [16,8192] · BF16', kind: 'op', x: 320, y: 960, width: 238, height: 56, colorKey: 'io:output' },
+    ],
+    edges: [
+      { source: 'decode-hidden', target: 'decode-input-rms', tag: 'BF16' },
+      { source: 'decode-input-rms', target: 'decode-q', tag: 'normed' },
+      { source: 'decode-input-rms', target: 'decode-k', tag: 'normed' },
+      { source: 'decode-input-rms', target: 'decode-v', tag: 'normed' },
+      { source: 'decode-q', target: 'decode-rope', tag: 'Q' },
+      { source: 'decode-k', target: 'decode-rope', tag: 'K' },
+      { source: 'decode-v', target: 'decode-rope', tag: 'V' },
+      { source: 'decode-rope', target: 'decode-cache', tag: 'write state' },
+      { source: 'decode-rope', target: 'decode-gap', dashed: true, tag: 'padded Q' },
+      { source: 'decode-cache', target: 'decode-gap', dashed: true, tag: 'read history' },
+      { source: 'decode-gap', target: 'decode-attn-out', dashed: true, tag: 'missing producer' },
+      { source: 'decode-attn-out', target: 'decode-out-proj', tag: 'placeholder' },
+      { source: 'decode-hidden', target: 'decode-out-proj', dashed: true, tag: 'residual' },
+      { source: 'decode-out-proj', target: 'decode-post-rms', tag: 'resid1' },
+      { source: 'decode-post-rms', target: 'decode-mlp', tag: 'normed' },
+      { source: 'decode-mlp', target: 'decode-out', tag: 'gated MLP' },
+      { source: 'decode-out-proj', target: 'decode-out', dashed: true, tag: 'residual' },
+    ],
+  };
+  const qwenDecodeGraphFocus = {
+    'decode-hidden': 'signature',
+    'decode-input-rms': 'scope1', 'decode-q': 'scope1', 'decode-k': 'scope1', 'decode-v': 'scope1',
+    'decode-rope': 'scope2', 'decode-cache': 'scope2', 'decode-gap': 'scope2', 'decode-attn-out': 'scope2',
+    'decode-out-proj': 'scope3', 'decode-post-rms': 'scope3', 'decode-mlp': 'scope3', 'decode-out': 'scope3',
+  };
+
+  function qwenDecodeOverview() {
+    return `
+      <section class="kf-qwen-decode-context"><span>9 inline utilities</span><i>→</i><b>3 manual scopes</b><i>→</i><span>1 orchestration entry</span></section>
+      <section class="kf-inspector-section kf-qwen-decode-contract"><header><h2 class="kf-inspector-title">单层 Decode 契约</h2><span>Qwen3-32B · batch 16</span></header><div class="kf-attn-contract-grid"><div><span>Hidden / Output</span><b>[16, 8192]</b><em>BF16</em></div><div><span>Q / KV hidden</span><b>8192 / 1024</b><em>FP32 projection</em></div><div><span>Intermediate</span><b>[16, 25600]</b><em>BF16</em></div><div><span>Head dim</span><b>128</b><em>8 KV groups</em></div><div><span>K / V Cache</span><b>[524288, 128] × 2</b><em>BF16</em></div><div><span>Max sequence</span><b>4096</b><em>static</em></div></div></section>
+      <section class="kf-qwen-decode-scopes" aria-label="源码执行范围"><button type="button" data-qwen-decode-focus="scope1"><i>01</i><span><b>RMSNorm + QKV</b><small>BF16 norm → FP32 projections</small></span></button><button type="button" data-qwen-decode-focus="scope2"><i>02</i><span><b>RoPE + KV Cache</b><small>Attention 主体仍为空缺</small></span></button><button type="button" data-qwen-decode-focus="scope3"><i>03</i><span><b>Output + MLP</b><small>FP32 residual carry → BF16 out</small></span></button></section>
+      <section class="kf-inspector-section kf-qwen-decode-computation"><header><h2 class="kf-inspector-title">算子计算图</h2><span>设计系统 · Model Graphviz</span></header><div class="pto-model-graphviz-pattern-page pto-model-graphviz-stage kf-qwen-decode-computation__stage" id="qwenDecodeComputationGraph" aria-label="Qwen3 单层 Decode 计算图"></div><footer id="qwenDecodeGraphStatus">点击节点可定位 Scope · 虚线表示状态或尚未闭合的数据依赖</footer></section>
+      <div class="kf-qwen-decode-gap"><i>!</i><div><b>计算图存在真实断点</b><p>源码只更新 RoPE / KV Cache，未实现完整 grouped-query attention；<code>attn_out</code> 是没有生产者的占位张量，不能把当前函数视为可数值执行的完整 Decoder Layer。</p></div></div>`;
+  }
+
+  function qwenDecodeData() {
+    return `
+      <section class="kf-inspector-section kf-qwen-decode-precision"><header><h2 class="kf-inspector-title">精度传递</h2><span>按源码调用边界</span></header><div class="kf-qwen-decode-data-chain"><div><b>hidden_states</b><em>BF16</em></div><i>RMSNorm</i><div><b>Q / K / V</b><em>FP32</em></div><i>RoPE + assemble</i><div><b>attn_out</b><em>BF16 · placeholder</em></div><i>residual</i><div><b>resid1_tile</b><em>FP32</em></div><i>Post RMS + MLP</i><div><b>out</b><em>BF16</em></div></div></section>
+      <section class="kf-inspector-section kf-attn-memory"><header><h2 class="kf-inspector-title">逻辑数据规模</h2><span>EST. · 不含临时 Tile</span></header><dl><div><dt>Hidden / Normed / Output</dt><dd>各 256 KiB · BF16</dd></div><div><dt>Q projection</dt><dd>512 KiB · FP32</dd></div><div><dt>K / V projection</dt><dd>各 64 KiB · FP32</dd></div><div><dt>Padded Q</dt><dd>512 KiB · BF16</dd></div><div><dt>Residual carry</dt><dd>512 KiB · FP32</dd></div><div><dt>MLP intermediate</dt><dd>800 KiB · BF16</dd></div><div><dt>K / V Cache</dt><dd>各 128 MiB · BF16</dd></div></dl></section>
+      <div class="kf-inspector-card kf-rms-estimate"><b>Agent 观察</b><p>FP32 主要承载投影与残差累加，BF16 用于 scope 间激活和最终输出。<code>attn_out</code> 的 dtype 虽已声明，但内容并无有效数值来源。</p></div>`;
+  }
+
+  function qwenDecodeOrchestration() {
+    const active = qwenDecodeFocusMeta[state.qwenDecodeFocus] || qwenDecodeFocusMeta.scope1;
+    return `
+      <section class="kf-inspector-section kf-qwen-decode-deps"><header><h2 class="kf-inspector-title">跨文件组合</h2><span>9 utilities · 4 source files</span></header><div><article><b>rmsnorm.py</b><p>input_rmsnorm · post_rmsnorm</p></article><article><b>projection.py</b><p>Q / K / V · Out residual · Down residual</p></article><article><b>attention.py</b><p>rope_kv_cache_update</p></article><article><b>mlp.py</b><p>mlp_block</p></article></div></section>
+      <section class="kf-qwen-decode-pass"><span>InlineFunctions</span><i>→</i><span>OutlineIncoreScopes</span><i>→</i><b>qwen3_decode · Orchestration</b></section>
+      <section class="kf-inspector-section kf-attn-source-map kf-qwen-decode-source-map"><header><h2 class="kf-inspector-title">源码阶段</h2><span>点击与源码联动</span></header><div>${Object.entries(qwenDecodeFocusMeta).map(([key, item]) => `<button type="button" class="${key === state.qwenDecodeFocus ? 'is-active' : ''}" data-qwen-decode-focus="${key}"><i>${item.lines}</i><span><b>${item.label}</b><small>${item.detail}</small></span></button>`).join('')}</div></section>
+      <div class="kf-inspector-card kf-attn-insight"><b>${active.label}</b><p>${active.detail}。当前选中源码第 ${active.lines} 行。</p></div>`;
+  }
+
+  function qwenDecodeValidation() {
+    return `
+      <section class="kf-inspector-section kf-rms-validation"><header><h2 class="kf-inspector-title">当前证据</h2><span>编译通过 ≠ 功能完整</span></header><div class="kf-rms-proof"><div class="is-pass"><i>✓</i><p><b>完整 JIT 管线可编译</b><small>test_qwen3_decode_full_pipeline</small></p><em>已验证</em></div><div class="is-pass"><i>✓</i><p><b>Inline 节点全部消除</b><small>入口保留为 Orchestration</small></p><em>已验证</em></div><div class="is-pass"><i>✓</i><p><b>11 个预期 scope hints 存在</b><small>RMS · Projection · MLP · RoPE</small></p><em>已验证</em></div><div><i>○</i><p><b>单层数值 Golden</b><small>当前 Attention 数据链未闭合</small></p><em>不可验证</em></div><div><i>○</i><p><b>昇腾设备实跑</b><small>输出误差 · Cache 增量 · 边界位置</small></p><em>缺失</em></div><div><i>○</i><p><b>端到端性能基线</b><small>scope latency · bandwidth · overlap</small></p><em>缺失</em></div></div></section>
+      <section class="kf-inspector-section kf-attn-risks"><header><h2 class="kf-inspector-title">完成 Decode 前的阻塞项</h2><span>高优先级</span></header><ul><li><b>补齐 Grouped-query Attention</b><span>连接 padded Q、历史 K/V Cache 到合法的 <code>attn_out</code> 生产者。</span></li><li><b>建立数值 Oracle</b><span>覆盖短序列、最大位置、KV Cache 增量与 BF16 容差。</span></li><li><b>设备侧验证</b><span>编译测试不包含实际昇腾执行与性能数据。</span></li></ul></section>
+      <button class="kf-rms-action" type="button" data-qwen-decode-action="test">＋ 生成单层 Decode 测试清单</button>`;
+  }
+
+  function renderQwenDecodeInspector({ scrollToFocus = false } = {}) {
+    qwenDecodeGraphController?.destroy?.();
+    qwenDecodeGraphController = null;
+    const tabs = { overview: '概览', data: '数据与精度', orchestration: '编排与依赖', validation: '验证' };
+    const content = state.qwenDecodeTab === 'data' ? qwenDecodeData() : state.qwenDecodeTab === 'orchestration' ? qwenDecodeOrchestration() : state.qwenDecodeTab === 'validation' ? qwenDecodeValidation() : qwenDecodeOverview();
+    $('#inspectorTitle').textContent = 'Decode Layer 分析';
+    $('#inspectorMeta').textContent = 'qwen3_decode · orchestration';
+    $('#inspector').innerHTML = `
+      <section class="kf-qwen-decode-hero"><span class="kf-eyebrow">CODING AGENT · SOURCE ANALYSIS</span><div><b>qwen3_decode</b><em>PARTIAL DECODE</em></div><small>Qwen3-32B · single layer · JIT orchestration entry</small></section>
+      <div class="kf-qwen-decode-tabs" role="tablist" aria-label="Qwen3 Decode 分析视图">${Object.entries(tabs).map(([key, label]) => `<button type="button" class="${key === state.qwenDecodeTab ? 'is-active' : ''}" data-qwen-decode-tab="${key}">${label}</button>`).join('')}</div>
+      <div class="kf-qwen-decode-view">${content}</div>
+      <footer class="kf-rms-provenance"><span><i class="fact"></i>源码事实</span><span><i class="resolved"></i>跨文件解析</span><span><i class="estimated"></i>静态估算</span></footer>`;
+    $$('#dslEditor [data-qwen-decode-focus]').forEach(row => row.classList.toggle('is-qwen-decode-line-active', row.dataset.qwenDecodeFocus === state.qwenDecodeFocus));
+    if (scrollToFocus) $(`#dslEditor [data-qwen-decode-focus="${state.qwenDecodeFocus}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (state.qwenDecodeTab === 'overview') renderQwenDecodeComputationGraph();
+  }
+
+  function renderQwenDecodeComputationGraph() {
+    const pattern = window.PtoModelGraphvizPattern;
+    const stage = $('#qwenDecodeComputationGraph');
+    const status = $('#qwenDecodeGraphStatus');
+    if (!pattern || !stage) return;
+    qwenDecodeGraphController = pattern.renderController(stage, qwenDecodeComputationGraph, {
+      ariaLabel: 'Qwen3 single layer decode orchestration computation graph with incomplete attention stage',
+      colormap: pattern.modelArchitectureColormap(qwenDecodeComputationGraph),
+      fitMode: 'full', viewportPadding: 18, autoFit: true,
+      interaction: { panZoom: true, selectableClusters: false },
+      overlays: { edgeTags: true },
+      onSelect: ({ nodeId }) => {
+        const focus = qwenDecodeGraphFocus[nodeId];
+        if (!focus) return;
+        state.qwenDecodeFocus = focus;
+        $$('#dslEditor [data-qwen-decode-focus]').forEach(row => row.classList.toggle('is-qwen-decode-line-active', row.dataset.qwenDecodeFocus === focus));
+        const meta = qwenDecodeFocusMeta[focus];
+        if (status && meta) status.textContent = `${meta.label} · 源码第 ${meta.lines} 行 · ${meta.detail}`;
+      },
+    });
+  }
   const rmsNormProfiles = {
     input: {
       id: 'input', name: 'input_rmsnorm', role: 'Attention 前', scope: 'CORE_GROUP · rmsnorm', source: 'hidden_states', sourceType: 'BF16', weight: 'input_rms_weight', output: 'normed_states', chunk: 512, chunks: 16, stage: 4,
@@ -760,10 +1019,22 @@ def mm(
     matmulHardwareGraphInstance = null;
     rmsNormHardwareGraphInstance?.destroy?.();
     rmsNormHardwareGraphInstance = null;
+    attentionGraphController?.destroy?.();
+    attentionGraphController = null;
+    qwenDecodeGraphController?.destroy?.();
+    qwenDecodeGraphController = null;
     passesGraphInstance?.destroy?.();
     passesGraphInstance = null;
     if (isPassesDumpFile(state.activeFile)) {
       renderPassesGraphInspector();
+      return;
+    }
+    if (state.activeFile === ATTENTION_FILE) {
+      renderAttentionInspector();
+      return;
+    }
+    if (state.activeFile === QWEN_DECODE_FILE) {
+      renderQwenDecodeInspector();
       return;
     }
     if (state.activeFile === RMSNORM_FILE) {
@@ -1412,6 +1683,14 @@ def mm(
           state.rmsNormTab = 'overview';
           state.rmsNormFlowStep = 'load';
         }
+        if (filePath === ATTENTION_FILE) {
+          state.attentionTab = 'overview';
+          state.attentionFocus = 'position';
+        }
+        if (filePath === QWEN_DECODE_FILE) {
+          state.qwenDecodeTab = 'overview';
+          state.qwenDecodeFocus = 'scope1';
+        }
         state.hardwareFlowLine = 0;
         state.hardwareFlowPinned = false;
         renderSelectedSource(state.activeFile);
@@ -1454,6 +1733,40 @@ def mm(
       renderRmsNormInspector();
     }
     if (event.target.closest('[data-rms-action="golden"]')) toast('已生成测试草案：Qwen3 shape · Torch golden · BF16 输出容差');
+    const attentionTab = event.target.closest('[data-attention-tab]');
+    if (attentionTab) {
+      state.attentionTab = attentionTab.dataset.attentionTab;
+      renderAttentionInspector();
+    }
+    const attentionFocus = event.target.closest('.kf-attn-source-map [data-attention-focus]');
+    if (attentionFocus) {
+      state.attentionFocus = attentionFocus.dataset.attentionFocus;
+      renderAttentionInspector({ scrollToFocus: true });
+    }
+    const attentionLine = event.target.closest('#dslEditor [data-attention-line]');
+    if (attentionLine && state.activeFile === ATTENTION_FILE) {
+      state.attentionFocus = attentionLine.dataset.attentionFocus;
+      state.attentionTab = 'mapping';
+      renderAttentionInspector();
+    }
+    if (event.target.closest('[data-attention-action="golden"]')) toast('已生成测试草案：RoPE 位置边界 · K/V Cache 写入 · Q Padding');
+    const qwenDecodeTab = event.target.closest('[data-qwen-decode-tab]');
+    if (qwenDecodeTab) {
+      state.qwenDecodeTab = qwenDecodeTab.dataset.qwenDecodeTab;
+      renderQwenDecodeInspector();
+    }
+    const qwenDecodeFocus = event.target.closest('[data-qwen-decode-focus]');
+    if (qwenDecodeFocus && !qwenDecodeFocus.closest('#dslEditor')) {
+      state.qwenDecodeFocus = qwenDecodeFocus.dataset.qwenDecodeFocus;
+      renderQwenDecodeInspector({ scrollToFocus: true });
+    }
+    const qwenDecodeLine = event.target.closest('#dslEditor [data-qwen-decode-line]');
+    if (qwenDecodeLine && state.activeFile === QWEN_DECODE_FILE) {
+      state.qwenDecodeFocus = qwenDecodeLine.dataset.qwenDecodeFocus;
+      state.qwenDecodeTab = 'orchestration';
+      renderQwenDecodeInspector();
+    }
+    if (event.target.closest('[data-qwen-decode-action="test"]')) toast('已生成测试清单：编译结构 · Attention 数据链 · Cache 增量 · BF16 数值 · 昇腾实跑');
     if (event.target.closest('[data-next]')) goTo(state.step + 1);
     if (event.target.closest('[data-prev]')) goTo(state.step - 1);
 

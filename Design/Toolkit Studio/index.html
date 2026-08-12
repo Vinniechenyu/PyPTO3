@@ -15,14 +15,26 @@
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/aiv-core-object/pattern.css" />
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/memory-architecture/pattern.css" />
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/model-graphviz/pattern.css" />
-  <link rel="stylesheet" href="./styles/demo.css?v=20260812-22" />
+  <link rel="stylesheet" href="./styles/demo.css?v=20260812-25" />
 </head>
 <body>
   <section class="pto-ide-frame" data-ide-frame data-host="standalone" data-cursor-dots="true" aria-label="PyPTO Studio 可信 Kernel 工作台">
     <header class="pto-ide-frame__topbar pto-ide-frame__standalone-chrome">
       <div class="pto-ide-frame__topbar-left">
         <div class="pto-ide-frame__host-chip" data-ide-slot="host-chip" aria-hidden="true">
-          <svg class="pto-ide-frame__host-icon" viewBox="0 0 24 24"><path d="M5 5h14v14H5zM9 9h6v6H9z"/></svg>
+          <svg class="pto-studio-logo" viewBox="0 0 32 32" width="32" height="32" aria-label="PyPTO Studio">
+            <defs>
+              <linearGradient id="pto-logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#C4612F;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#A94E22;stop-opacity:1" />
+              </linearGradient>
+            </defs>
+            <path d="M6 8 L16 4 L26 8 L26 16 L16 20 L6 16 Z" fill="url(#pto-logo-grad)" opacity="0.2"/>
+            <path d="M6 16 L16 12 L26 16 L26 24 L16 28 L6 24 Z" fill="none" stroke="url(#pto-logo-grad)" stroke-width="1.5" stroke-linejoin="round"/>
+            <path d="M16 12 L16 20" stroke="url(#pto-logo-grad)" stroke-width="1.5"/>
+            <path d="M10 14 L16 12 L22 14" fill="none" stroke="url(#pto-logo-grad)" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="16" cy="20" r="2" fill="#C4612F"/>
+          </svg>
         </div>
         <div class="pto-ide-frame__workspace" data-ide-slot="workspace-switcher">
           <span class="kf-brand">PyPTO Studio</span>
@@ -548,6 +560,6 @@
   <script src="./js/examples-source.js?v=20260812-1"></script>
   <script src="./js/passes-graph.js?v=20260811-8"></script>
   <script src="./js/qwen3-model-viz.js?v=20260811-10"></script>
-  <script src="./js/demo.js?v=20260812-10"></script>
+  <script src="./js/demo.js?v=20260812-13"></script>
 </body>
 </html>

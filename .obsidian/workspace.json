@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Product_Planning/PyPTO3.0_Toolkit_产品功能规划.md",
+                "file": "Product_Planning/算子开发_Agent_能力规划与_Coding_Agent_原型.md",
                 "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "PyPTO3.0_Toolkit_产品功能规划"
+              "title": "算子开发_Agent_能力规划与_Coding_Agent_原型"
             }
           }
         ]
@@ -187,6 +187,9 @@
   },
   "active": "0c4452cf167e25a6",
   "lastOpenFiles": [
+    "Design/Toolkit Studio/index.html.tmp.29024.b58f195f9f2f",
+    "Product_Planning/PyPTO3.0_Toolkit_产品功能规划.md",
+    "Product_Planning/算子开发_Agent_能力规划与_Coding_Agent_原型.md",
     "Design/Toolkit Studio/js/examples-source.js",
     "Design/Toolkit Studio/styles/demo.css.tmp.3820.89a08cc0aa9e",
     "Design/operator-coding-agent/index.html",
@@ -195,7 +198,6 @@
     "Product_Planning/PyPTO_Studio_推理场景_产品设计.md",
     "Product_Planning/模型推理相关访谈洞察.md",
     "Product_Planning/大模型推理调优工具-功能规划.md",
-    "Product_Planning/PyPTO3.0_Toolkit_产品功能规划.md",
     "dsl-editor-demo.html",
     "dsl-editor-demo.html.tmp.22612.926c6807c580",
     "Design/Toolkit Studio/js/qwen3-model-viz.js",
@@ -203,7 +205,6 @@
     "Competitive_Analysis/PyPTO_开发者体验竞品分析.pptx",
     "Competitive_Analysis/generate_pptx.py",
     "Data/_jit_decode_fwd_layers_20260625_184941/__pycache__/kernel_config.cpython-310.pyc",
-    "Data/_jit_decode_fwd_layers_20260625_184941/__pycache__",
     "docs/华为昇腾CANN_Runtime与硬件关系学习指南.md",
     "design-qa.md",
     "AGENTS.md",
@@ -225,7 +226,6 @@
     "vendor/pto-design-system/patterns/model-architecture-3d-deck/CSS3D_RANK_PACKING_SPEC.md",
     "vendor/pto-design-system/patterns/matrix-canvas/matrix-canvas-使用说明.md",
     "vendor/pto-design-system/assets/fx.svg",
-    "vendor/pto-design-system/SKILL.md",
     "vendor/pto-design-system.backup-20260806-115127/patterns/model-graphviz/graphviz/img/jsoneditor-icons.svg",
     "vendor/pto-design-system.backup-20260806-115127/patterns/model-graphviz/assets/img/jsoneditor-icons.svg",
     "vendor/pto-design-system.backup-20260806-115127/assets/fx.svg",
