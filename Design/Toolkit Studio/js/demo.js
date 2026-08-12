@@ -631,7 +631,7 @@ def mm(
     return `
       <section class="kf-inspector-section kf-rms-precision"><header><h2 class="kf-inspector-title">精度流</h2><span>源码事实</span></header><div class="kf-rms-precision-flow">${firstCast}<i>square + row_sum</i><span>FP32 [1,16]</span><i>recip(sqrt)</i><span>FP32 inv_rms</span><i>× gamma · cast</i><span>BF16 output</span></div></section>
       <section class="kf-rms-hardware" aria-labelledby="rmsNormHardwareTitle">
-        <header><div><b id="rmsNormHardwareTitle">昇腾执行路径</b><span>源码语义映射 · Ascend AIV</span></div><em>DDR → UB ⇄ Vector → DDR</em></header>
+        <header><div><b id="rmsNormHardwareTitle">昇腾执行路径</b><span>DDR → UB ⇄ Vector → DDR</span></div><div class="kf-rms-hardware__tools" data-no-pan><button type="button" data-rms-fit aria-pressed="true">最佳视图</button><button type="button" data-rms-zoom="out" aria-label="缩小硬件图">−</button><span data-rms-zoom-readout>—</span><button type="button" data-rms-zoom="in" aria-label="放大硬件图">＋</button></div></header>
         <div class="pto-memory-architecture-viewport kf-rms-hardware__viewport" id="rmsNormHardwareViewport" data-pto-mem-arch-viewport><div class="pto-memory-architecture-sizer" id="rmsNormHardwareSizer" data-pto-mem-arch-sizer><div class="pto-memory-architecture-canvas" id="rmsNormHardwareGraph" data-pto-mem-arch-canvas></div></div></div>
         <div class="kf-rms-hardware__steps" role="list" aria-label="RMSNorm 执行阶段">${steps.map((step) => `<button type="button" role="listitem" data-rms-flow-step="${step.id}"><i>${step.index}</i><span><b>${step.title}</b><small>${step.detail}</small></span></button>`).join('')}</div>
         <footer id="rmsNormFlowStatus"><span><i></i>点击阶段查看数据路径与对应源码</span></footer>
@@ -663,6 +663,8 @@ def mm(
     const sizer = $('#rmsNormHardwareSizer');
     const host = $('.kf-rms-hardware');
     const status = $('#rmsNormFlowStatus');
+    const fitButton = $('[data-rms-fit]', host);
+    const readout = $('[data-rms-zoom-readout]', host);
     const steps = rmsNormExecutionSteps[profile.id] || [];
     if (!memoryPattern || !canvas || !viewport || !sizer) return;
 
@@ -676,19 +678,29 @@ def mm(
     const hover = memoryPattern.attachHoverInteractions(canvas, rmsNormHardwarePreset, {
       selector: '[data-mem950-node="rail:DDR"], #rmsnorm-aiv-core, #rmsnorm-aiv-core [data-aiv-node]',
     });
+    let fitZoom = 0;
+    const syncFitState = (currentZoom) => {
+      const isFit = fitZoom > 0 && Math.abs(currentZoom - fitZoom) < 0.006;
+      fitButton?.classList.toggle('is-active', isFit);
+      fitButton?.setAttribute('aria-pressed', String(isFit));
+    };
     const zoom = memoryPattern.createZoomController({
       root: $('#inspector'), viewport, sizer, canvas,
-      defaultZoom: 0.2, min: 0.14, max: 0.6, step: 0.05,
+      defaultZoom: 0.36, min: 0.16, max: 1.2, step: 0.08,
       pan: true, wheelZoom: false, centerTarget: '.pto-mem950__layout',
+      outButton: '[data-rms-zoom="out"]', inButton: '[data-rms-zoom="in"]', readout,
+      onZoom: ({ zoom: currentZoom }) => syncFitState(currentZoom),
     });
     const fit = () => {
       const graph = canvas.querySelector('.pto-mem950');
       if (!graph) return;
-      const widthScale = (viewport.clientWidth - 8) / Math.max(graph.scrollWidth, 1);
-      const heightScale = (viewport.clientHeight - 8) / Math.max(graph.scrollHeight, 1);
-      zoom?.setZoom(Math.max(0.14, Math.min(0.6, widthScale, heightScale)));
+      const widthScale = (viewport.clientWidth - 16) / Math.max(graph.scrollWidth, 1);
+      const heightScale = (viewport.clientHeight - 16) / Math.max(graph.scrollHeight, 1);
+      fitZoom = Math.max(0.16, Math.min(1.05, widthScale, heightScale));
+      zoom?.setZoom(fitZoom);
       zoom?.center();
       routes?.render();
+      syncFitState(zoom?.getZoom() || fitZoom);
     };
     const activateStep = (stepId, { scroll = false } = {}) => {
       const step = steps.find((item) => item.id === stepId);
@@ -705,6 +717,7 @@ def mm(
       const button = event.target.closest('[data-rms-flow-step]');
       if (button) activateStep(button.dataset.rmsFlowStep, { scroll: true });
     };
+    fitButton?.addEventListener('click', fit);
     host?.addEventListener('click', onStepClick);
     const fitObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null;
     fitObserver?.observe(viewport);
@@ -713,6 +726,7 @@ def mm(
     rmsNormHardwareGraphInstance = {
       activateStep,
       destroy() {
+        fitButton?.removeEventListener('click', fit);
         host?.removeEventListener('click', onStepClick);
         fitObserver?.disconnect();
         routes?.destroy?.();

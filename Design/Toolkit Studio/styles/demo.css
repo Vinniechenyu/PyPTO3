@@ -303,8 +303,13 @@ button { color: inherit; }
 .kf-rms-hardware > header b, .kf-rms-hardware > header span { display: block; }
 .kf-rms-hardware > header b { color: var(--foreground); font-size: var(--kf-font-sm); }
 .kf-rms-hardware > header span { margin-top: 2px; color: var(--foreground-muted); font-size: var(--kf-font-micro); }
-.kf-rms-hardware > header em { color: var(--primary); font: var(--kf-font-micro) var(--font-mono); font-style: normal; white-space: nowrap; }
-.kf-rms-hardware__viewport { height: 226px; border-block: 1px solid var(--border-subtle); background: radial-gradient(circle, color-mix(in srgb, var(--foreground) 11%, transparent) 1px, transparent 1.5px); background-size: 20px 20px; }
+.kf-rms-hardware__tools { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 3px; }
+.kf-rms-hardware__tools button { min-width: 26px; min-height: 25px; padding: 0 7px; border: 1px solid transparent; border-radius: 6px; color: var(--foreground-muted); background: transparent; cursor: pointer; font-size: var(--kf-font-micro); }
+.kf-rms-hardware__tools button:hover, .kf-rms-hardware__tools button:focus-visible { color: var(--foreground); background: var(--surface-3); outline: none; }
+.kf-rms-hardware__tools button.is-active { border-color: var(--border-strong); color: var(--foreground); background: var(--surface-3); }
+.kf-rms-hardware__tools button:disabled { opacity: .38; cursor: default; }
+.kf-rms-hardware__tools [data-rms-zoom-readout] { min-width: 35px; color: var(--foreground-secondary); font: var(--kf-font-micro) var(--font-mono); text-align: center; }
+.kf-rms-hardware__viewport { height: clamp(300px, 34vw, 360px); border-block: 1px solid var(--border-subtle); background: radial-gradient(circle, color-mix(in srgb, var(--foreground) 11%, transparent) 1px, transparent 1.5px); background-size: 20px 20px; }
 .kf-rms-hardware__steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; padding: 8px; }
 .kf-rms-hardware__steps button { min-width: 0; display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 6px; padding: 7px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); color: var(--foreground-secondary); background: color-mix(in srgb, var(--surface-2) 54%, transparent); text-align: left; cursor: pointer; }
 .kf-rms-hardware__steps button:hover { border-color: var(--border-strong); background: var(--surface-2); }
