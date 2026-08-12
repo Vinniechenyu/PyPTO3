@@ -9,7 +9,7 @@
   ];
   const passes = ['Semantic Lowering', 'Layout Planning', 'Parallel Mapping', 'Memory Scheduling', 'ISA Emission'];
   const guards = ['Op legality', 'Dependencies', 'Manual scope', 'Liveness', 'Paged layout', 'Index width', 'ISA capacity', 'FP32 carry'];
-  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape', passesGraphMode: 'single', rmsNormFunction: 'input', rmsNormTab: 'overview', sourceCache: {} };
+  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape', passesGraphMode: 'single', rmsNormFunction: 'input', rmsNormTab: 'overview', rmsNormFlowStep: 'load', sourceCache: {} };
   const EXPLORER_STEP = 1;
   const WORKFLOW_STEPS = [0, 2, 3, 4];
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -79,6 +79,53 @@ def mm(
       'core:AIC': { title: 'AIC', body: '完成 Mat、Left、Right、Acc 层级中的矩阵乘与累加。' },
     },
   };
+  const rmsNormHardwarePreset = {
+    id: 'rmsnorm-aiv-ddr',
+    name: 'RMSNorm Ascend AIV Data Path',
+    rails: [{
+      key: 'DDR',
+      label: 'DDR / GM',
+      tone: 'memory-shell',
+      grid: { rows: 24, cols: 4, cellSize: 12, gap: 4, shape: 'hex' },
+    }],
+    cores: [{
+      id: 'rmsnorm-aiv-core',
+      kind: 'aiv',
+      title: 'AIV',
+      presetKey: 'aivOfficialV1',
+    }],
+    routes: [
+      {
+        id: 'rmsnorm-load',
+        label: 'MTE2 · load',
+        tone: 'transport',
+        from: '[data-mem950-node="rail:DDR"]',
+        to: '#rmsnorm-aiv-core [data-aiv-node="cache:ND-DMA Cache"]',
+        fromSide: 'right',
+        toSide: 'left',
+        style: 'lane-h-target',
+        labelDy: -17,
+      },
+      {
+        id: 'rmsnorm-store',
+        label: 'MTE3 · store',
+        tone: 'directReturn',
+        from: '#rmsnorm-aiv-core [data-aiv-node="buffer:UB"]',
+        to: '[data-mem950-node="rail:DDR"]',
+        fromSide: 'left',
+        toSide: 'right',
+        style: 'lane-h-source',
+        labelDy: 17,
+      },
+    ],
+    hoverTips: {
+      'rail:DDR': { title: 'DDR / GM', body: '承载输入、Gamma 与 BF16 输出；两遍 RMSNorm 会重复读取输入。' },
+      'core:AIV': { title: 'AIV', body: 'RMSNorm 的 cast、逐元素计算、行归约与归一化在 Vector 路径完成。' },
+      'cache:ND-DMA Cache': { title: 'ND-DMA Cache', body: 'MTE2 从 GM 搬入当前 Chunk，进入 UB 前经过片上搬运路径。' },
+      'buffer:UB': { title: 'Unified Buffer', body: '保存当前输入 Chunk、FP32 部分和、Gamma 与待写回输出。' },
+      'vector:Vector': { title: 'Vector', body: '执行 cast、square、row_sum、sqrt、recip 与 expand_mul。' },
+    },
+  };
   const matmulLineFlows = {
     1: { label: 'JIT in-core：算子将在 AIC 内执行', selectors: ['#matmul-aic-core'] },
     2: { label: 'mm 契约：DDR 张量进入 AIC 计算', selectors: ['[data-mem950-node="rail:DDR"]', '#matmul-aic-core'], routes: ['matmul-load-a'] },
@@ -95,6 +142,7 @@ def mm(
     13: { label: 'return out：结果驻留 DDR', selectors: ['[data-mem950-node="rail:DDR"]'] },
   };
   let matmulHardwareGraphInstance = null;
+  let rmsNormHardwareGraphInstance = null;
   let passesGraphInstance = null;
 
   // Minimal Python syntax highlighter — stateful across lines so triple-quoted
@@ -554,6 +602,20 @@ def mm(
       upstream: 'out_projection_residual', downstream: 'mlp_block', note: '残差流已经是 FP32，因此两遍扫描都不需要输入 cast；只在 assemble 前转为 BF16。'
     }
   };
+  const rmsNormExecutionSteps = {
+    input: [
+      { id: 'load', index: '01', title: '载入并升精度', detail: 'DDR · BF16 → UB · FP32', lines: [38, 49, 50], selectors: ['[data-mem950-node="rail:DDR"]', '#rmsnorm-aiv-core [data-aiv-node="cache:ND-DMA Cache"]', '#rmsnorm-aiv-core [data-aiv-node="buffer:UB"]'], routes: ['rmsnorm-load'] },
+      { id: 'reduce', index: '02', title: '平方与行归约', detail: 'Vector · FP32 accumulate', lines: [39, 40, 41, 42], selectors: ['#rmsnorm-aiv-core [data-aiv-node="buffer:UB"]', '#rmsnorm-aiv-core [data-aiv-node="vector:Vector"]'] },
+      { id: 'normalize', index: '03', title: '计算 inv_rms 并归一化', detail: 'Vector · FP32', lines: [44, 45, 51], selectors: ['#rmsnorm-aiv-core [data-aiv-node="buffer:UB"]', '#rmsnorm-aiv-core [data-aiv-node="vector:Vector"]'] },
+      { id: 'store', index: '04', title: '降精度并写回', detail: 'UB · BF16 → DDR', lines: [52], selectors: ['#rmsnorm-aiv-core [data-aiv-node="buffer:UB"]', '[data-mem950-node="rail:DDR"]'], routes: ['rmsnorm-store'] },
+    ],
+    post: [
+      { id: 'load', index: '01', title: '载入残差与 Gamma', detail: 'DDR · FP32 → UB · FP32', lines: [74, 85, 86], selectors: ['[data-mem950-node="rail:DDR"]', '#rmsnorm-aiv-core [data-aiv-node="cache:ND-DMA Cache"]', '#rmsnorm-aiv-core [data-aiv-node="buffer:UB"]'], routes: ['rmsnorm-load'] },
+      { id: 'reduce', index: '02', title: '平方与行归约', detail: 'Vector · FP32 accumulate', lines: [75, 76, 77, 78], selectors: ['#rmsnorm-aiv-core [data-aiv-node="buffer:UB"]', '#rmsnorm-aiv-core [data-aiv-node="vector:Vector"]'] },
+      { id: 'normalize', index: '03', title: '计算 inv_rms 并归一化', detail: 'Vector · FP32', lines: [80, 81, 87], selectors: ['#rmsnorm-aiv-core [data-aiv-node="buffer:UB"]', '#rmsnorm-aiv-core [data-aiv-node="vector:Vector"]'] },
+      { id: 'store', index: '04', title: '降精度并写回', detail: 'UB · BF16 → DDR', lines: [88], selectors: ['#rmsnorm-aiv-core [data-aiv-node="buffer:UB"]', '[data-mem950-node="rail:DDR"]'], routes: ['rmsnorm-store'] },
+    ],
+  };
 
   function rmsNormOverview(profile) {
     return `
@@ -565,10 +627,17 @@ def mm(
 
   function rmsNormPrecision(profile) {
     const firstCast = profile.id === 'input' ? '<span>BF16 chunk</span><i>cast</i><span>FP32 [16,512]</span>' : '<span>FP32 chunk</span><i>直接计算</i><span>FP32 [16,128]</span>';
+    const steps = rmsNormExecutionSteps[profile.id];
     return `
       <section class="kf-inspector-section kf-rms-precision"><header><h2 class="kf-inspector-title">精度流</h2><span>源码事实</span></header><div class="kf-rms-precision-flow">${firstCast}<i>square + row_sum</i><span>FP32 [1,16]</span><i>recip(sqrt)</i><span>FP32 inv_rms</span><i>× gamma · cast</i><span>BF16 output</span></div></section>
+      <section class="kf-rms-hardware" aria-labelledby="rmsNormHardwareTitle">
+        <header><div><b id="rmsNormHardwareTitle">昇腾执行路径</b><span>源码语义映射 · Ascend AIV</span></div><em>DDR → UB ⇄ Vector → DDR</em></header>
+        <div class="pto-memory-architecture-viewport kf-rms-hardware__viewport" id="rmsNormHardwareViewport" data-pto-mem-arch-viewport><div class="pto-memory-architecture-sizer" id="rmsNormHardwareSizer" data-pto-mem-arch-sizer><div class="pto-memory-architecture-canvas" id="rmsNormHardwareGraph" data-pto-mem-arch-canvas></div></div></div>
+        <div class="kf-rms-hardware__steps" role="list" aria-label="RMSNorm 执行阶段">${steps.map((step) => `<button type="button" role="listitem" data-rms-flow-step="${step.id}"><i>${step.index}</i><span><b>${step.title}</b><small>${step.detail}</small></span></button>`).join('')}</div>
+        <footer id="rmsNormFlowStatus"><span><i></i>点击阶段查看数据路径与对应源码</span></footer>
+      </section>
       <section class="kf-inspector-section kf-intent-detail"><header><h2>逻辑工作集</h2><span>EST. · 静态 shape</span></header><dl><div><dt>单个计算 Chunk</dt><dd>${profile.chunkBytes} · FP32</dd></div><div><dt>完整输入</dt><dd>${profile.inputBytes} · ${profile.sourceType}</dd></div><div><dt>Gamma</dt><dd>32 KiB · FP32</dd></div><div><dt>输出</dt><dd>256 KiB · BF16</dd></div><div><dt>两遍输入读取</dt><dd>${profile.scanBytes}</dd></div></dl></section>
-      <div class="kf-inspector-card kf-rms-estimate"><b>估算边界</b><p>逻辑字节数由 shape × dtype 推导，不包含 Tile 对齐、临时缓冲、MemoryReuse 与后端地址分配。真实片上占用需读取 AllocateMemoryAddr 后 IR。</p></div>`;
+      <div class="kf-inspector-card kf-rms-estimate"><b>可信边界</b><p>硬件路径由源码算子语义静态映射，用于解释数据流转，不代表实际指令时序；逻辑字节数不包含 Tile 对齐、临时缓冲与后端地址分配。真实片上占用和搬运指令需读取 Pass 后 IR。</p></div>`;
   }
 
   function rmsNormTiling(profile) {
@@ -587,7 +656,76 @@ def mm(
       <button class="kf-rms-action" type="button" data-rms-action="golden">＋ 生成当前 Kernel 数值测试</button>`;
   }
 
+  function renderRmsNormHardwareGraph(profile) {
+    const memoryPattern = window.PtoMemoryArchitecturePattern;
+    const canvas = $('#rmsNormHardwareGraph');
+    const viewport = $('#rmsNormHardwareViewport');
+    const sizer = $('#rmsNormHardwareSizer');
+    const host = $('.kf-rms-hardware');
+    const status = $('#rmsNormFlowStatus');
+    const steps = rmsNormExecutionSteps[profile.id] || [];
+    if (!memoryPattern || !canvas || !viewport || !sizer) return;
+
+    memoryPattern.renderArchitecture(canvas, rmsNormHardwarePreset);
+    memoryPattern.setBufferBlocks?.(canvas, [
+      { core: 'rmsnorm-aiv-core', buffer: 'UB', label: `${profile.source} · ${profile.sourceType}`, state: 'enqueued', tone: 'input', cellRange: [0, 23], sourceTile: `${profile.source}[:, k0:k0+${profile.chunk}]` },
+      { core: 'rmsnorm-aiv-core', buffer: 'UB', label: 'partial_sq · FP32', state: 'accumulating', tone: 'accumulator', cellRange: [26, 35], sourceTile: '[1, 16]' },
+      { core: 'rmsnorm-aiv-core', buffer: 'UB', label: 'output · BF16', state: 'committed', tone: 'output', cellRange: [40, 55], sourceTile: `${profile.output}[:, k0:k0+${profile.chunk}]` },
+    ]);
+    const routes = memoryPattern.createRouteOverlay(canvas, rmsNormHardwarePreset);
+    const hover = memoryPattern.attachHoverInteractions(canvas, rmsNormHardwarePreset, {
+      selector: '[data-mem950-node="rail:DDR"], #rmsnorm-aiv-core, #rmsnorm-aiv-core [data-aiv-node]',
+    });
+    const zoom = memoryPattern.createZoomController({
+      root: $('#inspector'), viewport, sizer, canvas,
+      defaultZoom: 0.2, min: 0.14, max: 0.6, step: 0.05,
+      pan: true, wheelZoom: false, centerTarget: '.pto-mem950__layout',
+    });
+    const fit = () => {
+      const graph = canvas.querySelector('.pto-mem950');
+      if (!graph) return;
+      const widthScale = (viewport.clientWidth - 8) / Math.max(graph.scrollWidth, 1);
+      const heightScale = (viewport.clientHeight - 8) / Math.max(graph.scrollHeight, 1);
+      zoom?.setZoom(Math.max(0.14, Math.min(0.6, widthScale, heightScale)));
+      zoom?.center();
+      routes?.render();
+    };
+    const activateStep = (stepId, { scroll = false } = {}) => {
+      const step = steps.find((item) => item.id === stepId);
+      if (!step) return;
+      state.rmsNormFlowStep = step.id;
+      memoryPattern.setPathFocus(canvas, rmsNormHardwarePreset, step);
+      host?.classList.add('is-code-flowing');
+      $$('[data-rms-flow-step]', host).forEach((button) => button.classList.toggle('is-active', button.dataset.rmsFlowStep === step.id));
+      $$('#dslEditor [data-rms-line]').forEach((row) => row.classList.toggle('is-rms-execution-line', step.lines.includes(Number(row.dataset.rmsLine))));
+      if (status) status.innerHTML = `<span><i></i>${step.title} · 源码第 ${step.lines.join('、')} 行</span>`;
+      if (scroll) $(`#dslEditor [data-rms-line="${step.lines[0]}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    };
+    const onStepClick = (event) => {
+      const button = event.target.closest('[data-rms-flow-step]');
+      if (button) activateStep(button.dataset.rmsFlowStep, { scroll: true });
+    };
+    host?.addEventListener('click', onStepClick);
+    const fitObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null;
+    fitObserver?.observe(viewport);
+    requestAnimationFrame(() => { fit(); activateStep(state.rmsNormFlowStep); });
+
+    rmsNormHardwareGraphInstance = {
+      activateStep,
+      destroy() {
+        host?.removeEventListener('click', onStepClick);
+        fitObserver?.disconnect();
+        routes?.destroy?.();
+        hover?.destroy?.();
+        zoom?.destroy?.();
+        $$('#dslEditor [data-rms-line]').forEach((row) => row.classList.remove('is-rms-execution-line'));
+      },
+    };
+  }
+
   function renderRmsNormInspector({ scrollToFunction = false } = {}) {
+    rmsNormHardwareGraphInstance?.destroy?.();
+    rmsNormHardwareGraphInstance = null;
     const profile = rmsNormProfiles[state.rmsNormFunction] || rmsNormProfiles.input;
     const tabLabels = { overview: '概览', precision: '数据与精度', tiling: '分块流水', validation: '验证' };
     const content = state.rmsNormTab === 'precision' ? rmsNormPrecision(profile) : state.rmsNormTab === 'tiling' ? rmsNormTiling(profile) : state.rmsNormTab === 'validation' ? rmsNormValidation() : rmsNormOverview(profile);
@@ -600,11 +738,14 @@ def mm(
       <footer class="kf-rms-provenance"><span><i class="fact"></i>源码事实</span><span><i class="resolved"></i>跨文件解析</span><span><i class="estimated"></i>静态估算</span></footer>`;
     $$('#dslEditor [data-rms-function]').forEach(row => row.classList.toggle('is-rms-function-active', row.dataset.rmsFunction === profile.id));
     if (scrollToFunction) $(`#dslEditor [data-rms-line="${profile.line}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (state.rmsNormTab === 'precision') renderRmsNormHardwareGraph(profile);
   }
 
   function renderIntentInspector() {
     matmulHardwareGraphInstance?.destroy?.();
     matmulHardwareGraphInstance = null;
+    rmsNormHardwareGraphInstance?.destroy?.();
+    rmsNormHardwareGraphInstance = null;
     passesGraphInstance?.destroy?.();
     passesGraphInstance = null;
     if (isPassesDumpFile(state.activeFile)) {
@@ -1255,6 +1396,7 @@ def mm(
         if (filePath === RMSNORM_FILE) {
           state.rmsNormFunction = 'input';
           state.rmsNormTab = 'overview';
+          state.rmsNormFlowStep = 'load';
         }
         state.hardwareFlowLine = 0;
         state.hardwareFlowPinned = false;
@@ -1281,6 +1423,7 @@ def mm(
     const rmsFunction = event.target.closest('.kf-rms-function-switch [data-rms-function]');
     if (rmsFunction) {
       state.rmsNormFunction = rmsFunction.dataset.rmsFunction;
+      state.rmsNormFlowStep = 'load';
       renderRmsNormInspector({ scrollToFunction: true });
     }
     const rmsTab = event.target.closest('[data-rms-tab]');
@@ -1291,6 +1434,9 @@ def mm(
     const rmsLine = event.target.closest('#dslEditor [data-rms-line]');
     if (rmsLine && state.activeFile === RMSNORM_FILE) {
       state.rmsNormFunction = rmsLine.dataset.rmsFunction;
+      const sourceLine = Number(rmsLine.dataset.rmsLine);
+      const matchingStep = (rmsNormExecutionSteps[state.rmsNormFunction] || []).find((item) => item.lines.includes(sourceLine));
+      if (matchingStep) state.rmsNormFlowStep = matchingStep.id;
       renderRmsNormInspector();
     }
     if (event.target.closest('[data-rms-action="golden"]')) toast('已生成测试草案：Qwen3 shape · Torch golden · BF16 输出容差');
