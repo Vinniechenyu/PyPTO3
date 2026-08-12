@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="PyPTO 算子 Coding Agent 协作式代码工作台原型">
+  <title>算子 Coding Agent · PyPTO Studio</title>
+  <link rel="stylesheet" href="../../vendor/pto-design-system/tokens/foundation.css">
+  <link rel="stylesheet" href="../../vendor/pto-design-system/tokens/semantic.css">
+  <link rel="stylesheet" href="../../vendor/pto-design-system/tokens/components.css">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090b0f;
+      --surface-0: #0d1015;
+      --surface-1: #11141a;
+      --surface-2: #171b23;
+      --surface-3: #1d222c;
+      --line: rgba(255,255,255,.075);
+      --line-strong: rgba(255,255,255,.14);
+      --text: #edf0f5;
+      --text-2: #b0b7c3;
+      --muted: #747c8b;
+      --blue: #5d85ff;
+      --blue-soft: rgba(93,133,255,.13);
+      --green: #3fd39c;
+      --green-soft: rgba(63,211,156,.10);
+      --amber: #e6a94d;
+      --amber-soft: rgba(230,169,77,.10);
+      --red: #ed6a7c;
+      --mono: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+      --sans: Inter, "SF Pro Text", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; min-width: 1080px; height: 100%; margin: 0; overflow: hidden; }
+    body { color: var(--text); background: var(--bg); font-family: var(--sans); font-size: 13px; -webkit-font-smoothing: antialiased; }
+    button, input, textarea { color: inherit; font: inherit; }
+    button { border: 0; cursor: pointer; }
+    code { font-family: var(--mono); }
+    ::selection { color: white; background: rgba(93,133,255,.42); }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 9px; background: rgba(255,255,255,.15); background-clip: padding-box; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    .app { display: grid; height: 100vh; grid-template-rows: 50px minmax(0, 1fr) 24px; }
+    .topbar { display: flex; min-width: 0; align-items: center; gap: 14px; padding: 0 15px; border-bottom: 1px solid var(--line); background: #0c0f14; }
+    .brand { display: flex; min-width: 194px; align-items: center; gap: 9px; font-weight: 720; }
+    .brand-mark { display: grid; width: 25px; height: 25px; place-items: center; border: 1px solid var(--line-strong); border-radius: 6px; color: var(--blue); font: 800 10px var(--mono); }
+    .agent-badge { padding: 4px 8px; border: 1px solid rgba(93,133,255,.18); border-radius: 5px; color: #9db3ff; background: var(--blue-soft); font-size: 10px; font-weight: 650; }
+    .task-title { min-width: 0; overflow: hidden; color: var(--text-2); text-overflow: ellipsis; white-space: nowrap; }
+    .task-title b { color: var(--text); font-weight: 620; }
+    .top-spacer { flex: 1; }
+    .branch, .target { display: flex; align-items: center; gap: 7px; color: var(--muted); font: 11px var(--mono); white-space: nowrap; }
+    .branch::before { width: 6px; height: 6px; border-radius: 50%; background: var(--green); content: ""; }
+    .target { padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-1); }
+    .avatar { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; color: white; background: #315bc7; font-size: 10px; font-weight: 750; }
+
+    .workspace { display: grid; min-height: 0; grid-template-columns: 242px minmax(520px, 1fr) 326px; }
+    .rail, .inspector, .editor { min-height: 0; background: var(--surface-0); }
+    .rail { display: flex; min-width: 0; flex-direction: column; border-right: 1px solid var(--line); }
+    .inspector { display: flex; min-width: 0; flex-direction: column; border-left: 1px solid var(--line); }
+    .panel-head { display: flex; min-height: 42px; align-items: center; padding: 0 13px; border-bottom: 1px solid var(--line); }
+    .panel-head strong { font-size: 11px; font-weight: 680; letter-spacing: .08em; text-transform: uppercase; }
+    .panel-head span { margin-left: auto; color: var(--muted); font: 10px var(--mono); }
+    .search { margin: 10px 10px 7px; }
+    .search input { width: 100%; height: 31px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; outline: 0; color: var(--text-2); background: var(--surface-1); font-size: 11px; }
+    .search input:focus { border-color: rgba(93,133,255,.55); box-shadow: 0 0 0 2px rgba(93,133,255,.08); }
+    .file-tree { min-height: 0; flex: 1; overflow: auto; padding: 4px 7px 12px; }
+    .tree-label { padding: 9px 7px 5px; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+    .folder { display: flex; align-items: center; gap: 6px; padding: 6px 8px; color: var(--text-2); font-size: 11px; }
+    .folder::before { color: var(--muted); content: "▾"; }
+    .file { display: grid; width: 100%; grid-template-columns: 1fr auto; align-items: center; gap: 7px; padding: 7px 8px 7px 24px; border-radius: 5px; color: var(--muted); background: transparent; text-align: left; }
+    .file:hover { color: var(--text-2); background: rgba(255,255,255,.035); }
+    .file.is-active { color: var(--text); background: var(--blue-soft); }
+    .file-name { overflow: hidden; font: 11px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+    .file-state { color: var(--amber); font: 9px var(--mono); }
+    .file.is-applied .file-state { color: var(--green); }
+    .brief { margin: 0 9px 9px; padding: 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-1); }
+    .brief-kicker { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .brief h2 { margin: 7px 0 5px; font-size: 12px; font-weight: 650; }
+    .brief p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
+    .brief-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+    .brief-tags span { padding: 3px 6px; border-radius: 4px; color: var(--text-2); background: var(--surface-3); font: 9px var(--mono); }
+
+    .editor { display: grid; min-width: 0; grid-template-rows: 42px minmax(0, 1fr) 228px; background: #0b0e13; }
+    .tabs { display: flex; min-width: 0; align-items: stretch; border-bottom: 1px solid var(--line); background: var(--surface-0); }
+    .editor-tab { display: flex; min-width: 160px; max-width: 230px; align-items: center; gap: 8px; padding: 0 14px; border-right: 1px solid var(--line); color: var(--muted); background: transparent; font: 11px var(--mono); }
+    .editor-tab.is-active { color: var(--text); background: #0b0e13; box-shadow: inset 0 1px var(--blue); }
+    .tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+    .editor-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; padding: 0 8px; }
+    .ghost-btn { padding: 6px 9px; border-radius: 5px; color: var(--muted); background: transparent; font-size: 10px; }
+    .ghost-btn:hover, .ghost-btn.is-active { color: var(--text-2); background: var(--surface-2); }
+
+    .code-area { position: relative; min-height: 0; overflow: auto; background: #0b0e13; }
+    .code-banner { position: sticky; z-index: 3; top: 0; display: flex; min-height: 34px; align-items: center; padding: 0 15px; border-bottom: 1px solid var(--line); color: var(--muted); background: rgba(13,16,21,.96); backdrop-filter: blur(10px); font: 10px var(--mono); }
+    .code-banner b { color: var(--text-2); font-weight: 550; }
+    .change-summary { margin-left: auto; color: var(--green); }
+    .code { min-width: 760px; padding: 11px 0 22px; font: 12px/1.72 var(--mono); }
+    .line { display: grid; min-height: 21px; grid-template-columns: 46px 20px 1fr; padding-right: 18px; white-space: pre; }
+    .line:hover { background: rgba(255,255,255,.025); }
+    .line-no { padding-right: 10px; color: #4f5664; text-align: right; user-select: none; }
+    .sign { color: #4f5664; text-align: center; user-select: none; }
+    .line.add { background: rgba(63,211,156,.065); }
+    .line.add .sign { color: var(--green); }
+    .line.remove { background: rgba(237,106,124,.065); }
+    .line.remove .sign { color: var(--red); }
+    .line.focus { box-shadow: inset 2px 0 var(--blue); background: rgba(93,133,255,.07); }
+    .kw { color: #c89aea; } .fn { color: #e2c574; } .type { color: #66c8ae; }
+    .str { color: #cf9d6c; } .dec { color: #83a8ff; } .com { color: #6c7482; font-style: italic; }
+    .num { color: #94cc82; } .self { color: #dd7fa7; }
+
+    .agent-dock { display: grid; min-height: 0; grid-template-rows: 35px minmax(0, 1fr) 55px; border-top: 1px solid var(--line); background: var(--surface-0); }
+    .dock-head { display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); }
+    .agent-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 10px rgba(93,133,255,.65); }
+    .dock-head strong { font-size: 11px; font-weight: 630; }
+    .dock-head span { color: var(--muted); font-size: 10px; }
+    .dock-controls { display: flex; gap: 3px; margin-left: auto; }
+    .conversation { min-height: 0; overflow: auto; padding: 10px 14px; }
+    .message { display: grid; grid-template-columns: 22px 1fr; gap: 9px; margin-bottom: 10px; }
+    .message-mark { display: grid; width: 21px; height: 21px; place-items: center; border-radius: 5px; color: #b8c7ff; background: var(--blue-soft); font: 700 9px var(--mono); }
+    .message.user .message-mark { color: var(--text-2); background: var(--surface-3); }
+    .message-body { color: var(--text-2); font-size: 11px; line-height: 1.55; }
+    .message-body b { color: var(--text); font-weight: 620; }
+    .inline-evidence { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+    .inline-evidence button { padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); background: var(--surface-1); font: 9px var(--mono); }
+    .composer { display: flex; align-items: center; gap: 8px; padding: 8px 11px; border-top: 1px solid var(--line); }
+    .composer input { min-width: 0; height: 36px; flex: 1; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; outline: 0; color: var(--text-2); background: #0b0e13; font-size: 11px; }
+    .composer input:focus { border-color: rgba(93,133,255,.55); }
+    .send { height: 34px; padding: 0 13px; border-radius: 6px; color: white; background: #426de0; font-size: 10px; font-weight: 650; }
+    .send:hover { background: #507af0; }
+
+    .inspector-tabs { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
+    .inspector-tabs button { min-height: 37px; color: var(--muted); background: transparent; font-size: 10px; }
+    .inspector-tabs button.is-active { color: var(--text); box-shadow: inset 0 -1px var(--blue); }
+    .inspector-body { min-height: 0; flex: 1; overflow: auto; padding: 13px; }
+    .inspector-view { display: none; }
+    .inspector-view.is-active { display: block; }
+    .section { margin-bottom: 19px; }
+    .section-title { display: flex; align-items: center; margin: 0 0 9px; color: var(--muted); font-size: 9px; font-weight: 720; letter-spacing: .09em; text-transform: uppercase; }
+    .section-title span { margin-left: auto; color: var(--text-2); font: 9px var(--mono); letter-spacing: 0; text-transform: none; }
+    .contract { overflow: hidden; border: 1px solid var(--line); border-radius: 7px; }
+    .contract-row { display: grid; grid-template-columns: 78px 1fr; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 10px; }
+    .contract-row:last-child { border-bottom: 0; }
+    .contract-row dt { color: var(--muted); }
+    .contract-row dd { margin: 0; color: var(--text-2); font-family: var(--mono); text-align: right; }
+    .impact-list, .check-list { display: grid; gap: 2px; }
+    .impact { display: grid; grid-template-columns: 1fr auto; gap: 9px; padding: 8px 9px; border-radius: 5px; color: var(--text-2); background: rgba(255,255,255,.018); font-size: 10px; }
+    .impact code { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+    .impact em { color: var(--green); font-style: normal; }
+    .check { display: grid; grid-template-columns: 15px 1fr auto; align-items: center; gap: 7px; padding: 8px 7px; border-bottom: 1px solid rgba(255,255,255,.04); }
+    .check-status { display: grid; width: 14px; height: 14px; place-items: center; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--muted); font: 8px var(--mono); }
+    .check.pass .check-status { border-color: var(--green); color: var(--green); }
+    .check.warn .check-status { border-color: var(--amber); color: var(--amber); }
+    .check.run .check-status { border-color: var(--blue); border-top-color: transparent; animation: spin .75s linear infinite; }
+    .check b { display: block; color: var(--text-2); font-size: 10px; font-weight: 550; }
+    .check small { display: block; margin-top: 2px; color: var(--muted); font: 9px var(--mono); }
+    .check time { color: var(--muted); font: 9px var(--mono); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .warning { padding: 10px; border: 1px solid rgba(230,169,77,.24); border-radius: 7px; color: #d8b77e; background: var(--amber-soft); font-size: 10px; line-height: 1.55; }
+    .warning b { display: block; margin-bottom: 4px; color: var(--amber); }
+    .inspector-actions { display: grid; grid-template-columns: 1fr 1.25fr; gap: 7px; padding: 10px 12px; border-top: 1px solid var(--line); }
+    .secondary, .primary { min-height: 33px; border-radius: 6px; font-size: 10px; font-weight: 650; }
+    .secondary { border: 1px solid var(--line); color: var(--text-2); background: var(--surface-1); }
+    .primary { color: white; background: #426de0; }
+    .primary.is-done { color: #b8f2dc; background: rgba(63,211,156,.15); }
+
+    .test-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 14px; }
+    .metric { padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-1); }
+    .metric strong { display: block; font: 17px var(--mono); }
+    .metric span { color: var(--muted); font-size: 9px; }
+    .risk-item { padding: 9px 0; border-bottom: 1px solid var(--line); }
+    .risk-item b { display: block; color: var(--text-2); font-size: 10px; }
+    .risk-item p { margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+
+    .statusbar { display: flex; align-items: center; gap: 15px; padding: 0 10px; color: #8a94a4; background: #173e82; font: 9px var(--mono); }
+    .statusbar .right { margin-left: auto; }
+    .toast { position: fixed; z-index: 20; right: 18px; bottom: 38px; max-width: 330px; padding: 10px 13px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--text-2); background: #1b2029; box-shadow: 0 14px 50px rgba(0,0,0,.36); font-size: 10px; opacity: 0; transform: translateY(8px); transition: .18s ease; pointer-events: none; }
+    .toast.is-visible { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 1240px) {
+      .workspace { grid-template-columns: 210px minmax(510px, 1fr) 286px; }
+      .contract-row { grid-template-columns: 65px 1fr; }
+      .branch { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">P3</span><span>PyPTO Studio</span></div>
+      <span class="agent-badge">算子 Coding Agent</span>
+      <div class="task-title"><b>新增 tile.pow / tensor.pow 支持</b> · OP-1842</div>
+      <div class="top-spacer"></div>
+      <div class="branch">feat/operator-pow</div>
+      <div class="target">Ascend 950B</div>
+      <div class="avatar">WY</div>
+    </header>
+
+    <main class="workspace">
+      <aside class="rail" aria-label="工作集">
+        <div class="panel-head"><strong>工作集</strong><span>8 files</span></div>
+        <label class="search"><input id="fileSearch" type="search" placeholder="筛选文件"></label>
+        <div class="file-tree" id="fileTree">
+          <div class="tree-label">当前改动</div>
+          <div class="folder">python / pypto / language</div>
+          <button class="file is-active" data-file="ops"><span class="file-name">ops.py</span><span class="file-state">M</span></button>
+          <button class="file" data-file="infer"><span class="file-name">type_infer.py</span><span class="file-state">M</span></button>
+          <div class="folder">src / ir / transforms</div>
+          <button class="file" data-file="lowering"><span class="file-name">convert_tensor_to_tile_ops.cpp</span><span class="file-state">M</span></button>
+          <div class="folder">src / codegen</div>
+          <button class="file" data-file="pto"><span class="file-name">tile_ops.cpp</span><span class="file-state">M</span></button>
+          <button class="file" data-file="torch"><span class="file-name">torch_codegen.py</span><span class="file-state">M</span></button>
+          <div class="folder">tests / ut</div>
+          <button class="file" data-file="tests"><span class="file-name">test_pow.py</span><span class="file-state">A</span></button>
+          <div class="tree-label">Agent 参考</div>
+          <button class="file" data-file="reference"><span class="file-name">operation_reference.md</span><span class="file-state">R</span></button>
+          <button class="file" data-file="status"><span class="file-name">ptoas-op-status.md</span><span class="file-state">R</span></button>
+        </div>
+        <section class="brief">
+          <div class="brief-kicker">当前意图</div>
+          <h2>补齐逐元素幂运算</h2>
+          <p>支持 Tile × Tile 与 Tensor × Tensor。标量版本留给后续 `pows`，不改变现有统一分发规则。</p>
+          <div class="brief-tags"><span>FP16</span><span>BF16</span><span>FP32</span><span>2D Tile</span></div>
+        </section>
+      </aside>
+
+      <section class="editor" aria-label="代码与 Agent 对话">
+        <div class="tabs">
+          <button class="editor-tab is-active"><span class="tab-dot"></span><span id="activeTabName">ops.py</span></button>
+          <button class="editor-tab"><span>实现说明</span></button>
+          <div class="editor-actions">
+            <button class="ghost-btn is-active" data-mode="diff">改动</button>
+            <button class="ghost-btn" data-mode="full">完整文件</button>
+          </div>
+        </div>
+
+        <div class="code-area" id="codeArea">
+          <div class="code-banner">
+            <span><b id="codePath">python/pypto/language/ops.py</b> · Agent 提案</span>
+            <span class="change-summary" id="changeSummary">+18 −0</span>
+          </div>
+          <div class="code" id="code"></div>
+        </div>
+
+        <section class="agent-dock">
+          <header class="dock-head">
+            <span class="agent-pulse"></span><strong>Coding Agent</strong><span>已读取 DSL、相邻算子、CodeGen 与测试约定</span>
+            <div class="dock-controls"><button class="ghost-btn" id="clearChat">清空</button></div>
+          </header>
+          <div class="conversation" id="conversation">
+            <div class="message user"><span class="message-mark">你</span><div class="message-body">为 PTOAS 已有的 <code>pto.pow</code> 补齐 PyPTO 的 Tile 和 Tensor 两级支持，保持现有 API 风格。</div></div>
+            <div class="message"><span class="message-mark">AI</span><div class="message-body"><b>我建议把 `pow` 作为二元逐元素算子实现。</b> 当前能力矩阵显示 PTOAS 已支持，但 PyPTO 前端、下降与测试均缺失。我已生成 6 个文件的修改；没有把后端判断塞进 CodeGen。<div class="inline-evidence"><button data-jump="status">能力证据</button><button data-jump="lowering">查看下降</button><button id="explainRisk">解释风险</button></div></div></div>
+          </div>
+          <form class="composer" id="composer">
+            <input id="promptInput" autocomplete="off" placeholder="追问实现理由，或要求修改当前提案…">
+            <button class="send" type="submit">发送</button>
+          </form>
+        </section>
+      </section>
+
+      <aside class="inspector" aria-label="实现证据">
+        <div class="panel-head"><strong>实现上下文</strong><span id="contextState">READY</span></div>
+        <div class="inspector-tabs" id="inspectorTabs">
+          <button class="is-active" data-view="context">契约</button>
+          <button data-view="tests">检查</button>
+          <button data-view="risks">风险</button>
+        </div>
+        <div class="inspector-body">
+          <div class="inspector-view is-active" data-view-panel="context">
+            <section class="section">
+              <h3 class="section-title">语义契约 <span>已确认</span></h3>
+              <dl class="contract">
+                <div class="contract-row"><dt>API</dt><dd>pl.pow(lhs, rhs)</dd></div>
+                <div class="contract-row"><dt>输入</dt><dd>Tensor | Tile</dd></div>
+                <div class="contract-row"><dt>输出</dt><dd>same shape / dtype</dd></div>
+                <div class="contract-row"><dt>DType</dt><dd>FP16 · BF16 · FP32</dd></div>
+                <div class="contract-row"><dt>广播</dt><dd>不支持</dd></div>
+                <div class="contract-row"><dt>后端</dt><dd>A950 · A910B*</dd></div>
+              </dl>
+            </section>
+            <section class="section">
+              <h3 class="section-title">当前文件为何需要改 <span id="impactCount">6 files</span></h3>
+              <div class="impact-list" id="impactList"></div>
+            </section>
+            <div class="warning"><b>外部验证边界</b>Ascend910B 的 PTOAS 指令接口已存在，但状态矩阵没有真机 ST 证据。Agent 可以完成实现与模拟验证，不能替代设备结论。</div>
+          </div>
+
+          <div class="inspector-view" data-view-panel="tests">
+            <div class="test-summary"><div class="metric"><strong id="passCount">4</strong><span>已通过</span></div><div class="metric"><strong id="pendingCount">2</strong><span>待确认</span></div></div>
+            <section class="section"><h3 class="section-title">验证证据 <span>当前分支</span></h3><div class="check-list" id="checkList"></div></section>
+          </div>
+
+          <div class="inspector-view" data-view-panel="risks">
+            <section class="section"><h3 class="section-title">已识别风险 <span>3</span></h3>
+              <div class="risk-item"><b>标量重载没有混入本次范围</b><p>`pows` 需要单独 PTO 映射与签名，避免用隐式广播掩盖能力差异。</p></div>
+              <div class="risk-item"><b>动态 shape 暂不作为首批验收项</b><p>Tile 路径要求两个输入 shape 一致；动态维度由现有 Tensor lowering 契约约束。</p></div>
+              <div class="risk-item"><b>A910B 需要真机确认</b><p>文档只证明 PTOAS 接口存在，未证明该 dtype 组合已通过系统测试。</p></div>
+            </section>
+          </div>
+        </div>
+        <div class="inspector-actions">
+          <button class="secondary" id="runTests">运行相关检查</button>
+          <button class="primary" id="applyPatch">接受当前文件</button>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="statusbar"><span>main*</span><span>Python 3.11</span><span>Ascend950</span><span class="right" id="statusText">Agent 上下文已建立 · 8 sources</span><span>Ln 94, Col 1</span></footer>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const files = {
+      ops: {
+        name: "ops.py", path: "python/pypto/language/ops.py", summary: "+18 −0",
+        impact: ["公开 Tile / Tensor 统一入口", "注册 tile.pow 与 tensor.pow"],
+        lines: [
+          [86," ",`<span class="kw">def</span> <span class="fn">maximum</span>(lhs: T, rhs: T) -> T:`],
+          [87," ",`    <span class="str">\"\"\"Element-wise maximum.\"\"\"</span>`],
+          [88," ",`    <span class="kw">return</span> _dispatch_binary(<span class="str">\"maximum\"</span>, lhs, rhs)`],
+          [89," ",``],
+          [90,"+",`<span class="kw">def</span> <span class="fn">pow</span>(lhs: T, rhs: T) -> T:`],
+          [91,"+",`    <span class="str">\"\"\"Compute element-wise ``lhs ** rhs``.\"\"\"</span>`],
+          [92,"+",`    <span class="kw">return</span> _dispatch_binary(<span class="str">\"pow\"</span>, lhs, rhs)`],
+          [93,"+",``],
+          [94,"+",`@register_op(<span class="str">\"tile.pow\"</span>)`],
+          [95,"+",`<span class="kw">def</span> <span class="fn">tile_pow</span>(lhs: <span class="type">Tile</span>, rhs: <span class="type">Tile</span>) -> <span class="type">Tile</span>:`],
+          [96,"+",`    _require_same_shape_dtype(lhs, rhs)`],
+          [97,"+",`    <span class="kw">return</span> call(<span class="str">\"tile.pow\"</span>, lhs, rhs)`],
+          [98,"+",``],
+          [99,"+",`@register_op(<span class="str">\"tensor.pow\"</span>)`],
+          [100,"+",`<span class="kw">def</span> <span class="fn">tensor_pow</span>(lhs: <span class="type">Tensor</span>, rhs: <span class="type">Tensor</span>) -> <span class="type">Tensor</span>:`],
+          [101,"+",`    _require_same_shape_dtype(lhs, rhs)`],
+          [102,"+",`    <span class="kw">return</span> call(<span class="str">\"tensor.pow\"</span>, lhs, rhs)`],
+          [103," ",``],
+          [104," ",`<span class="kw">def</span> <span class="fn">exp</span>(input: T) -> T:`]
+        ]
+      },
+      infer: {
+        name: "type_infer.py", path: "python/pypto/language/type_infer.py", summary: "+5 −0",
+        impact: ["复用同形同 dtype 推导", "非法输入在前端暴露"],
+        lines: [
+          [211," ",`BINARY_SAME_TYPE_OPS = {`],[212," ",`    <span class="str">\"add\"</span>, <span class="str">\"sub\"</span>, <span class="str">\"mul\"</span>, <span class="str">\"div\"</span>,`],
+          [213,"+",`    <span class="str">\"pow\"</span>,`],[214," ",`    <span class="str">\"maximum\"</span>, <span class="str">\"minimum\"</span>,`],[215," ",`}`],
+          [216," ",``],[217,"+",`<span class="com"># pow follows the same shape and dtype contract as other binary ops.</span>`],
+          [218,"+",`OP_TYPE_INFER[<span class="str">\"tile.pow\"</span>] = infer_binary_same_type`],
+          [219,"+",`OP_TYPE_INFER[<span class="str">\"tensor.pow\"</span>] = infer_binary_same_type`]
+        ]
+      },
+      lowering: {
+        name: "convert_tensor_to_tile_ops.cpp", path: "src/ir/transforms/convert_tensor_to_tile_ops.cpp", summary: "+9 −0",
+        impact: ["Tensor 语义下降为 Tile", "继承有效区与分块策略"],
+        lines: [
+          [631," ",`REGISTER_TENSOR_TO_TILE_BINARY(<span class="str">\"tensor.mul\"</span>, <span class="str">\"tile.mul\"</span>);`],
+          [632," ",`REGISTER_TENSOR_TO_TILE_BINARY(<span class="str">\"tensor.div\"</span>, <span class="str">\"tile.div\"</span>);`],
+          [633,"+",`REGISTER_TENSOR_TO_TILE_BINARY(<span class="str">\"tensor.pow\"</span>, <span class="str">\"tile.pow\"</span>);`],
+          [634," ",`REGISTER_TENSOR_TO_TILE_BINARY(<span class="str">\"tensor.maximum\"</span>, <span class="str">\"tile.maximum\"</span>);`],
+          [635," ",``],
+          [636,"+",`<span class="com">// Reuse BinaryElementwiseLowering: it preserves valid_shape and layout.</span>`],
+          [637,"+",`<span class="kw">static_assert</span>(HasSameShapeContract(<span class="str">\"tensor.pow\"</span>));`],
+          [638," ",``],[639," ",`<span class="kw">void</span> RegisterTensorToTilePatterns(...) {`]
+        ]
+      },
+      pto: {
+        name: "tile_ops.cpp", path: "src/codegen/pto/ops/tile_ops.cpp", summary: "+7 −0",
+        impact: ["Tile IR 映射到 pto.pow", "保持 CodeGen 一对一"],
+        lines: [
+          [302," ",`REGISTER_PTO_BINARY_OP(<span class="str">\"tile.mul\"</span>, <span class="str">\"pto.tmul\"</span>);`],
+          [303," ",`REGISTER_PTO_BINARY_OP(<span class="str">\"tile.div\"</span>, <span class="str">\"pto.tdiv\"</span>);`],
+          [304,"+",`REGISTER_PTO_BINARY_OP(<span class="str">\"tile.pow\"</span>, <span class="str">\"pto.pow\"</span>);`],
+          [305," ",``],
+          [306,"+",`<span class="com">// Analysis stays in passes; codegen is a direct IR-to-PTO mapping.</span>`],
+          [307," ",`REGISTER_PTO_BINARY_OP(<span class="str">\"tile.maximum\"</span>, <span class="str">\"pto.tmax\"</span>);`]
+        ]
+      },
+      torch: {
+        name: "torch_codegen.py", path: "python/pypto/debug/torch_codegen.py", summary: "+4 −0",
+        impact: ["CPU 数值基线可执行", "逐 Pass 验证可以覆盖新算子"],
+        lines: [
+          [118," ",`_OP_MAP = {`],[119," ",`    <span class="str">\"tile.mul\"</span>: <span class="str">\"torch.mul\"</span>,`],
+          [120," ",`    <span class="str">\"tile.div\"</span>: <span class="str">\"torch.div\"</span>,`],
+          [121,"+",`    <span class="str">\"tile.pow\"</span>: <span class="str">\"torch.pow\"</span>,`],
+          [122,"+",`    <span class="str">\"tensor.pow\"</span>: <span class="str">\"torch.pow\"</span>,`],
+          [123," ",`    <span class="str">\"tile.maximum\"</span>: <span class="str">\"torch.maximum\"</span>,`],[124," ",`}`]
+        ]
+      },
+      tests: {
+        name: "test_pow.py", path: "tests/ut/language/test_pow.py", summary: "+42 −0",
+        impact: ["覆盖 Tile / Tensor IR", "覆盖 shape 与 dtype 错误"],
+        lines: [
+          [1,"+",`<span class="kw">import</span> pytest`],[2,"+",`<span class="kw">import</span> pypto.language <span class="kw">as</span> pl`],[3,"+",``],
+          [4,"+",`@pytest.mark.parametrize(<span class="str">\"dtype\"</span>, [pl.FP16, pl.BF16, pl.FP32])`],
+          [5,"+",`<span class="kw">def</span> <span class="fn">test_tensor_pow</span>(dtype):`],[6,"+",`    lhs = make_tensor([<span class="num">64</span>, <span class="num">128</span>], dtype)`],
+          [7,"+",`    rhs = make_tensor([<span class="num">64</span>, <span class="num">128</span>], dtype)`],[8,"+",`    out = pl.pow(lhs, rhs)`],
+          [9,"+",`    assert_call(out, <span class="str">\"tensor.pow\"</span>)`],[10,"+",``],
+          [11,"+",`<span class="kw">def</span> <span class="fn">test_pow_rejects_shape_mismatch</span>():`],[12,"+",`    <span class="kw">with</span> pytest.raises(TypeError, match=<span class="str">\"same shape\"</span>):`],
+          [13,"+",`        pl.pow(make_tensor([<span class="num">64</span>]), make_tensor([<span class="num">32</span>]))`]
+        ]
+      },
+      reference: { name: "operation_reference.md", path: "docs/zh-cn/user/02-operation_reference.md", summary: "reference", impact: ["统一分发与签名参考"], lines: [[18," ",`| <span class="str">pow</span> | (lhs: T, rhs: T) -> T | 逐元素幂运算 |`],[19," ",`| maximum | (lhs: T, rhs: T) -> T | 逐元素最大值 |`],[20," ",`| exp | (input: T) -> T | 逐元素指数 |`]] },
+      status: { name: "ptoas-op-status.md", path: "docs/zh-cn/dev/ptoas-op-status.md", summary: "evidence", impact: ["确认 PTOAS 接口与实现缺口"], lines: [[84," ",`| pto.pow | TPOW | tile | ✅ | ❌ | ❌ | ❌ | MISSING |`],[85," ",`| pto.pows | TPOWS | tile | ✅ | ❌ | ❌ | ❌ | MISSING |`],[86," ",`<span class="com"># 证据只表明接口存在，不等同于设备测试通过。</span>`]] }
+    };
+
+    const checks = [
+      {name:"前端 API / Parser UT", detail:"18 passed", time:"1.2s", state:"pass"},
+      {name:"类型与 shape 约束", detail:"9 passed", time:"0.8s", state:"pass"},
+      {name:"Tensor → Tile lowering", detail:"7 passed", time:"2.4s", state:"pass"},
+      {name:"Torch CodeGen golden", detail:"max diff 2.1e-3", time:"4.9s", state:"pass"},
+      {name:"PTOAS 编译 · Ascend950", detail:"尚未运行", time:"—", state:"pending"},
+      {name:"真机 ST · Ascend910B", detail:"需要设备环境", time:"—", state:"warn"}
+    ];
+
+    const impactMap = [
+      ["DSL API", "ops.py"], ["类型推导", "type_infer.py"], ["Tensor 下降", "convert_tensor…cpp"],
+      ["PTO CodeGen", "tile_ops.cpp"], ["Torch Golden", "torch_codegen.py"], ["单元测试", "test_pow.py"]
+    ];
+
+    let activeFile = "ops";
+    let applied = new Set();
+    let toastTimer;
+
+    const $ = (s, root=document) => root.querySelector(s);
+    const $$ = (s, root=document) => [...root.querySelectorAll(s)];
+
+    function renderCode() {
+      const file = files[activeFile];
+      $("#activeTabName").textContent = file.name;
+      $("#codePath").textContent = file.path;
+      $("#changeSummary").textContent = file.summary;
+      $("#code").innerHTML = file.lines.map(([n, sign, html], index) => {
+        const kind = sign === "+" ? "add" : sign === "-" ? "remove" : "";
+        const focus = index === 4 && !["reference","status"].includes(activeFile) ? " focus" : "";
+        return `<div class="line ${kind}${focus}"><span class="line-no">${n}</span><span class="sign">${sign}</span><code>${html || " "}</code></div>`;
+      }).join("");
+      $("#applyPatch").textContent = applied.has(activeFile) ? "已接受当前文件" : "接受当前文件";
+      $("#applyPatch").classList.toggle("is-done", applied.has(activeFile));
+      renderImpact(file);
+      $("#codeArea").scrollTop = 0;
+    }
+
+    function renderImpact(file) {
+      $("#impactList").innerHTML = file.impact.map((text, index) => `<div class="impact"><div>${text}<br><code>${file.path}</code></div><em>${index ? "约束" : "实现"}</em></div>`).join("");
+      $("#impactCount").textContent = file.impact.length + " reasons";
+    }
+
+    function renderChecks() {
+      $("#checkList").innerHTML = checks.map((item) => `<div class="check ${item.state}"><span class="check-status">${item.state === "pass" ? "✓" : item.state === "warn" ? "!" : ""}</span><div><b>${item.name}</b><small>${item.detail}</small></div><time>${item.time}</time></div>`).join("");
+      $("#passCount").textContent = checks.filter(x => x.state === "pass").length;
+      $("#pendingCount").textContent = checks.filter(x => x.state !== "pass").length;
+    }
+
+    function selectFile(key) {
+      if (!files[key]) return;
+      activeFile = key;
+      $$(".file").forEach(btn => btn.classList.toggle("is-active", btn.dataset.file === key));
+      renderCode();
+    }
+
+    function showToast(text) {
+      const toast = $("#toast");
+      toast.textContent = text;
+      toast.classList.add("is-visible");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("is-visible"), 2600);
+    }
+
+    function showInspector(view) {
+      $$("#inspectorTabs button").forEach(btn => btn.classList.toggle("is-active", btn.dataset.view === view));
+      $$("[data-view-panel]").forEach(panel => panel.classList.toggle("is-active", panel.dataset.viewPanel === view));
+    }
+
+    $("#fileTree").addEventListener("click", (event) => {
+      const button = event.target.closest(".file[data-file]");
+      if (button) selectFile(button.dataset.file);
+    });
+
+    $("#fileSearch").addEventListener("input", (event) => {
+      const query = event.target.value.trim().toLowerCase();
+      $$(".file").forEach(btn => btn.hidden = query && !btn.textContent.toLowerCase().includes(query));
+    });
+
+    $("#inspectorTabs").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-view]");
+      if (button) showInspector(button.dataset.view);
+    });
+
+    $(".editor-actions").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-mode]");
+      if (!button) return;
+      $$(".editor-actions button").forEach(btn => btn.classList.toggle("is-active", btn === button));
+      $("#code").classList.toggle("show-full", button.dataset.mode === "full");
+      showToast(button.dataset.mode === "diff" ? "仅显示 Agent 建议的改动" : "已展开文件上下文");
+    });
+
+    $("#applyPatch").addEventListener("click", () => {
+      if (["reference","status"].includes(activeFile)) return showToast("参考文件不会被修改");
+      applied.add(activeFile);
+      const fileButton = $(`.file[data-file="${activeFile}"]`);
+      fileButton.classList.add("is-applied");
+      fileButton.querySelector(".file-state").textContent = "✓";
+      renderCode();
+      $("#contextState").textContent = `${applied.size}/6 APPLIED`;
+      $("#statusText").textContent = `已接受 ${applied.size} 个文件 · 尚未写入仓库`;
+      showToast(`${files[activeFile].name} 已加入待应用补丁`);
+    });
+
+    $("#runTests").addEventListener("click", () => {
+      showInspector("tests");
+      const runnable = checks.slice(0, 5);
+      runnable.forEach(item => { item.state = "run"; item.detail = "运行中"; item.time = "…"; });
+      renderChecks();
+      $("#runTests").textContent = "检查运行中…";
+      $("#runTests").disabled = true;
+      runnable.forEach((item, index) => setTimeout(() => {
+        item.state = "pass";
+        item.detail = index === 3 ? "max diff 2.1e-3" : index === 4 ? "PTOAS accepted" : `${[18,9,7][index] || 6} passed`;
+        item.time = `${(1.1 + index * .8).toFixed(1)}s`;
+        renderChecks();
+        if (index === runnable.length - 1) {
+          $("#runTests").textContent = "重新运行检查";
+          $("#runTests").disabled = false;
+          $("#statusText").textContent = "相关检查通过 · 仅剩 A910B 真机验证";
+          showToast("5 组本地检查通过；1 项需要设备环境");
+        }
+      }, 650 + index * 520));
+    });
+
+    $("#conversation").addEventListener("click", (event) => {
+      const jump = event.target.closest("[data-jump]");
+      if (jump) selectFile(jump.dataset.jump);
+    });
+
+    $("#explainRisk").addEventListener("click", () => showInspector("risks"));
+
+    $("#composer").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const input = $("#promptInput");
+      const value = input.value.trim();
+      if (!value) return;
+      const conversation = $("#conversation");
+      conversation.insertAdjacentHTML("beforeend", `<div class="message user"><span class="message-mark">你</span><div class="message-body"></div></div>`);
+      conversation.lastElementChild.querySelector(".message-body").textContent = value;
+      input.value = "";
+      conversation.scrollTop = conversation.scrollHeight;
+      setTimeout(() => {
+        const file = files[activeFile];
+        conversation.insertAdjacentHTML("beforeend", `<div class="message"><span class="message-mark">AI</span><div class="message-body"><b>我会保持本次改动聚焦。</b> 当前文件是 <code>${file.name}</code>。它的修改理由是：${file.impact.join("；")}。如果接受提案，我会先进入待应用补丁，不会直接覆盖工作区。</div></div>`);
+        conversation.scrollTop = conversation.scrollHeight;
+      }, 520);
+    });
+
+    $("#clearChat").addEventListener("click", () => {
+      const messages = $$(".message", $("#conversation"));
+      messages.slice(2).forEach(node => node.remove());
+      showToast("已清除临时对话，任务上下文仍保留");
+    });
+
+    impactMap.forEach(() => {});
+    renderCode();
+    renderChecks();
+  </script>
+</body>
+</html>

@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/aic-core-object/pattern.css" />
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/memory-architecture/pattern.css" />
   <link rel="stylesheet" href="../../vendor/pto-design-system/patterns/model-graphviz/pattern.css" />
-  <link rel="stylesheet" href="./styles/demo.css?v=20260811-19" />
+  <link rel="stylesheet" href="./styles/demo.css?v=20260812-20" />
 </head>
 <body>
   <section class="pto-ide-frame" data-ide-frame data-host="standalone" data-cursor-dots="true" aria-label="PyPTO Studio 可信 Kernel 工作台">
@@ -189,12 +189,65 @@
                     </div>
                     <div class="kf-tree-row depth-1"><button type="button" data-tree-toggle="examples" aria-expanded="false"><span class="kf-caret">›</span><span class="kf-folder-icon"></span><span>examples</span></button></div>
                     <div class="kf-tree-group" data-tree-group="examples" hidden>
-                      <div class="kf-tree-row depth-2"><button type="button" data-file="examples/kernels/"><span class="kf-folder-icon"></span><span>kernels</span></button></div>
-                      <div class="kf-tree-row depth-2"><button type="button" data-file="examples/models/"><span class="kf-folder-icon"></span><span>models</span></button></div>
-                      <div class="kf-tree-row depth-2"><button type="button" data-file="examples/runtime/"><span class="kf-folder-icon"></span><span>runtime</span></button></div>
-                      <div class="kf-tree-row depth-2"><button type="button" data-file="examples/utils/"><span class="kf-folder-icon"></span><span>utils</span></button></div>
                       <div class="kf-tree-row depth-2"><button type="button" data-file="examples/__init__.py"><span class="kf-file-icon py">Py</span><span>__init__.py</span></button></div>
                       <div class="kf-tree-row depth-2"><button type="button" data-file="examples/hello_world.py"><span class="kf-file-icon py">Py</span><span>hello_world.py</span></button></div>
+                      <div class="kf-tree-row depth-2"><button type="button" data-tree-toggle="examples-kernels" aria-expanded="false"><span class="kf-caret">›</span><span class="kf-folder-icon"></span><span>kernels</span></button></div>
+                      <div class="kf-tree-group" data-tree-group="examples-kernels" hidden>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/kernels/__init__.py"><span class="kf-file-icon py">Py</span><span>__init__.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/kernels/01_elementwise.py"><span class="kf-file-icon py">Py</span><span>01_elementwise.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/kernels/02_fused_ops.py"><span class="kf-file-icon py">Py</span><span>02_fused_ops.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/kernels/03_matmul.py"><span class="kf-file-icon py">Py</span><span>03_matmul.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/kernels/04_concat.py"><span class="kf-file-icon py">Py</span><span>04_concat.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/kernels/05_activation.py"><span class="kf-file-icon py">Py</span><span>05_activation.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/kernels/06_softmax.py"><span class="kf-file-icon py">Py</span><span>06_softmax.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/kernels/07_normalization.py"><span class="kf-file-icon py">Py</span><span>07_normalization.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/kernels/08_assemble.py"><span class="kf-file-icon py">Py</span><span>08_assemble.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/kernels/09_dyn_valid_shape.py"><span class="kf-file-icon py">Py</span><span>09_dyn_valid_shape.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/kernels/10_split_k.py"><span class="kf-file-icon py">Py</span><span>10_split_k.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/kernels/11_auto_tile_matmul.py"><span class="kf-file-icon py">Py</span><span>11_auto_tile_matmul.py</span></button></div>
+                      </div>
+                      <div class="kf-tree-row depth-2"><button type="button" data-tree-toggle="examples-models" aria-expanded="false"><span class="kf-caret">›</span><span class="kf-folder-icon"></span><span>models</span></button></div>
+                      <div class="kf-tree-group" data-tree-group="examples-models" hidden>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/models/__init__.py"><span class="kf-file-icon py">Py</span><span>__init__.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/models/01_ffn.py"><span class="kf-file-icon py">Py</span><span>01_ffn.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/models/02_vector_dag.py"><span class="kf-file-icon py">Py</span><span>02_vector_dag.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/models/03_flash_attention.py"><span class="kf-file-icon py">Py</span><span>03_flash_attention.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/models/04_paged_attention.py"><span class="kf-file-icon py">Py</span><span>04_paged_attention.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/models/05_paged_attention_batch.py"><span class="kf-file-icon py">Py</span><span>05_paged_attention_batch.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/models/06_paged_attention_dynamic.py"><span class="kf-file-icon py">Py</span><span>06_paged_attention_dynamic.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/models/07_paged_attention_multi_config.py"><span class="kf-file-icon py">Py</span><span>07_paged_attention_multi_config.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/models/08_llama_mini.py"><span class="kf-file-icon py">Py</span><span>08_llama_mini.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/models/09_paged_attention_spmd.py"><span class="kf-file-icon py">Py</span><span>09_paged_attention_spmd.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-tree-toggle="examples-models-qwen3_jit" aria-expanded="false"><span class="kf-caret">›</span><span class="kf-folder-icon"></span><span>qwen3_jit</span></button></div>
+                        <div class="kf-tree-group" data-tree-group="examples-models-qwen3_jit" hidden>
+                          <div class="kf-tree-row depth-4"><button type="button" data-file="examples/models/qwen3_jit/__init__.py"><span class="kf-file-icon py">Py</span><span>__init__.py</span></button></div>
+                          <div class="kf-tree-row depth-4"><button type="button" data-file="examples/models/qwen3_jit/config.py"><span class="kf-file-icon py">Py</span><span>config.py</span></button></div>
+                          <div class="kf-tree-row depth-4"><button type="button" data-tree-toggle="examples-models-qwen3_jit-kernels" aria-expanded="false"><span class="kf-caret">›</span><span class="kf-folder-icon"></span><span>kernels</span></button></div>
+                          <div class="kf-tree-group" data-tree-group="examples-models-qwen3_jit-kernels" hidden>
+                            <div class="kf-tree-row depth-5"><button type="button" data-file="examples/models/qwen3_jit/kernels/__init__.py"><span class="kf-file-icon py">Py</span><span>__init__.py</span></button></div>
+                            <div class="kf-tree-row depth-5"><button type="button" data-file="examples/models/qwen3_jit/kernels/attention.py"><span class="kf-file-icon py">Py</span><span>attention.py</span></button></div>
+                            <div class="kf-tree-row depth-5"><button type="button" data-file="examples/models/qwen3_jit/kernels/mlp.py"><span class="kf-file-icon py">Py</span><span>mlp.py</span></button></div>
+                            <div class="kf-tree-row depth-5"><button type="button" data-file="examples/models/qwen3_jit/kernels/projection.py"><span class="kf-file-icon py">Py</span><span>projection.py</span></button></div>
+                            <div class="kf-tree-row depth-5"><button type="button" data-file="examples/models/qwen3_jit/kernels/rmsnorm.py"><span class="kf-file-icon py">Py</span><span>rmsnorm.py</span></button></div>
+                          </div>
+                          <div class="kf-tree-row depth-4"><button type="button" data-file="examples/models/qwen3_jit/qwen3_decode.py"><span class="kf-file-icon py">Py</span><span>qwen3_decode.py</span></button></div>
+                        </div>
+                      </div>
+                      <div class="kf-tree-row depth-2"><button type="button" data-tree-toggle="examples-runtime" aria-expanded="false"><span class="kf-caret">›</span><span class="kf-folder-icon"></span><span>runtime</span></button></div>
+                      <div class="kf-tree-group" data-tree-group="examples-runtime" hidden>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/runtime/__init__.py"><span class="kf-file-icon py">Py</span><span>__init__.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/runtime/distributed_callback.py"><span class="kf-file-icon py">Py</span><span>distributed_callback.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/runtime/explicit_dispatch.py"><span class="kf-file-icon py">Py</span><span>explicit_dispatch.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/runtime/multi_program_kv_cache.py"><span class="kf-file-icon py">Py</span><span>multi_program_kv_cache.py</span></button></div>
+                      </div>
+                      <div class="kf-tree-row depth-2"><button type="button" data-tree-toggle="examples-utils" aria-expanded="false"><span class="kf-caret">›</span><span class="kf-folder-icon"></span><span>utils</span></button></div>
+                      <div class="kf-tree-group" data-tree-group="examples-utils" hidden>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/utils/__init__.py"><span class="kf-file-icon py">Py</span><span>__init__.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/utils/cross_function_calls.py"><span class="kf-file-icon py">Py</span><span>cross_function_calls.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/utils/error_handling.py"><span class="kf-file-icon py">Py</span><span>error_handling.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/utils/parse_from_text.py"><span class="kf-file-icon py">Py</span><span>parse_from_text.py</span></button></div>
+                        <div class="kf-tree-row depth-3"><button type="button" data-file="examples/utils/phase_fence_dep_compression.py"><span class="kf-file-icon py">Py</span><span>phase_fence_dep_compression.py</span></button></div>
+                      </div>
                     </div>
                     <div class="kf-tree-row depth-1"><button type="button" data-tree-toggle="include" aria-expanded="false"><span class="kf-caret">›</span><span class="kf-folder-icon"></span><span>include</span></button></div>
                     <div class="kf-tree-group" data-tree-group="include" hidden>
@@ -490,8 +543,9 @@
   <script src="../../vendor/pto-design-system/patterns/model-graphviz/pattern.js"></script>
   <script src="./js/decode-layer-source.js?v=20260807-4"></script>
   <script src="./js/passes-dump-source.js?v=20260810-1"></script>
+  <script src="./js/examples-source.js?v=20260812-1"></script>
   <script src="./js/passes-graph.js?v=20260811-8"></script>
   <script src="./js/qwen3-model-viz.js?v=20260811-10"></script>
-  <script src="./js/demo.js?v=20260811-7"></script>
+  <script src="./js/demo.js?v=20260812-8"></script>
 </body>
 </html>

@@ -9,7 +9,7 @@
   ];
   const passes = ['Semantic Lowering', 'Layout Planning', 'Parallel Mapping', 'Memory Scheduling', 'ISA Emission'];
   const guards = ['Op legality', 'Dependencies', 'Manual scope', 'Liveness', 'Paged layout', 'Index width', 'ISA capacity', 'FP32 carry'];
-  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape', passesGraphMode: 'single' };
+  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape', passesGraphMode: 'single', rmsNormFunction: 'input', rmsNormTab: 'overview', sourceCache: {} };
   const EXPLORER_STEP = 1;
   const WORKFLOW_STEPS = [0, 2, 3, 4];
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -203,7 +203,22 @@ def mm(
     const passes = window.PTO_PASSES_DUMP_SOURCES;
     if (passes && Object.prototype.hasOwnProperty.call(passes, file)) return passes[file];
     if (file === 'matmul.py') return matmulSource;
-    return window.PTO_DECODE_LAYER_SOURCE || '';
+    return state.sourceCache[file] || window.PTO_DECODE_LAYER_SOURCE || '';
+  }
+
+  async function loadSource(file) {
+    if (state.sourceCache[file]) return state.sourceCache[file];
+    const bundled = window.PTO_EXAMPLES_SOURCES?.[file];
+    if (bundled) {
+      state.sourceCache[file] = bundled;
+      return bundled;
+    }
+    if (!file.startsWith('examples/')) return resolveSource(file);
+    const url = new URL(`../../repo/pto/${file}`, document.baseURI);
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Unable to load ${file}: ${response.status}`);
+    state.sourceCache[file] = await response.text();
+    return state.sourceCache[file];
   }
 
   function isPassesDumpFile(file) {
@@ -231,13 +246,37 @@ def mm(
         row.tabIndex = 0;
         row.title = matmulLineFlows[lineNumber]?.label || `第 ${lineNumber} 行硬件映射`;
       }
+      if (state.activeFile === 'examples/models/qwen3_jit/kernels/rmsnorm.py' && lineNumber >= 26) {
+        row.dataset.rmsLine = String(lineNumber);
+        row.dataset.rmsFunction = lineNumber < 56 ? 'input' : 'post';
+        row.tabIndex = 0;
+        row.title = lineNumber < 56 ? 'input_rmsnorm · 点击同步右侧分析' : 'post_rmsnorm · 点击同步右侧分析';
+      }
       row.append(gutter, code);
       fragment.append(row);
     });
     editor.replaceChildren(fragment);
+    if (state.activeFile === RMSNORM_FILE) {
+      $$('#dslEditor [data-rms-function]').forEach(row => row.classList.toggle('is-rms-function-active', row.dataset.rmsFunction === state.rmsNormFunction));
+    }
     $('[data-editor-tab="source"]').textContent = state.activeFile;
     editor.setAttribute('aria-label', `${state.activeFile} 全量源码`);
     editor.closest('[data-stage="1"]').setAttribute('aria-label', `${state.activeFile} 全量源码`);
+  }
+
+  async function renderSelectedSource(file) {
+    const editor = $('#dslEditor');
+    $('[data-editor-tab="source"]').textContent = file;
+    editor.closest('[data-stage="1"]').setAttribute('aria-label', `${file} 全量源码`);
+    editor.innerHTML = '<div><i>…</i><code>正在加载源码…</code></div>';
+    try {
+      await loadSource(file);
+      if (state.activeFile === file) renderFullSource();
+    } catch (error) {
+      if (state.activeFile !== file) return;
+      editor.innerHTML = `<div><i>!</i><code>无法加载 ${escapeHtml(file)}：${escapeHtml(error.message)}</code></div>`;
+      toast(`无法读取 ${file}`);
+    }
   }
 
   function renderRecipes() {
@@ -502,6 +541,67 @@ def mm(
     }
   };
 
+  const RMSNORM_FILE = 'examples/models/qwen3_jit/kernels/rmsnorm.py';
+  const rmsNormProfiles = {
+    input: {
+      id: 'input', name: 'input_rmsnorm', role: 'Attention 前', scope: 'CORE_GROUP · rmsnorm', source: 'hidden_states', sourceType: 'BF16', weight: 'input_rms_weight', output: 'normed_states', chunk: 512, chunks: 16, stage: 4,
+      cast: 'BF16 → FP32 → BF16', chunkBytes: '32 KiB', inputBytes: '256 KiB', scanBytes: '512 KiB', line: 27,
+      upstream: 'hidden_states', downstream: 'Q / K / V projection', note: '输入为 BF16；两遍都先将当前 chunk 转为 FP32，再完成平方和与归一化。'
+    },
+    post: {
+      id: 'post', name: 'post_rmsnorm', role: 'Attention 后 · MLP 前', scope: 'CORE_GROUP · post_rmsnorm', source: 'resid', sourceType: 'FP32', weight: 'post_rms_weight', output: 'post_norm_tile', chunk: 128, chunks: 64, stage: 2,
+      cast: 'FP32 → BF16', chunkBytes: '8 KiB', inputBytes: '512 KiB', scanBytes: '1 MiB', line: 57,
+      upstream: 'out_projection_residual', downstream: 'mlp_block', note: '残差流已经是 FP32，因此两遍扫描都不需要输入 cast；只在 assemble 前转为 BF16。'
+    }
+  };
+
+  function rmsNormOverview(profile) {
+    return `
+      <section class="kf-rms-flow" aria-label="模型上下文"><span>${profile.upstream}</span><i>→</i><b>${profile.name}</b><i>→</i><span>${profile.downstream}</span></section>
+      <section class="kf-inspector-section kf-intent-detail kf-rms-contract"><header><h2>算子契约</h2><span>调用点解析</span></header><dl><div><dt>${profile.source}</dt><dd>[16, 8192] · ${profile.sourceType}</dd></div><div><dt>${profile.weight}</dt><dd>[1, 8192] · FP32</dd></div><div><dt>${profile.output}</dt><dd>[16, 8192] · BF16</dd></div><div><dt>执行形态</dt><dd>${profile.scope}</dd></div></dl></section>
+      <section class="kf-inspector-section kf-rms-compare"><header><h2 class="kf-inspector-title">双变体对比</h2><span>同语义 · 不同调度</span></header><div class="kf-rms-compare-grid"><div class="head"><span></span><b>Input</b><b>Post</b></div><div><span>Chunk</span><b class="${profile.id === 'input' ? 'is-current' : ''}">512</b><b class="${profile.id === 'post' ? 'is-current' : ''}">128</b></div><div><span>Chunks / pass</span><b class="${profile.id === 'input' ? 'is-current' : ''}">16</b><b class="${profile.id === 'post' ? 'is-current' : ''}">64</b></div><div><span>Pipeline stage</span><b class="${profile.id === 'input' ? 'is-current' : ''}">4</b><b class="${profile.id === 'post' ? 'is-current' : ''}">2</b></div><div><span>Input cast</span><b>BF16→FP32</b><b>无</b></div></div></section>
+      <div class="kf-inspector-card kf-rms-insight"><b>Agent 结论</b><p>两个函数共享两遍 RMSNorm 数学结构，但 chunk、stage 和输入精度不同。修改归约逻辑时应同步检查两处，不应直接统一调度参数。</p></div>`;
+  }
+
+  function rmsNormPrecision(profile) {
+    const firstCast = profile.id === 'input' ? '<span>BF16 chunk</span><i>cast</i><span>FP32 [16,512]</span>' : '<span>FP32 chunk</span><i>直接计算</i><span>FP32 [16,128]</span>';
+    return `
+      <section class="kf-inspector-section kf-rms-precision"><header><h2 class="kf-inspector-title">精度流</h2><span>源码事实</span></header><div class="kf-rms-precision-flow">${firstCast}<i>square + row_sum</i><span>FP32 [1,16]</span><i>recip(sqrt)</i><span>FP32 inv_rms</span><i>× gamma · cast</i><span>BF16 output</span></div></section>
+      <section class="kf-inspector-section kf-intent-detail"><header><h2>逻辑工作集</h2><span>EST. · 静态 shape</span></header><dl><div><dt>单个计算 Chunk</dt><dd>${profile.chunkBytes} · FP32</dd></div><div><dt>完整输入</dt><dd>${profile.inputBytes} · ${profile.sourceType}</dd></div><div><dt>Gamma</dt><dd>32 KiB · FP32</dd></div><div><dt>输出</dt><dd>256 KiB · BF16</dd></div><div><dt>两遍输入读取</dt><dd>${profile.scanBytes}</dd></div></dl></section>
+      <div class="kf-inspector-card kf-rms-estimate"><b>估算边界</b><p>逻辑字节数由 shape × dtype 推导，不包含 Tile 对齐、临时缓冲、MemoryReuse 与后端地址分配。真实片上占用需读取 AllocateMemoryAddr 后 IR。</p></div>`;
+  }
+
+  function rmsNormTiling(profile) {
+    const blocks = Array.from({ length: profile.id === 'input' ? 16 : 32 }, () => '<i></i>').join('');
+    return `
+      <section class="kf-inspector-section kf-rms-tiling"><header><h2 class="kf-inspector-title">Hidden 分块</h2><span>8192 = ${profile.chunks} × ${profile.chunk}</span></header><div class="kf-rms-blocks ${profile.id === 'post' ? 'is-dense' : ''}" title="${profile.chunks} chunks / pass">${blocks}</div><small>${profile.id === 'post' ? '每 2 个可视块代表 4 个 128-element chunks' : '每个可视块代表 1 个 512-element chunk'}</small></section>
+      <section class="kf-inspector-section kf-intent-detail"><header><h2>流水摘要</h2><span>两遍扫描</span></header><dl><div><dt>Chunk</dt><dd>${profile.chunk}</dd></div><div><dt>迭代 / pass</dt><dd>${profile.chunks}</dd></div><div><dt>Chunk 处理总次数</dt><dd>${profile.chunks * 2}</dd></div><div><dt>Pipeline stage</dt><dd>${profile.stage}</dd></div><div><dt>尾块</dt><dd class="kf-rms-good">✓ 无</dd></div></dl></section>
+      <section class="kf-rms-two-pass"><div><span>PASS A</span><b>平方 · 行归约 · 累加</b></div><i>inv_rms</i><div><span>PASS B</span><b>归一化 · gamma · assemble</b></div></section>
+      <div class="kf-inspector-card kf-rms-insight"><b>整除性守卫</b><p>✓ 8192 % ${profile.chunk} = 0　✓ assemble offset 与 chunk 对齐。若 HIDDEN 改为不可整除值，需要补 valid_shape 或尾块处理。</p></div>`;
+  }
+
+  function rmsNormValidation() {
+    return `
+      <section class="kf-inspector-section kf-rms-validation"><header><h2 class="kf-inspector-title">当前证据</h2><span>结构 ≠ 数值</span></header><div class="kf-rms-proof"><div class="is-pass"><i>✓</i><p><b>Qwen3 JIT 完整管线可编译</b><small>tests/ut/jit/test_qwen3_decode.py</small></p><em>已验证</em></div><div class="is-pass"><i>✓</i><p><b>两个 scope 均被 outline</b><small>rmsnorm · post_rmsnorm</small></p><em>已验证</em></div><div class="is-related"><i>≈</i><p><b>通用 RMSNorm 数值 ST</b><small>不同 shape / EPS / kernel</small></p><em>间接证据</em></div><div><i>○</i><p><b>当前两个函数的 Torch golden</b><small>Qwen3 shape · BF16 edge</small></p><em>缺失</em></div><div><i>○</i><p><b>逐 Pass 数值验证</b><small>定位首个语义偏差</small></p><em>缺失</em></div><div><i>○</i><p><b>Chunk / stage 性能对比</b><small>benchmark · PMU · trace</small></p><em>缺失</em></div></div></section>
+      <div class="kf-inspector-card kf-rms-estimate"><b>可信边界</b><p>现有 Qwen3 测试证明 inline 与 outline 结构成立；通用 RMSNorm ST 不能直接证明这里的两个 Qwen3 实现数值正确。</p></div>
+      <button class="kf-rms-action" type="button" data-rms-action="golden">＋ 生成当前 Kernel 数值测试</button>`;
+  }
+
+  function renderRmsNormInspector({ scrollToFunction = false } = {}) {
+    const profile = rmsNormProfiles[state.rmsNormFunction] || rmsNormProfiles.input;
+    const tabLabels = { overview: '概览', precision: '数据与精度', tiling: '分块流水', validation: '验证' };
+    const content = state.rmsNormTab === 'precision' ? rmsNormPrecision(profile) : state.rmsNormTab === 'tiling' ? rmsNormTiling(profile) : state.rmsNormTab === 'validation' ? rmsNormValidation() : rmsNormOverview(profile);
+    $('#inspectorTitle').textContent = 'RMSNorm 分析';
+    $('#inspectorMeta').textContent = `${profile.name} · static`;
+    $('#inspector').innerHTML = `
+      <section class="kf-rms-hero"><span class="kf-eyebrow">CODING AGENT · SOURCE ANALYSIS</span><b>RMSNorm</b><small>x / sqrt(mean(x²) + 1e-6) × gamma</small><div class="kf-rms-function-switch" role="group" aria-label="RMSNorm 函数">${Object.values(rmsNormProfiles).map(item => `<button type="button" class="${item.id === profile.id ? 'is-active' : ''}" data-rms-function="${item.id}"><b>${item.name}</b><small>${item.role}</small></button>`).join('')}</div></section>
+      <div class="kf-rms-tabs" role="tablist" aria-label="RMSNorm 分析视图">${Object.entries(tabLabels).map(([key, label]) => `<button type="button" class="${key === state.rmsNormTab ? 'is-active' : ''}" data-rms-tab="${key}">${label}</button>`).join('')}</div>
+      <div class="kf-rms-view">${content}</div>
+      <footer class="kf-rms-provenance"><span><i class="fact"></i>源码事实</span><span><i class="resolved"></i>跨文件解析</span><span><i class="estimated"></i>静态估算</span></footer>`;
+    $$('#dslEditor [data-rms-function]').forEach(row => row.classList.toggle('is-rms-function-active', row.dataset.rmsFunction === profile.id));
+    if (scrollToFunction) $(`#dslEditor [data-rms-line="${profile.line}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
   function renderIntentInspector() {
     matmulHardwareGraphInstance?.destroy?.();
     matmulHardwareGraphInstance = null;
@@ -509,6 +609,10 @@ def mm(
     passesGraphInstance = null;
     if (isPassesDumpFile(state.activeFile)) {
       renderPassesGraphInspector();
+      return;
+    }
+    if (state.activeFile === RMSNORM_FILE) {
+      renderRmsNormInspector();
       return;
     }
     if (state.activeFile === 'matmul.py') {
@@ -1144,24 +1248,52 @@ def mm(
     if (file) {
       $$('[data-file]').forEach(item => item.classList.remove('is-selected'));
       file.classList.add('is-selected');
-      const openStep = file.dataset.openStep;
-      if (openStep != null) {
-        state.activeFile = file.dataset.file;
+      const filePath = file.dataset.file;
+      const isFolder = filePath.endsWith('/');
+      if (!isFolder) {
+        state.activeFile = filePath;
+        if (filePath === RMSNORM_FILE) {
+          state.rmsNormFunction = 'input';
+          state.rmsNormTab = 'overview';
+        }
         state.hardwareFlowLine = 0;
         state.hardwareFlowPinned = false;
-        renderFullSource();
+        renderSelectedSource(state.activeFile);
+      }
+      const openStep = file.dataset.openStep;
+      if (openStep == null && !isFolder) goTo(EXPLORER_STEP);
+      if (openStep != null) {
         goTo(Number(openStep));
         const isPasses = file.dataset.passesDump === 'true';
         $('#stageMeta').textContent = isPasses
           ? `passes_dump/${state.activeFile}`
           : `kernels/${state.activeFile}`;
+        $('[data-editor-tab="source"]').textContent = state.activeFile;
         toast(isPasses
           ? `已打开 ${file.dataset.file} · passes_dump 中间代码`
           : `已打开 ${file.dataset.file} · 定位到${titles[Number(openStep)][0]}`);
       } else {
+        $('[data-editor-tab="source"]').textContent = state.activeFile;
+        $('#stageMeta').textContent = state.activeFile;
         toast(`已选择 ${file.dataset.file}`);
       }
     }
+    const rmsFunction = event.target.closest('.kf-rms-function-switch [data-rms-function]');
+    if (rmsFunction) {
+      state.rmsNormFunction = rmsFunction.dataset.rmsFunction;
+      renderRmsNormInspector({ scrollToFunction: true });
+    }
+    const rmsTab = event.target.closest('[data-rms-tab]');
+    if (rmsTab) {
+      state.rmsNormTab = rmsTab.dataset.rmsTab;
+      renderRmsNormInspector();
+    }
+    const rmsLine = event.target.closest('#dslEditor [data-rms-line]');
+    if (rmsLine && state.activeFile === RMSNORM_FILE) {
+      state.rmsNormFunction = rmsLine.dataset.rmsFunction;
+      renderRmsNormInspector();
+    }
+    if (event.target.closest('[data-rms-action="golden"]')) toast('已生成测试草案：Qwen3 shape · Torch golden · BF16 输出容差');
     if (event.target.closest('[data-next]')) goTo(state.step + 1);
     if (event.target.closest('[data-prev]')) goTo(state.step - 1);
 

@@ -187,6 +187,10 @@
   },
   "active": "0c4452cf167e25a6",
   "lastOpenFiles": [
+    "Design/Toolkit Studio/js/examples-source.js",
+    "Design/Toolkit Studio/styles/demo.css.tmp.3820.89a08cc0aa9e",
+    "Design/operator-coding-agent/index.html",
+    "Design/operator-coding-agent",
     "Product_Planning/大模型推理优化全旅程.md",
     "Product_Planning/PyPTO_Studio_推理场景_产品设计.md",
     "Product_Planning/模型推理相关访谈洞察.md",
@@ -200,9 +204,6 @@
     "Competitive_Analysis/generate_pptx.py",
     "Data/_jit_decode_fwd_layers_20260625_184941/__pycache__/kernel_config.cpython-310.pyc",
     "Data/_jit_decode_fwd_layers_20260625_184941/__pycache__",
-    "Data/_jit_decode_fwd_layers_20260625_184941/report/perf_hints.log",
-    "Data/_jit_decode_fwd_layers_20260625_184941/report/memory_after_AllocateMemoryAddr.txt",
-    "Data/_jit_decode_fwd_layers_20260625_184941/report",
     "docs/华为昇腾CANN_Runtime与硬件关系学习指南.md",
     "design-qa.md",
     "AGENTS.md",
@@ -227,7 +228,6 @@
     "vendor/pto-design-system/SKILL.md",
     "vendor/pto-design-system.backup-20260806-115127/patterns/model-graphviz/graphviz/img/jsoneditor-icons.svg",
     "vendor/pto-design-system.backup-20260806-115127/patterns/model-graphviz/assets/img/jsoneditor-icons.svg",
-    "vendor/pto-design-system.backup-20260806-115127/patterns/model-graphviz/assets/openpangu_2_0_flash_model_architecture_validation.md",
     "vendor/pto-design-system.backup-20260806-115127/assets/fx.svg",
     "Design/assets/toolkit-studio.png",
     "Design/assets/memory-viz-demo.png"
