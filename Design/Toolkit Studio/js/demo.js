@@ -797,7 +797,9 @@ def mm(
 
   function qwenDecodeOrchestration() {
     const active = qwenDecodeFocusMeta[state.qwenDecodeFocus] || qwenDecodeFocusMeta.scope1;
+    const structure = qwenDecodeStructure();
     return `
+      ${structure}
       <section class="kf-inspector-section kf-qwen-decode-deps"><header><h2 class="kf-inspector-title">跨文件组合</h2><span>9 utilities · 4 source files</span></header><div><article><b>rmsnorm.py</b><p>input_rmsnorm · post_rmsnorm</p></article><article><b>projection.py</b><p>Q / K / V · Out residual · Down residual</p></article><article><b>attention.py</b><p>rope_kv_cache_update</p></article><article><b>mlp.py</b><p>mlp_block</p></article></div></section>
       <section class="kf-qwen-decode-pass"><span>InlineFunctions</span><i>→</i><span>OutlineIncoreScopes</span><i>→</i><b>qwen3_decode · Orchestration</b></section>
       <section class="kf-inspector-section kf-attn-source-map kf-qwen-decode-source-map"><header><h2 class="kf-inspector-title">源码阶段</h2><span>点击与源码联动</span></header><div>${Object.entries(qwenDecodeFocusMeta).map(([key, item]) => `<button type="button" class="${key === state.qwenDecodeFocus ? 'is-active' : ''}" data-qwen-decode-focus="${key}"><i>${item.lines}</i><span><b>${item.label}</b><small>${item.detail}</small></span></button>`).join('')}</div></section>
@@ -809,6 +811,21 @@ def mm(
       <section class="kf-inspector-section kf-rms-validation"><header><h2 class="kf-inspector-title">当前证据</h2><span>编译通过 ≠ 功能完整</span></header><div class="kf-rms-proof"><div class="is-pass"><i>✓</i><p><b>完整 JIT 管线可编译</b><small>test_qwen3_decode_full_pipeline</small></p><em>已验证</em></div><div class="is-pass"><i>✓</i><p><b>Inline 节点全部消除</b><small>入口保留为 Orchestration</small></p><em>已验证</em></div><div class="is-pass"><i>✓</i><p><b>11 个预期 scope hints 存在</b><small>RMS · Projection · MLP · RoPE</small></p><em>已验证</em></div><div><i>○</i><p><b>单层数值 Golden</b><small>当前 Attention 数据链未闭合</small></p><em>不可验证</em></div><div><i>○</i><p><b>昇腾设备实跑</b><small>输出误差 · Cache 增量 · 边界位置</small></p><em>缺失</em></div><div><i>○</i><p><b>端到端性能基线</b><small>scope latency · bandwidth · overlap</small></p><em>缺失</em></div></div></section>
       <section class="kf-inspector-section kf-attn-risks"><header><h2 class="kf-inspector-title">完成 Decode 前的阻塞项</h2><span>高优先级</span></header><ul><li><b>补齐 Grouped-query Attention</b><span>连接 padded Q、历史 K/V Cache 到合法的 <code>attn_out</code> 生产者。</span></li><li><b>建立数值 Oracle</b><span>覆盖短序列、最大位置、KV Cache 增量与 BF16 容差。</span></li><li><b>设备侧验证</b><span>编译测试不包含实际昇腾执行与性能数据。</span></li></ul></section>
       <button class="kf-rms-action" type="button" data-qwen-decode-action="test">＋ 生成单层 Decode 测试清单</button>`;
+  }
+
+  function qwenDecodeStructure() {
+    const scopes = [
+      ['scope1', '01', 'RMSNorm + QKV', 'input_rmsnorm → q / k / v projection', 'rmsnorm.py · projection.py'],
+      ['scope2', '02', 'RoPE + KV Cache', 'rope_kv_cache_update → q_pad + cache writes', 'attention.py'],
+      ['scope3', '03', 'Output + MLP', 'out_projection → post_rmsnorm → mlp_block', 'projection.py · rmsnorm.py · mlp.py'],
+    ];
+    const files = [['rmsnorm.py', '2 functions', 'input_rmsnorm · post_rmsnorm', 'scope1'], ['projection.py', '5 functions', 'QKV · out · down projection', 'scope3'], ['attention.py', '1 function', 'rope_kv_cache_update', 'scope2'], ['mlp.py', '1 function', 'mlp_block · SiLU gate', 'scope3']];
+    const calls = [['input_rmsnorm', 'rmsnorm.py', 'row_sum · sqrt · recip · col_expand_mul', 'scope1'], ['q_projection / k_projection / v_projection', 'projection.py', 'matmul · matmul_acc · assemble', 'scope1'], ['rope_kv_cache_update', 'attention.py', 'slice · col_expand_mul · sub · add · cast · assemble', 'scope2'], ['mlp_block', 'mlp.py', 'matmul · silu · mul · assemble', 'scope3'], ['out_projection / down_projection', 'projection.py', 'matmul · matmul_acc · add · assemble', 'scope3']];
+    return `
+      <section class="kf-structure-hero"><div><span class="kf-eyebrow">CODE STRUCTURE · STATIC CALL MAP</span><h2>qwen3_decode.py</h2><p>1 个入口 · 3 个执行 Scope · 4 个 kernel 文件 · 26 个细粒度算子调用</p></div><span class="kf-structure-status"><i></i>已解析</span></section>
+      <section class="kf-structure-flow" aria-label="qwen3_decode 调用结构"><div class="kf-structure-column kf-structure-entry"><span class="kf-structure-column-label">入口</span><button type="button" data-qwen-structure-focus="signature"><b>_decode_layer</b><small>@pl.jit.inline · line 49</small></button><i class="kf-structure-connector"></i></div><div class="kf-structure-column"><span class="kf-structure-column-label">执行 Scope</span>${scopes.map(([key, no, title, meta, file]) => `<button type="button" class="kf-structure-node ${key}" data-qwen-structure-focus="${key}"><span>${no}</span><b>${title}</b><small>${meta}</small><em>${file}</em></button>`).join('')}</div><div class="kf-structure-column kf-structure-kernels"><span class="kf-structure-column-label">kernels/ 文件映射</span>${files.map(([file, count, detail, focus]) => `<button type="button" class="kf-structure-file" data-qwen-structure-focus="${focus}"><span class="kf-file-icon py">Py</span><span><b>${file}</b><small>${count} · ${detail}</small></span><i>↗</i></button>`).join('')}</div></section>
+      <section class="kf-structure-operators"><header><div><h2 class="kf-inspector-title">细粒度算子调用</h2><span>按 kernel 文件归组 · 点击定位 Scope</span></div><code>pl.*</code></header><div class="kf-operator-list">${calls.map(([name, file, ops, focus], index) => `<button type="button" data-qwen-structure-focus="${focus}"><span class="kf-operator-index">0${index + 1}</span><span><b>${name}</b><small>${file}</small></span><em>${ops}</em><i>›</i></button>`).join('')}</div></section>
+      <section class="kf-structure-legend"><span><i class="entry"></i>入口</span><span><i class="scope"></i>Scope</span><span><i class="kernel"></i>kernel 文件</span><span><i class="op"></i>细粒度算子</span><b>虚线依赖：Scope 2 的 attn_out 仍是待补齐生产者</b></section>`;
   }
 
   function renderQwenDecodeInspector({ scrollToFocus = false } = {}) {
@@ -1754,6 +1771,12 @@ def mm(
     if (qwenDecodeTab) {
       state.qwenDecodeTab = qwenDecodeTab.dataset.qwenDecodeTab;
       renderQwenDecodeInspector();
+    }
+    const qwenStructureFocus = event.target.closest('[data-qwen-structure-focus]');
+    if (qwenStructureFocus) {
+      state.qwenDecodeFocus = qwenStructureFocus.dataset.qwenStructureFocus;
+      state.qwenDecodeTab = 'orchestration';
+      renderQwenDecodeInspector({ scrollToFocus: true });
     }
     const qwenDecodeFocus = event.target.closest('[data-qwen-decode-focus]');
     if (qwenDecodeFocus && !qwenDecodeFocus.closest('#dslEditor')) {
