@@ -1263,24 +1263,37 @@
     if (explicitOptions.length) return [0, ...explicitOptions];
     return normalizeEdgeType(edge) === 'parameter'
       ? [0, -24, 24, -38, 38, -52, 52]
-      : [0];
+      : [0, -18, 18, -32, 32, -46, 46];
   }
 
-  function resolveEdgeTagPoint(entry, length, width, height, options) {
+  function edgeTagOverlapsPlacedTag(point, width, height, occupiedRects, padding) {
+    const rect = tagRectAt(point, width, height);
+    const paddedRect = {
+      left: rect.left - padding,
+      top: rect.top - padding,
+      right: rect.right + padding,
+      bottom: rect.bottom + padding,
+    };
+    return occupiedRects.some((occupied) => rectsOverlap(paddedRect, occupied));
+  }
+
+  function resolveEdgeTagPoint(entry, length, width, height, options, occupiedRects) {
     const opts = options || {};
     const edge = entry.edge || {};
     const explicitPosition = Number(edge.tagPosition);
     const basePosition = Number.isFinite(explicitPosition) ? explicitPosition : 0.52;
     const avoidNodes = edge.tagAvoidNodes !== false && opts.edgeTagAvoidNodes !== false;
-    const avoidClusters = normalizeEdgeType(edge) === 'parameter'
-      && edge.tagAvoidClusters !== false
-      && opts.edgeTagAvoidClusters !== false;
+    const avoidClusters = edge.tagAvoidClusters !== false && opts.edgeTagAvoidClusters !== false;
+    const avoidTags = edge.tagAvoidTags !== false && opts.edgeTagAvoidTags !== false;
     const endpointPadding = Number.isFinite(Number(opts.edgeTagNodePadding))
       ? Number(opts.edgeTagNodePadding)
       : 6;
     const clusterPadding = Number.isFinite(Number(opts.edgeTagClusterPadding))
       ? Number(opts.edgeTagClusterPadding)
       : 12;
+    const tagPadding = Number.isFinite(Number(opts.edgeTagSiblingPadding))
+      ? Number(opts.edgeTagSiblingPadding)
+      : 6;
 
     let fallbackPoint = null;
     for (const position of uniqueTagPositions(basePosition)) {
@@ -1291,7 +1304,8 @@
         const point = shiftedEdgeTagPoint(entry, length, distance, basePoint, offset);
         const overlapsNode = avoidNodes && edgeTagOverlapsNode(point, width, height, entry, endpointPadding);
         const overlapsCluster = avoidClusters && edgeTagOverlapsCluster(point, width, height, entry, clusterPadding);
-        if (!overlapsNode && !overlapsCluster) {
+        const overlapsTag = avoidTags && edgeTagOverlapsPlacedTag(point, width, height, occupiedRects, tagPadding);
+        if (!overlapsNode && !overlapsCluster && !overlapsTag) {
           return point;
         }
       }
@@ -1306,6 +1320,7 @@
     const old = svg.querySelector(`.${layerClass}`);
     if (old) old.remove();
     const layer = createSvgElement('g', { class: layerClass });
+    const occupiedRects = [];
 
     edgeEntries.forEach((entry) => {
       const edge = entry.edge || {};
@@ -1321,7 +1336,7 @@
         const height = edgeTagHeight(edge, opts);
         const angle = edgeTagAngle(edge);
         const collisionSize = rotatedTagSize(width, height, angle);
-        point = resolveEdgeTagPoint(entry, length, collisionSize.width, collisionSize.height, opts);
+        point = resolveEdgeTagPoint(entry, length, collisionSize.width, collisionSize.height, opts, occupiedRects);
         if (!point) return;
         const group = createSvgElement('g', {
           class: tagClass,
@@ -1349,6 +1364,7 @@
         text.textContent = label;
         group.appendChild(text);
         layer.appendChild(group);
+        occupiedRects.push(tagRectAt(point, collisionSize.width, collisionSize.height));
         entry.tagEl = group;
       } catch (_) {
         return;

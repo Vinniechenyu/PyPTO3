@@ -9,7 +9,7 @@
   ];
   const passes = ['Semantic Lowering', 'Layout Planning', 'Parallel Mapping', 'Memory Scheduling', 'ISA Emission'];
   const guards = ['Op legality', 'Dependencies', 'Manual scope', 'Liveness', 'Paged layout', 'Index width', 'ISA capacity', 'FP32 carry'];
-  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape', passesGraphMode: 'single', rmsNormFunction: 'input', rmsNormTab: 'overview', rmsNormFlowStep: 'load', attentionTab: 'overview', attentionFocus: 'position', qwenDecodeTab: 'overview', qwenDecodeFocus: 'scope1', sourceCache: {} };
+  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape', passesGraphMode: 'single', rmsNormFunction: 'input', rmsNormTab: 'overview', rmsNormFlowStep: 'load', attentionTab: 'overview', attentionFocus: 'position', qwenDecodeTab: 'overview', qwenDecodeFocus: 'scope1', pagedAttentionTab: 'overview', pagedAttentionFocus: 'paging', pagedAttentionOverlay: 'precision', pagedAttentionExpandedNode: null, sourceCache: {} };
   const EXPLORER_STEP = 1;
   const WORKFLOW_STEPS = [0, 2, 3, 4];
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -145,6 +145,7 @@ def mm(
   let rmsNormHardwareGraphInstance = null;
   let attentionGraphController = null;
   let qwenDecodeGraphController = null;
+  let pagedAttentionGraphController = null;
   let passesGraphInstance = null;
 
   // Minimal Python syntax highlighter — stateful across lines so triple-quoted
@@ -258,16 +259,29 @@ def mm(
 
   async function loadSource(file) {
     if (state.sourceCache[file]) return state.sourceCache[file];
-    const bundled = window.PTO_EXAMPLES_SOURCES?.[file];
-    if (bundled) {
+    const sourceFile = isPagedAttentionFile(file) ? PAGED_ATTENTION_FILE : file;
+    if (state.sourceCache[sourceFile]) {
+      state.sourceCache[file] = state.sourceCache[sourceFile];
+      return state.sourceCache[file];
+    }
+    const bundled = window.PTO_EXAMPLES_SOURCES?.[sourceFile];
+    if (bundled && sourceFile !== PAGED_ATTENTION_FILE) {
       state.sourceCache[file] = bundled;
       return bundled;
     }
-    if (!file.startsWith('examples/')) return resolveSource(file);
-    const url = new URL(`../../repo/pto/${file}`, document.baseURI);
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Unable to load ${file}: ${response.status}`);
-    state.sourceCache[file] = await response.text();
+    if (!sourceFile.startsWith('examples/')) return resolveSource(sourceFile);
+    try {
+      const url = new URL(`../../repo/pto/${sourceFile}`, document.baseURI);
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Unable to load ${sourceFile}: ${response.status}`);
+      state.sourceCache[sourceFile] = await response.text();
+    } catch (error) {
+      // Direct file previews and packaged demos cannot fetch outside the page tree.
+      // Use the bundled snapshot so both tree entries still open with complete source.
+      if (!bundled) throw error;
+      state.sourceCache[sourceFile] = bundled;
+    }
+    state.sourceCache[file] = state.sourceCache[sourceFile];
     return state.sourceCache[file];
   }
 
@@ -316,6 +330,13 @@ def mm(
         row.tabIndex = 0;
         row.title = `${{ signature: 'JIT 入口契约', scope1: 'Scope 1 · RMSNorm + QKV', scope2: 'Scope 2 · RoPE + KV Cache', scope3: 'Scope 3 · Output + MLP', smoke: '编译 Smoke Test' }[focus]} · 点击同步右侧分析`;
       }
+      if (isPagedAttentionFile(state.activeFile) && lineNumber >= 35) {
+        const focus = lineNumber < 49 ? 'dynamic' : lineNumber < 93 ? 'builder' : lineNumber < 109 ? 'qk' : lineNumber < 136 ? 'softmax' : lineNumber < 151 ? 'pv' : lineNumber < 237 ? 'online' : lineNumber < 289 ? 'orchestration' : lineNumber < 368 ? 'paging' : lineNumber < 457 ? 'golden' : 'runtime';
+        row.dataset.pagedAttentionLine = String(lineNumber);
+        row.dataset.pagedAttentionFocus = focus;
+        row.tabIndex = 0;
+        row.title = `${{ dynamic: '动态 Shape 声明', builder: 'Program Builder 与 Init', qk: 'QK Matmul · Cube', softmax: 'Softmax Prepare · Vector', pv: 'PV Matmul · Cube', online: 'Online Update · Vector', orchestration: '动态维度推导', paging: 'Paged KV 编排', golden: 'Torch Golden', runtime: '运行配置与验证' }[focus]} · 点击同步右侧分析`;
+      }
       row.append(gutter, code);
       fragment.append(row);
     });
@@ -328,6 +349,9 @@ def mm(
     }
     if (state.activeFile === QWEN_DECODE_FILE) {
       $$('#dslEditor [data-qwen-decode-focus]').forEach(row => row.classList.toggle('is-qwen-decode-line-active', row.dataset.qwenDecodeFocus === state.qwenDecodeFocus));
+    }
+    if (isPagedAttentionFile(state.activeFile)) {
+      $$('#dslEditor [data-paged-attention-focus]').forEach(row => row.classList.toggle('is-paged-attention-line-active', row.dataset.pagedAttentionFocus === state.pagedAttentionFocus));
     }
     $('[data-editor-tab="source"]').textContent = state.activeFile;
     editor.setAttribute('aria-label', `${state.activeFile} 全量源码`);
@@ -613,6 +637,9 @@ def mm(
 
   const ATTENTION_FILE = 'examples/models/qwen3_jit/kernels/attention.py';
   const QWEN_DECODE_FILE = 'examples/models/qwen3_jit/qwen3_decode.py';
+  const PAGED_ATTENTION_FILE = 'examples/models/06_paged_attention_dynamic.py';
+  const PAGED_ATTENTION_ROOT_FILE = 'paged_attention_dynamic.py';
+  const isPagedAttentionFile = (file) => file === PAGED_ATTENTION_FILE || file === PAGED_ATTENTION_ROOT_FILE;
   const RMSNORM_FILE = 'examples/models/qwen3_jit/kernels/rmsnorm.py';
   const attentionFocusMeta = {
     position: { label: '位置索引', lines: '52–60', detail: '读取 seq_lens，定位当前 token，并保留 RoPE 行维度' },
@@ -831,6 +858,8 @@ def mm(
   function renderQwenDecodeInspector({ scrollToFocus = false } = {}) {
     qwenDecodeGraphController?.destroy?.();
     qwenDecodeGraphController = null;
+    pagedAttentionGraphController?.destroy?.();
+    pagedAttentionGraphController = null;
     const tabs = { overview: '概览', data: '数据与精度', orchestration: '编排与依赖', validation: '验证' };
     const content = state.qwenDecodeTab === 'data' ? qwenDecodeData() : state.qwenDecodeTab === 'orchestration' ? qwenDecodeOrchestration() : state.qwenDecodeTab === 'validation' ? qwenDecodeValidation() : qwenDecodeOverview();
     $('#inspectorTitle').textContent = 'Decode Layer 分析';
@@ -865,6 +894,375 @@ def mm(
         if (status && meta) status.textContent = `${meta.label} · 源码第 ${meta.lines} 行 · ${meta.detail}`;
       },
     });
+  }
+
+  const pagedAttentionFocusMeta = {
+    dynamic: { label: '动态 Shape 声明', lines: '35–41', detail: '7 个 pl.dynamic 符号描述 Batch、Head、Block 与扁平缓存规模' },
+    builder: { label: 'Builder 与闭包参数', lines: '49–92', detail: 'q_tile、head_dim、block_size 固化为 load 的 Tile 尺寸，Tensor 标注保持动态' },
+    qk: { label: 'QK Matmul', lines: '93–108', detail: 'Cube 路径计算 qi × kjᵀ，FP32 累加输出 sij' },
+    softmax: { label: 'Softmax Prepare', lines: '109–135', detail: 'Vector 完成 scale、row_max、exp、BF16 概率与 FP32 row_sum' },
+    pv: { label: 'PV Matmul', lines: '136–150', detail: 'Cube 路径计算 pij × vj，得到 FP32 block output' },
+    online: { label: 'Online Update', lines: '151–236', detail: 'Vector 合并跨 Block 的 mi、li、oi，并在末块归一化写回' },
+    orchestration: { label: '动态维度推导', lines: '237–288', detail: '运行时从 Tensor.dim 推导 batch、head、block_size、block_num 与 q_loop' },
+    paging: { label: 'Paged KV 编排', lines: '289–367', detail: 'block_table 将逻辑 KV Block 映射到物理 Cache Row，并处理末块 valid_len' },
+    golden: { label: 'Torch Golden', lines: '368–456', detail: '参考实现复现分页寻址、Padding Mask、BF16 概率与 Online Softmax' },
+    runtime: { label: '运行与门禁', lines: '457–543', detail: 'A2/A3 · Ascend910B，64 Batch、8192 Context，rtol/atol 2e-2' },
+  };
+  const pagedAttentionComputationGraph = {
+    width: 650,
+    height: 890,
+    nodes: [
+      { id: 'pa-query', label: 'query', typeLabel: '[B×H, D] · BF16', kind: 'tensor', x: 105, y: 55, width: 174, height: 50, colorKey: 'io:activation' },
+      { id: 'pa-context', label: 'context_lens', typeLabel: '[B] · INT32', kind: 'tensor', x: 320, y: 55, width: 212, height: 50, colorKey: 'io:state' },
+      { id: 'pa-table', label: 'block_table', typeLabel: '[B×MaxBlocks] · INT32', kind: 'tensor', x: 535, y: 55, width: 208, height: 50, colorKey: 'io:state' },
+      { id: 'pa-page', label: 'Logical → Physical', typeLabel: 'row = block_id × block_size', kind: 'op', x: 430, y: 165, width: 238, height: 56, colorKey: 'sem:comm' },
+      { id: 'pa-kv', label: 'K / V Cache Block', typeLabel: '[Block, D] × 2 · BF16', kind: 'state', x: 535, y: 275, width: 206, height: 52, colorKey: 'io:state' },
+      { id: 'pa-qk', label: 'QK Matmul', typeLabel: '[QTile, Block] · FP32', kind: 'op', x: 215, y: 285, width: 220, height: 62, colorKey: 'sem:linear' },
+      { id: 'pa-mask', label: 'valid_len Slice', typeLabel: 'Last block padding mask', kind: 'op', x: 215, y: 395, width: 196, height: 52, colorKey: 'sem:comm' },
+      { id: 'pa-softmax', label: 'Softmax Prepare', typeLabel: 'pij BF16 · mi/li FP32', kind: 'op', x: 320, y: 500, width: 238, height: 64, colorKey: 'sem:softmax' },
+      { id: 'pa-pv', label: 'PV Matmul', typeLabel: '[QTile, D] · FP32', kind: 'op', x: 430, y: 610, width: 214, height: 62, colorKey: 'sem:linear' },
+      { id: 'pa-online', label: 'Online Update', typeLabel: 'mi / li / oi · FP32', kind: 'op', x: 320, y: 715, width: 246, height: 64, colorKey: 'sem:softmax' },
+      { id: 'pa-out', label: 'out', typeLabel: '[B×H, D] · FP32', kind: 'tensor', x: 320, y: 825, width: 220, height: 54, colorKey: 'io:output' },
+    ],
+    edges: [
+      { source: 'pa-context', target: 'pa-page', tag: 'valid blocks' },
+      { source: 'pa-table', target: 'pa-page', tag: 'block id' },
+      { source: 'pa-page', target: 'pa-kv', tag: 'physical row' },
+      { source: 'pa-query', target: 'pa-qk', tag: 'Q tile' },
+      { source: 'pa-kv', target: 'pa-qk', tag: 'K block' },
+      { source: 'pa-qk', target: 'pa-mask', tag: 'sij' },
+      { source: 'pa-context', target: 'pa-mask', dashed: true, tag: 'valid_len' },
+      { source: 'pa-mask', target: 'pa-softmax', tag: 'valid scores' },
+      { source: 'pa-softmax', target: 'pa-pv', tag: 'pij BF16' },
+      { source: 'pa-kv', target: 'pa-pv', tag: 'V block' },
+      { source: 'pa-pv', target: 'pa-online', tag: 'oi_new' },
+      { source: 'pa-softmax', target: 'pa-online', tag: 'mi / li' },
+      { source: 'pa-online', target: 'pa-online', dashed: true, tag: 'next block state' },
+      { source: 'pa-online', target: 'pa-out', tag: 'last block · oi/li' },
+    ],
+  };
+  const pagedAttentionGraphFocus = {
+    'pa-query': 'orchestration', 'pa-context': 'orchestration', 'pa-table': 'paging', 'pa-page': 'paging', 'pa-kv': 'paging',
+    'pa-qk': 'qk', 'pa-mask': 'paging', 'pa-softmax': 'softmax', 'pa-pv': 'pv', 'pa-online': 'online', 'pa-out': 'online',
+  };
+  const pagedAttentionDrilldowns = {
+    'pa-qk': {
+      focus: 'qk',
+      children: [
+        { key: 'load', label: 'Load Q / K', precision: 'BF16', shape: '[Q,D] / [B,D]', hardware: 'GM → L1' },
+        { key: 'view', label: 'Transpose K', precision: 'BF16 view', shape: '[B,D] → [D,B]', hardware: 'L1 view' },
+        { key: 'matmul', label: 'Matmul', precision: 'FP32 accum', shape: '[Q,D]×[D,B]', hardware: 'Cube · L0' },
+      ],
+    },
+    'pa-softmax': {
+      focus: 'softmax',
+      children: [
+        { key: 'scale', label: 'Scale + Slice', precision: 'FP32', shape: '[Q,valid]', hardware: 'Vector · UB' },
+        { key: 'exp', label: 'Row Max + Exp', precision: 'FP32', shape: 'row-wise', hardware: 'Vector · UB' },
+        { key: 'sum', label: 'Sum + Cast', precision: 'FP32 → BF16', shape: '[Q,1] / [Q,B]', hardware: 'Vector · UB' },
+      ],
+    },
+    'pa-pv': {
+      focus: 'pv',
+      children: [
+        { key: 'load', label: 'Load P / V', precision: 'BF16', shape: '[Q,B] / [B,D]', hardware: 'GM → L1' },
+        { key: 'move', label: 'Move to L0', precision: 'BF16', shape: 'tile view', hardware: 'L0A / L0B' },
+        { key: 'matmul', label: 'Matmul', precision: 'FP32 accum', shape: '[Q,B]×[B,D]', hardware: 'Cube · L0C' },
+      ],
+    },
+    'pa-online': {
+      focus: 'online',
+      children: [
+        { key: 'rescale', label: 'Max + Rescale', precision: 'FP32', shape: '[Q,1]', hardware: 'Vector · UB' },
+        { key: 'accum', label: 'Accumulate', precision: 'FP32 state', shape: 'li [Q,1] · oi [Q,D]', hardware: 'Vector · UB' },
+        { key: 'store', label: 'Normalize + Store', precision: 'FP32', shape: 'out [Q,D]', hardware: 'UB → GM' },
+      ],
+    },
+  };
+
+  function pagedAttentionOverview() {
+    const overlayMeta = {
+      precision: { label: '精度', legend: '<i class="bf16"></i>BF16 输入 / 概率　<i class="fp32"></i>FP32 计算 / 状态　<i class="index"></i>INT32 / INDEX' },
+      shape: { label: 'Shape', legend: '<i class="tensor"></i>Tensor / Tile Shape　<i class="dynamic"></i>动态有效区与循环边界' },
+      hardware: { label: '硬件', legend: '<i class="cube"></i>Cube　<i class="vector"></i>Vector　<i class="memory"></i>GM / 编排' },
+    }[state.pagedAttentionOverlay];
+    return `
+      <section class="kf-pa-summary-strip"><div><span>动态维度</span><b>B · H · D · Block</b></div><div><span>四阶段构成</span><b title="QK、PV 为 Cube 阶段；Softmax、Online Update 为 Vector 阶段">C×2 / V×2</b></div><div><span>状态</span><b>FP32 Online</b></div></section>
+      <section class="kf-inspector-section kf-pa-computation"><header class="kf-pa-graph-head"><div><h2 class="kf-inspector-title">融合计算图</h2><span>点击节点联动源码</span></div><div class="kf-pa-overlay-switch" role="group" aria-label="计算图叠加信息">${[['precision','精度'],['shape','Shape'],['hardware','硬件']].map(([key,label]) => `<button type="button" class="${key === state.pagedAttentionOverlay ? 'is-active' : ''}" data-pa-overlay="${key}">${label}</button>`).join('')}</div></header><div class="kf-pa-overlay-legend" data-overlay="${state.pagedAttentionOverlay}"><b>${overlayMeta.label}叠加</b><span>${overlayMeta.legend}</span></div><div class="pto-model-graphviz-pattern-page pto-model-graphviz-stage kf-pa-computation__stage" id="pagedAttentionComputationGraph" aria-label="动态 Paged Attention 融合计算图"></div><footer id="pagedAttentionGraphStatus">当前显示${overlayMeta.label}信息 · 带 + 节点可展开 · 虚线表示跨 Block 状态</footer></section>
+      <section class="kf-pa-insight-grid"><button type="button" data-pa-go-tab="data"><i>01</i><span><b>精度断点</b><small>Softmax 概率显式降为 BF16</small></span></button><button type="button" data-pa-go-tab="schedule"><i>02</i><span><b>动态边界</b><small>Tensor 动态，load Tile 由闭包固定</small></span></button><button type="button" data-pa-go-tab="validation"><i>!</i><span><b>首要风险</b><small>Q Head 尾 Tile 尚无有效 Shape</small></span></button></section>`;
+  }
+
+  function pagedAttentionDataExecution() {
+    return `
+      <section class="kf-pa-execution-band" aria-label="Paged Attention 数据与硬件执行带"><div class="source"><em>GM · BF16</em><b>Q [16,128]</b><small>4 KiB</small></div><i>load</i><button type="button" class="cube" data-paged-attention-focus="qk"><em>CUBE · L1/L0</em><b>QK Matmul</b><small>BF16 × BF16 → FP32 sij [16,128]</small></button><i>store / load</i><button type="button" class="vector" data-paged-attention-focus="softmax"><em>VECTOR · UB</em><b>Mask + Softmax</b><small>FP32 exp → BF16 pij [16,128]</small></button><i>store / load</i><button type="button" class="cube" data-paged-attention-focus="pv"><em>CUBE · L1/L0</em><b>PV Matmul</b><small>BF16 × BF16 → FP32 oi_new [16,128]</small></button><i>store / load</i><button type="button" class="vector" data-paged-attention-focus="online"><em>VECTOR · UB</em><b>Online Update</b><small>FP32 mi / li / oi → FP32 out</small></button><i>store</i><div class="source"><em>GM · FP32</em><b>Output [B×H,D]</b><small>512 KiB / example</small></div></section>
+      <section class="kf-inspector-section kf-pa-layout"><header><h2 class="kf-inspector-title">Layout 叠加</h2><span>Shape · View · Memory</span></header><div class="kf-pa-layout-flow"><div><i>Query</i><b>[QTile,D]</b><small>BF16 · natural</small></div><span>×</span><div><i>K natural</i><b>[Block,D]</b><small>BF16 · L1</small></div><span>transpose_view</span><div><i>Kᵀ view</i><b>[D,Block]</b><small>零拷贝视图</small></div><span>→</span><div><i>Score</i><b>[QTile,Block]</b><small>FP32 · L0C</small></div></div></section>
+      <section class="kf-inspector-section kf-pa-validshape"><header><h2 class="kf-inspector-title">有效区与数据规模</h2><span>Block128 · valid_len dynamic</span></header><div><span class="is-valid"><b>有效 Token 列</b><small>进入 row_max / exp / row_sum</small></span><span class="is-pad"><b>Padding</b><small>末块排除</small></span></div><div class="kf-pa-working-set"><span><b>Q</b><em>4 KiB</em></span><span><b>K + V</b><em>64 KiB</em></span><span><b>sij</b><em>8 KiB FP32</em></span><span><b>pij</b><em>4 KiB BF16</em></span><span><b>oi state</b><em>8 KiB FP32</em></span></div></section>
+      <div class="kf-inspector-card kf-rms-estimate"><b>硬件可信边界</b><p>执行带把 MemorySpace 和算子语义叠加显示；A2/A3 上 Cube↔Vector 的真实 GM 往返、Buffer 地址和重叠程度仍需读取 Pass IR、Swimlane 与 PMU。</p></div>`;
+  }
+
+  function pagedAttentionSchedule() {
+    const blocks = Array.from({ length: 16 }, (_, index) => `<i class="${index < 4 ? 'is-hot' : ''}">${index}</i>`).join('');
+    return `
+      <section class="kf-pa-schedule-canvas"><div class="kf-pa-loop-rail"><div><i>B</i><span><b>64 Batch</b><small>pl.range</small></span></div><div><i>Q</i><span><b>1 Head Tile</b><small>16 heads ÷ QTile16</small></span></div><div><i>K</i><span><b>64 KV Blocks</b><small>8192 ÷ Block128</small></span></div></div><div class="kf-pa-schedule-main"><div class="kf-pa-tile-row"><button type="button" data-paged-attention-focus="qk"><b>QK</b><small>16×128×128</small></button><i>→</i><button type="button" data-paged-attention-focus="softmax"><b>Softmax</b><small>16×valid_len</small></button><i>→</i><button type="button" data-paged-attention-focus="pv"><b>PV</b><small>16×128×128</small></button><i>→</i><button type="button" data-paged-attention-focus="online"><b>Update</b><small>FP32 carry</small></button></div><div class="kf-pa-block-mini">${blocks}</div><div class="kf-pa-page-equation"><span>logical <b>bn</b></span><i>table[b × block_num + bn]</i><span>physical <b>block_id</b></span><i>× block_size</i><span>cache <b>row</b></span></div></div></section>
+      <section class="kf-inspector-section kf-pa-scope"><header><h2 class="kf-inspector-title">Scope 与依赖叠加</h2><span>16,448 InCore calls · example</span></header><div class="kf-pa-compact-scope"><div><i>O</i><span><b>Orchestration</b><small>动态维度 · 分页寻址 · 三层循环</small></span></div><i>dispatch</i><div><i>C</i><span><b>QK</b><small>Cube</small></span></div><i>→</i><div><i>V</i><span><b>Softmax</b><small>Vector</small></span></div><i>→</i><div><i>C</i><span><b>PV</b><small>Cube</small></span></div><i>→</i><div><i>V</i><span><b>Update</b><small>Vector</small></span></div><i class="carry">↺ mi / li / oi carry to next Block</i></div></section>
+      <section class="kf-pa-schedule-notes"><article><b>可并行</b><p>Batch 与 Q Tile 数据相互独立，但当前使用 <code>pl.range</code>，未显式声明并行。</p></article><article><b>必须串行</b><p>KV Block 之间通过 FP32 <code>mi/li/oi</code> 状态 Carry 形成循环依赖。</p></article><article><b>边界风险</b><p>KV 末块有 <code>valid_len</code>；Q Head 尾 Tile 尚缺对应有效 Shape。</p></article></section>
+      <section class="kf-inspector-section kf-attn-source-map kf-pa-source-map"><header><h2 class="kf-inspector-title">源码阶段</h2><span>点击联动</span></header><div>${Object.entries(pagedAttentionFocusMeta).map(([key, item]) => `<button type="button" class="${key === state.pagedAttentionFocus ? 'is-active' : ''}" data-paged-attention-focus="${key}"><i>${item.lines}</i><span><b>${item.label}</b><small>${item.detail}</small></span></button>`).join('')}</div></section>`;
+  }
+
+  function pagedAttentionDynamic() {
+    const active = pagedAttentionFocusMeta[state.pagedAttentionFocus] || pagedAttentionFocusMeta.paging;
+    return `
+      <section class="kf-inspector-section kf-pa-shape"><header><h2 class="kf-inspector-title">动态 Shape 推导</h2><span>Tensor.dim · runtime</span></header><div class="kf-pa-formulas"><div><span>batch</span><b>context_lens.dim(0)</b></div><div><span>num_heads</span><b>query.rows ÷ batch</b></div><div><span>block_size</span><b>value_cache.rows ÷ block_table.size</b></div><div><span>blocks / request</span><b>block_table.size ÷ batch</b></div><div><span>Q loops</span><b>ceil(num_heads ÷ q_tile)</b></div><div><span>KV loops</span><b>ceil(context_len ÷ block_size)</b></div></div></section>
+      <section class="kf-inspector-section kf-pa-address"><header><h2 class="kf-inspector-title">Paged KV 地址映射</h2><span>logical block → physical row</span></header><div class="kf-pa-page-map"><div><small>Request b</small><b>logical block bn</b></div><i>table[b × block_num + bn]</i><div><small>Physical Block</small><b>cur_block_idx</b></div><i>× block_size</i><div><small>Cache Row</small><b>kv_block_row</b></div></div><p><code>valid_len = min(block_size, context_len − bn × block_size)</code>，末 Block 只让有效列进入 Softmax。</p></section>
+      <section class="kf-inspector-section kf-attn-source-map kf-pa-source-map"><header><h2 class="kf-inspector-title">源码阶段</h2><span>点击与源码联动</span></header><div>${Object.entries(pagedAttentionFocusMeta).map(([key, item]) => `<button type="button" class="${key === state.pagedAttentionFocus ? 'is-active' : ''}" data-paged-attention-focus="${key}"><i>${item.lines}</i><span><b>${item.label}</b><small>${item.detail}</small></span></button>`).join('')}</div></section>
+      <div class="kf-inspector-card kf-attn-insight"><b>${active.label}</b><p>${active.detail}。当前选中源码第 ${active.lines} 行。</p></div>`;
+  }
+
+  function pagedAttentionContractLayout() {
+    return `
+      <section class="kf-inspector-section kf-pa-contract"><header><h2 class="kf-inspector-title">Tensor 契约与方向</h2><span>B / H / D / Block 均运行时解析</span></header><div class="kf-pa-tensor-table"><div class="head"><span>Tensor</span><b>Shape</b><em>方向 · DType</em></div><button type="button" data-paged-attention-focus="orchestration"><span>query</span><b>[B×H, D]</b><em>In · BF16</em></button><button type="button" data-paged-attention-focus="paging"><span>key_cache</span><b>[KVRows, D]</b><em>In · BF16</em></button><button type="button" data-paged-attention-focus="paging"><span>value_cache</span><b>[KVRows, D]</b><em>In · BF16</em></button><button type="button" data-paged-attention-focus="paging"><span>block_table</span><b>[B×MaxBlocks]</b><em>In · INT32</em></button><button type="button" data-paged-attention-focus="orchestration"><span>context_lens</span><b>[B]</b><em>In · INT32</em></button><button type="button" data-paged-attention-focus="online"><span>out</span><b>[B×H, D]</b><em>Out · FP32</em></button></div></section>
+      <section class="kf-inspector-section kf-pa-layout"><header><h2 class="kf-inspector-title">Shape / Layout 变换</h2><span>runtime row-major Tensor → on-chip Tile</span></header><div class="kf-pa-layout-flow"><div><i>Query view</i><b>[QTile, D]</b><small>BF16 · natural</small></div><span>×</span><div><i>K natural</i><b>[Block, D]</b><small>BF16 · L1/Mat</small></div><span>transpose_view</span><div><i>Kᵀ view</i><b>[D, Block]</b><small>no data copy</small></div><span>→</span><div><i>Score</i><b>[QTile, Block]</b><small>FP32 · L0C</small></div></div><div class="kf-pa-layout-flow is-pv"><div><i>Probability</i><b>[QTile, Block]</b><small>BF16</small></div><span>×</span><div><i>V natural</i><b>[Block, D]</b><small>BF16</small></div><span>→</span><div><i>Block output</i><b>[QTile, D]</b><small>FP32</small></div></div></section>
+      <section class="kf-inspector-section kf-pa-validshape"><header><h2 class="kf-inspector-title">有效 Shape 与 Padding</h2><span>动态边界</span></header><div><span class="is-valid" style="--valid:78%"><b>valid_len</b><small>进入 Softmax 的有效 Token 列</small></span><span class="is-pad"><b>padding</b><small>末 Block 不应参与 row_max / row_sum</small></span></div><p>KV Slice 仍取完整 <code>[block_size, D]</code>，Score 通过 <code>sij_valid = slice(..., valid_len)</code> 收窄。Q Head 尾 Tile 则没有同等明确的 valid shape，是需要补测的接口边界。</p></section>
+      <section class="kf-inspector-section kf-pa-memory"><header><h2 class="kf-inspector-title">示例逻辑规模</h2><span>B64 · H16 · D128 · Block128</span></header><dl><div><dt>Query</dt><dd>256 KiB · BF16</dd></div><div><dt>单个 K / V Cache</dt><dd>512 MiB · BF16</dd></div><div><dt>Block Table</dt><dd>64 KiB · INT32</dd></div><div><dt>Context Lengths</dt><dd>256 B · INT32</dd></div><div><dt>Output</dt><dd>512 KiB · FP32</dd></div></dl></section>`;
+  }
+
+  function pagedAttentionPrecision() {
+    return `
+      <section class="kf-inspector-section kf-pa-precision"><header><h2 class="kf-inspector-title">端到端精度流</h2><span>cast 与累加边界</span></header><div class="kf-pa-precision-path"><button type="button" data-paged-attention-focus="qk"><span>Q / K</span><b>BF16</b><small>Cube input</small></button><i>matmul accumulate</i><button type="button" data-paged-attention-focus="softmax"><span>sij / exp</span><b>FP32</b><small>Vector compute</small></button><i>explicit cast</i><button type="button" data-paged-attention-focus="pv"><span>pij</span><b>BF16</b><small>PV input</small></button><i>matmul accumulate</i><button type="button" data-paged-attention-focus="online"><span>oi_new</span><b>FP32</b><small>block result</small></button><i>online merge</i><button type="button" data-paged-attention-focus="online"><span>mi / li / oi / out</span><b>FP32</b><small>cross-block state</small></button></div></section>
+      <section class="kf-inspector-section kf-pa-precision"><header><h2 class="kf-inspector-title">精度敏感点</h2><span>Agent review</span></header><div class="kf-pa-sensitivity"><article><i>01</i><div><b>Softmax 概率降精度</b><p><code>exp</code> 后先转 BF16，再转回 FP32 求和；Golden 已显式复现这一量化点。</p></div></article><article><i>02</i><div><b>Online 状态保持 FP32</b><p><code>mi/li/oi</code> 跨 Block 合并，避免长上下文累计完全落在 BF16。</p></div></article><article><i>03</i><div><b>Scale 固定为 1.0</b><p>当前实现与 Golden 一致，但不是常见的 <code>1/sqrt(D)</code>；集成真实模型时必须确认上游是否已缩放。</p></div></article><article><i>04</i><div><b>末 Block Mask</b><p>Padding 进入 exp/row_sum 会系统性污染分母，必须覆盖 <code>context_len % block_size ≠ 0</code>。</p></div></article></div></section>
+      <section class="kf-inspector-section kf-pa-memory"><header><h2 class="kf-inspector-title">单 Block 工作集</h2><span>QTile16 · Block128 · D128</span></header><dl><div><dt>Q Tile</dt><dd>4 KiB · BF16</dd></div><div><dt>K / V Block</dt><dd>各 32 KiB · BF16</dd></div><div><dt>Score sij</dt><dd>8 KiB · FP32</dd></div><div><dt>Probability pij</dt><dd>4 KiB · BF16</dd></div><div><dt>oi / oi_new</dt><dd>各 8 KiB · FP32</dd></div><div><dt>mi + li</dt><dd>128 B · FP32</dd></div></dl></section>`;
+  }
+
+  function pagedAttentionTiling() {
+    const blocks = Array.from({ length: 16 }, (_, index) => `<i class="${index < 4 ? 'is-hot' : ''}">${index}</i>`).join('');
+    return `
+      <section class="kf-inspector-section kf-pa-loop-nest"><header><h2 class="kf-inspector-title">循环与 Tile 映射</h2><span>main() 示例实例化</span></header><div class="kf-pa-loop-tree"><div><i>B</i><span><b>Batch loop</b><small>64 requests · <code>pl.range(batch_cfg)</code></small></span><em>64</em></div><div class="depth-1"><i>Q</i><span><b>Head Tile loop</b><small>ceil(16 heads ÷ QTile16)</small></span><em>1 / request</em></div><div class="depth-2"><i>K</i><span><b>KV Block loop</b><small>ceil(8192 context ÷ Block128)</small></span><em>64 / Q tile</em></div><div class="depth-3"><i>5</i><span><b>InCore chain</b><small>init once；QK → Softmax → PV → Update per block</small></span><em>16,448 calls</em></div></div></section>
+      <section class="kf-inspector-section kf-pa-block-strip"><header><h2 class="kf-inspector-title">Paged Block 扫描</h2><span>64 used blocks / request</span></header><div>${blocks}</div><small>为便于阅读仅画 16 个区段；高亮区表示当前可视窗口，实际逐个 logical block 通过 block_table 映射到物理 Cache。</small></section>
+      <section class="kf-pa-tile-matrix"><button type="button" data-paged-attention-focus="qk"><span>QK</span><b>16 × 128 × 128</b><small>M=QTile · N=Block · K=D</small></button><i>→</i><button type="button" data-paged-attention-focus="softmax"><span>Softmax</span><b>16 × valid_len</b><small>Vector row-wise</small></button><i>→</i><button type="button" data-paged-attention-focus="pv"><span>PV</span><b>16 × 128 × 128</b><small>M=QTile · N=D · K=Block</small></button></section>
+      <section class="kf-inspector-section kf-pa-tail"><header><h2 class="kf-inspector-title">尾块与整除守卫</h2><span>coding-time checks</span></header><div><article class="is-pass"><b>KV 末 Block</b><span><code>valid_len</code> 已显式裁剪</span><em>有处理</em></article><article><b>Q Head 尾 Tile</b><span>ceil-div 后仍固定 slice q_tile</span><em>需补处理</em></article><article class="is-pass"><b>示例 Heads</b><span>16 % QTile16 = 0</span><em>安全</em></article><article><b>空 Context</b><span>bn loop 为 0，输出语义需定义</span><em>需补测试</em></article></div></section>`;
+  }
+
+  function pagedAttentionOrchestration() {
+    return `
+      <section class="kf-inspector-section kf-pa-scope"><header><h2 class="kf-inspector-title">Scope 层级</h2><span>1 Program · 1 Orchestration · 5 InCore</span></header><div class="kf-pa-scope-tree"><div><i>P</i><span><b>DynamicPagedAttentionProgram</b><small>Builder 返回的 @pl.program</small></span></div><div class="depth-1"><i>O</i><span><b>paged_attention</b><small>运行时维度、分页寻址、三层循环</small></span></div>${[['builder','I','init_inplace','动态形状绑定'],['qk','C','qk_matmul','Cube'],['softmax','V','softmax_prepare','Vector'],['pv','C','pv_matmul','Cube'],['online','V','online_update','Vector']].map(([focus,mark,name,role]) => `<button type="button" class="depth-2" data-paged-attention-focus="${focus}"><i>${mark}</i><span><b>${name}</b><small>${role} · InCore</small></span></button>`).join('')}</div></section>
+      <section class="kf-inspector-section kf-pa-dependency"><header><h2 class="kf-inspector-title">数据依赖与状态 Carry</h2><span>Tensor-derived ordering</span></header><div class="kf-pa-dep-flow"><div><b>QK</b><small>produces sij</small></div><i>→</i><div><b>Softmax</b><small>pij · mi · li</small></div><i>→</i><div><b>PV</b><small>oi_new</small></div><i>→</i><div><b>Online Update</b><small>mi_update · li_update · oi</small></div><i class="loop">↺ next bn</i></div><p>源码没有显式 <code>pl.submit(..., deps=...)</code>，依赖主要由 Call 的 Tensor 生产/消费和 InOut 状态推导。需要在 Pass 后依赖图确认最终 Task 顺序。</p></section>
+      <section class="kf-inspector-section kf-pa-parallel"><header><h2 class="kf-inspector-title">并行意图</h2><span>当前源码事实</span></header><div class="kf-pa-parallel-grid"><div><span>Batch</span><b>pl.range</b><em>未显式 parallel</em></div><div><span>Q Tile</span><b>pl.range</b><em>未显式 parallel</em></div><div><span>KV Block</span><b>pl.range</b><em>状态依赖串行</em></div><div><span>Pipeline</span><b>未声明</b><em>无 pl.pipeline</em></div></div><p>Online Softmax 的 <code>mi/li/oi</code> 形成 loop-carried dependency，因此 KV Block 不能简单并行。Batch 与 Q Tile 理论上有独立性，但当前源码未显式表达并行调度。</p></section>
+      <section class="kf-inspector-section kf-attn-source-map kf-pa-source-map"><header><h2 class="kf-inspector-title">源码阶段</h2><span>点击与源码联动</span></header><div>${Object.entries(pagedAttentionFocusMeta).map(([key, item]) => `<button type="button" class="${key === state.pagedAttentionFocus ? 'is-active' : ''}" data-paged-attention-focus="${key}"><i>${item.lines}</i><span><b>${item.label}</b><small>${item.detail}</small></span></button>`).join('')}</div></section>`;
+  }
+
+  function pagedAttentionHardware() {
+    return `
+      <section class="kf-inspector-section kf-pa-hardware"><header><h2 class="kf-inspector-title">昇腾执行与精度路径</h2><span>A2/A3 · semantic mapping</span></header><div class="kf-pa-hw-lanes"><div class="memory"><em>GM</em><b>Query · Paged K/V · State</b><small>BF16 inputs / FP32 accumulators</small></div><i>load</i><button type="button" data-paged-attention-focus="qk"><em>CUBE</em><b>QK Matmul</b><small>L1 → L0A/L0B → L0C · FP32</small></button><i>store/load</i><button type="button" data-paged-attention-focus="softmax"><em>VECTOR</em><b>Softmax Prepare</b><small>UB · FP32 exp/sum → BF16 pij</small></button><i>store/load</i><button type="button" data-paged-attention-focus="pv"><em>CUBE</em><b>PV Matmul</b><small>BF16 inputs · FP32 oi_new</small></button><i>store/load</i><button type="button" data-paged-attention-focus="online"><em>VECTOR</em><b>Online Update</b><small>FP32 mi/li/oi · normalize output</small></button><i>store</i><div class="memory"><em>GM</em><b>Attention Output</b><small>[B × Heads, D] · FP32</small></div></div></section>
+      <section class="kf-inspector-section kf-pa-precision"><header><h2 class="kf-inspector-title">关键精度边界</h2><span>source facts</span></header><div class="kf-pa-precision-grid"><div><span>Q / K / V</span><b>BF16</b><small>Matmul input</small></div><div><span>sij</span><b>FP32</b><small>QK accumulation</small></div><div><span>pij</span><b>BF16</b><small>exp 后显式 cast</small></div><div><span>mi / li / oi</span><b>FP32</b><small>online state</small></div><div><span>out</span><b>FP32</b><small>oi ÷ li</small></div></div></section>
+      <section class="kf-inspector-section kf-attn-risks"><header><h2 class="kf-inspector-title">Coding 风险</h2><span>需要显式验证</span></header><ul><li><b>Q Head 尾块</b><span><code>q_loop</code> 使用 ceil-div，但 slice 仍固定为 <code>q_tile</code>；num_heads 不能整除 q_tile 时需确认有效 Shape 处理。</span></li><li><b>动态标注 ≠ 动态 Tile</b><span>InCore 类型使用 <code>pl.dynamic</code>，load 尺寸仍来自 Builder 闭包常量。</span></li><li><b>跨核数据往返</b><span>当前 5-stage InCore 管线在 A2/A3 上可能经过 GM；真实流量与重叠需结合 Pass IR、Swimlane 和 PMU。</span></li></ul></section>
+      <div class="kf-inspector-card kf-rms-estimate"><b>可信边界</b><p>此图是依据 MemorySpace 与 Kernel 语义的静态映射，不代表最终指令时序和真实 Buffer 地址。</p></div>`;
+  }
+
+  function pagedAttentionValidation() {
+    return `
+      <section class="kf-inspector-section kf-pa-capability"><header><h2 class="kf-inspector-title">目标能力 Lens</h2><span>A2/A3 · Ascend910B</span></header><div><article class="is-supported"><i>✓</i><span><b>动态 Tensor 标注</b><small>pl.dynamic · Tensor.dim</small></span><em>源码采用</em></article><article class="is-supported"><i>✓</i><span><b>Cube Matmul</b><small>BF16 input · FP32 accumulate</small></span><em>源码采用</em></article><article class="is-supported"><i>✓</i><span><b>Vector Softmax primitives</b><small>row_max · exp · row_sum</small></span><em>源码采用</em></article><article class="is-caution"><i>!</i><span><b>动态有效宽度</b><small>sij_valid uses runtime valid_len</small></span><em>重点验证</em></article><article class="is-caution"><i>!</i><span><b>动态 Head 尾 Tile</b><small>fixed q_tile load/slice</small></span><em>能力缺口</em></article><article><i>○</i><span><b>Cube↔Vector 片上交接</b><small>A2/A3 可能经 GM Buffer</small></span><em>需 Pass/实测</em></article></div></section>
+      <section class="kf-inspector-section kf-rms-validation"><header><h2 class="kf-inspector-title">当前验证设计</h2><span>源码自带 Golden</span></header><div class="kf-rms-proof"><div class="is-pass"><i>✓</i><p><b>Torch Golden 已实现</b><small>复现分页寻址、Mask 与 Online Softmax</small></p><em>直接证据</em></div><div class="is-pass"><i>✓</i><p><b>概率精度行为已对齐</b><small>pij 模拟 BF16 cast 后再转 FP32</small></p><em>直接证据</em></div><div class="is-pass"><i>✓</i><p><b>运行后执行 allclose</b><small>rtol = atol = 2e-2</small></p><em>源码门禁</em></div><div><i>○</i><p><b>动态 Shape 参数矩阵</b><small>Batch · Heads · D · Block · Context</small></p><em>缺失</em></div><div><i>○</i><p><b>Q Head 尾 Tile</b><small>num_heads % q_tile ≠ 0</small></p><em>高风险缺口</em></div><div><i>○</i><p><b>末 Block 与空 Context</b><small>valid_len · context_len 0/1/boundary</small></p><em>缺失</em></div></div></section>
+      <section class="kf-inspector-section kf-attn-risks"><header><h2 class="kf-inspector-title">风险与守卫</h2><span>G · capability & risk</span></header><ul><li><b>Shape 可除性</b><span><code>query.rows % batch == 0</code>、<code>cache.rows % table.size == 0</code>、<code>table.size % batch == 0</code> 应成为显式守卫。</span></li><li><b>Page Table 合法性</b><span><code>cur_block_idx</code> 必须处于物理 Block 池范围内，否则 KV Slice 越界。</span></li><li><b>Scale 语义</b><span>固定 1.0 需要与模型调用点对齐，避免遗漏 Attention Scale。</span></li><li><b>资源与后端</b><span>片上工作集是静态估算；最终地址、GM Round Trip 和执行重叠必须读取 Pass IR、Swimlane 与 PMU。</span></li></ul></section>
+      <section class="kf-inspector-section kf-pa-run"><header><h2 class="kf-inspector-title">示例运行画像</h2><span>main()</span></header><dl><div><dt>Platform / Backend</dt><dd>A2/A3 · Ascend910B</dd></div><div><dt>Batch / Heads</dt><dd>64 / 16</dd></div><div><dt>Head / Block</dt><dd>128 / 128</dd></div><div><dt>Context / Max model</dt><dd>8192 / 32768</dd></div><div><dt>Blocks / Request</dt><dd>64 used / 256 max</dd></div><div><dt>Optional evidence</dt><dd>L2 Swimlane</dd></div></dl></section>
+      <button class="kf-rms-action" type="button" data-paged-attention-action="tests">＋ 生成动态 Shape 与分页边界测试</button>`;
+  }
+
+  function renderPagedAttentionInspector({ scrollToFocus = false } = {}) {
+    pagedAttentionGraphController?.destroy?.();
+    pagedAttentionGraphController = null;
+    const tabs = { overview: '概览', data: '数据与执行', schedule: '分块与编排', validation: '风险与验证' };
+    const content = state.pagedAttentionTab === 'data' ? pagedAttentionDataExecution() : state.pagedAttentionTab === 'schedule' ? pagedAttentionSchedule() : state.pagedAttentionTab === 'validation' ? pagedAttentionValidation() : pagedAttentionOverview();
+    $('#inspectorTitle').textContent = 'Paged Attention 分析';
+    $('#inspectorMeta').textContent = 'dynamic · online softmax';
+    $('#inspector').innerHTML = `
+      <section class="kf-pa-hero"><span class="kf-eyebrow">CODING AGENT · SOURCE ANALYSIS</span><div><b>paged_attention_dynamic</b><em>DYNAMIC SHAPE</em></div><small>5-stage InCore pipeline · Paged KV · online softmax</small></section>
+      <div class="kf-pa-tabs" role="tablist" aria-label="动态 Paged Attention 分析视图">${Object.entries(tabs).map(([key, label]) => `<button type="button" class="${key === state.pagedAttentionTab ? 'is-active' : ''}" data-paged-attention-tab="${key}">${label}</button>`).join('')}</div>
+      <div class="kf-pa-view">${content}</div>
+      <footer class="kf-rms-provenance"><span><i class="fact"></i>源码事实</span><span><i class="resolved"></i>运行配置解析</span><span><i class="estimated"></i>硬件静态映射</span></footer>`;
+    $$('#dslEditor [data-paged-attention-focus]').forEach(row => row.classList.toggle('is-paged-attention-line-active', row.dataset.pagedAttentionFocus === state.pagedAttentionFocus));
+    if (scrollToFocus) $(`#dslEditor [data-paged-attention-focus="${state.pagedAttentionFocus}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (state.pagedAttentionTab === 'overview') renderPagedAttentionComputationGraph();
+  }
+
+  function renderPagedAttentionComputationGraph() {
+    const pattern = window.PtoModelGraphvizPattern;
+    const stage = $('#pagedAttentionComputationGraph');
+    const status = $('#pagedAttentionGraphStatus');
+    if (!pattern || !stage) return;
+    const overlays = {
+      precision: {
+        'pa-query': ['BF16 · input', 'io:activation'], 'pa-context': ['INT32 · control', 'io:state'], 'pa-table': ['INT32 · index', 'io:state'], 'pa-page': ['INDEX · address math', 'io:state'], 'pa-kv': ['BF16 · input', 'io:activation'], 'pa-qk': ['BF16 × BF16 → FP32', 'sem:linear'], 'pa-mask': ['FP32 · valid width', 'sem:comm'], 'pa-softmax': ['FP32 compute → BF16 pij', 'sem:softmax'], 'pa-pv': ['BF16 × BF16 → FP32', 'sem:linear'], 'pa-online': ['FP32 mi / li / oi', 'sem:softmax'], 'pa-out': ['FP32 · output', 'io:output'],
+      },
+      shape: {
+        'pa-query': ['[B×H, D]', 'io:activation'], 'pa-context': ['[B]', 'io:state'], 'pa-table': ['[B×MaxBlocks]', 'io:state'], 'pa-page': ['scalar block_id → row', 'sem:comm'], 'pa-kv': ['[Block, D] × 2', 'io:state'], 'pa-qk': ['[QTile, Block]', 'sem:linear'], 'pa-mask': ['[QTile, valid_len]', 'sem:comm'], 'pa-softmax': ['pij [Q,B] · state [Q,1]', 'sem:softmax'], 'pa-pv': ['[QTile, D]', 'sem:linear'], 'pa-online': ['state [QTile,1/D]', 'sem:softmax'], 'pa-out': ['[B×H, D]', 'io:output'],
+      },
+      hardware: {
+        'pa-query': ['GM · load', 'io:state'], 'pa-context': ['Orchestration · scalar read', 'io:state'], 'pa-table': ['Orchestration · scalar read', 'io:state'], 'pa-page': ['Orchestration · address', 'sem:comm'], 'pa-kv': ['GM · paged block', 'io:state'], 'pa-qk': ['CUBE · L1 → L0', 'sem:linear'], 'pa-mask': ['Tensor slice · GM view', 'sem:comm'], 'pa-softmax': ['VECTOR · UB', 'sem:softmax'], 'pa-pv': ['CUBE · L1 → L0', 'sem:linear'], 'pa-online': ['VECTOR · UB', 'sem:softmax'], 'pa-out': ['GM · store', 'io:output'],
+      },
+    };
+    const overlay = overlays[state.pagedAttentionOverlay] || overlays.precision;
+    const tensorOverlayLabels = {
+      precision: { 'pa-query': 'BF16', 'pa-context': 'INT32', 'pa-table': 'INT32', 'pa-out': 'FP32' },
+      shape: { 'pa-query': '[B×H,D]', 'pa-context': '[B]', 'pa-table': '[B×M]', 'pa-out': '[B×H,D]' },
+      hardware: { 'pa-query': 'GM', 'pa-context': 'ORCH', 'pa-table': 'ORCH', 'pa-out': 'GM' },
+    }[state.pagedAttentionOverlay] || {};
+    const expandedId = pagedAttentionDrilldowns[state.pagedAttentionExpandedNode] ? state.pagedAttentionExpandedNode : null;
+    const expandedSpec = expandedId ? pagedAttentionDrilldowns[expandedId] : null;
+    const expandedBaseNode = expandedId ? pagedAttentionComputationGraph.nodes.find((node) => node.id === expandedId) : null;
+    const expansionShift = expandedId ? 180 : 0;
+    const expandableIds = new Set(Object.keys(pagedAttentionDrilldowns));
+    const baseNodes = pagedAttentionComputationGraph.nodes
+      .filter((node) => node.id !== expandedId)
+      .map((node) => ({
+        ...node,
+        y: expandedBaseNode && node.y > expandedBaseNode.y ? node.y + expansionShift : node.y,
+        height: node.kind === 'tensor' ? node.height : Math.max(72, node.height),
+        collapsed: expandableIds.has(node.id),
+        label: node.kind === 'tensor' && tensorOverlayLabels[node.id] ? `${node.label} · ${tensorOverlayLabels[node.id]}` : node.label,
+        typeLabel: overlay[node.id]?.[0] || node.typeLabel,
+        colorKey: overlay[node.id]?.[1] || node.colorKey,
+      }));
+    const drillNodes = [];
+    const drillEdges = [];
+    const drillClusters = [];
+    const childFocusMap = new Map();
+    let firstDrillNodeId = null;
+    let lastDrillNodeId = null;
+    if (expandedId && expandedSpec && expandedBaseNode) {
+      const clusterId = `${expandedId}-detail`;
+      const parentColor = overlay[expandedId]?.[1] || expandedBaseNode.colorKey;
+      expandedSpec.children.forEach((child, index) => {
+        const childId = `${expandedId}-${child.key}`;
+        if (!firstDrillNodeId) firstDrillNodeId = childId;
+        childFocusMap.set(childId, expandedSpec.focus);
+        drillNodes.push({
+          id: childId,
+          label: child.label,
+          typeLabel: child[state.pagedAttentionOverlay] || child.precision,
+          kind: 'op',
+          x: expandedBaseNode.x,
+          y: expandedBaseNode.y + index * 82,
+          width: 244,
+          height: 66,
+          colorKey: parentColor,
+          overlayKind: 'drilldown',
+          parent: clusterId,
+        });
+        if (index > 0) {
+          drillEdges.push({
+            source: `${expandedId}-${expandedSpec.children[index - 1].key}`,
+            target: childId,
+            tag: null,
+          });
+        }
+        lastDrillNodeId = childId;
+      });
+      drillClusters.push({
+        id: clusterId,
+        label: `${expandedBaseNode.label} · 细粒度`,
+        x: expandedBaseNode.x - 150,
+        y: expandedBaseNode.y - 52,
+        width: 300,
+        height: 270,
+        colorKey: parentColor,
+        nodes: drillNodes.map((node) => node.id),
+      });
+    }
+    const graphNodes = [...baseNodes, ...drillNodes];
+    const graphEdges = pagedAttentionComputationGraph.edges.map((edge) => {
+      if (!expandedId || !firstDrillNodeId || !lastDrillNodeId) return { ...edge };
+      return {
+        ...edge,
+        source: edge.source === expandedId ? lastDrillNodeId : edge.source,
+        target: edge.target === expandedId ? firstDrillNodeId : edge.target,
+      };
+    }).concat(drillEdges);
+    const nodeMap = new Map(graphNodes.map((node) => [node.id, node]));
+    const orthogonalEdges = graphEdges.map((edge) => {
+      const source = nodeMap.get(edge.source);
+      const target = nodeMap.get(edge.target);
+      if (!source || !target) return { ...edge };
+      if (source.id === target.id) {
+        const loopX = source.x + source.width / 2 + 50;
+        const loopY = source.y + source.height / 2 + 42;
+        return {
+          ...edge,
+          sourceAnchor: 'right',
+          targetAnchor: 'bottom',
+          waypoints: [{ x: loopX, y: source.y }, { x: loopX, y: loopY }, { x: source.x, y: loopY }],
+          cornerRadius: 10,
+        };
+      }
+      const vertical = Math.abs(source.y - target.y) >= Math.abs(source.x - target.x);
+      if (vertical) {
+        const downward = source.y < target.y;
+        const startY = source.y + (downward ? source.height / 2 : -source.height / 2);
+        const endY = target.y + (downward ? -target.height / 2 : target.height / 2);
+        const midY = (startY + endY) / 2;
+        return {
+          ...edge,
+          sourceAnchor: downward ? 'bottom' : 'top',
+          targetAnchor: downward ? 'top' : 'bottom',
+          waypoints: [{ x: source.x, y: midY }, { x: target.x, y: midY }],
+          cornerRadius: 10,
+        };
+      }
+      const rightward = source.x < target.x;
+      const startX = source.x + (rightward ? source.width / 2 : -source.width / 2);
+      const endX = target.x + (rightward ? -target.width / 2 : target.width / 2);
+      const midX = (startX + endX) / 2;
+      return {
+        ...edge,
+        sourceAnchor: rightward ? 'right' : 'left',
+        targetAnchor: rightward ? 'left' : 'right',
+        waypoints: [{ x: midX, y: source.y }, { x: midX, y: target.y }],
+        cornerRadius: 10,
+      };
+    });
+    const graph = {
+      ...pagedAttentionComputationGraph,
+      height: pagedAttentionComputationGraph.height + expansionShift,
+      clusters: drillClusters,
+      nodes: graphNodes,
+      edges: orthogonalEdges,
+    };
+    stage.classList.toggle('is-expanded', Boolean(expandedId));
+    pagedAttentionGraphController = pattern.renderController(stage, graph, {
+      ariaLabel: 'Dynamic paged attention with page lookup, QK, softmax, PV and online update',
+      colormap: pattern.modelArchitectureColormap(graph),
+      fitMode: 'full', viewportPadding: 18, autoFit: true,
+      interaction: { panZoom: true, selectableClusters: false },
+      overlays: { edgeTags: true },
+      onSelect: ({ nodeId }) => {
+        if (pagedAttentionDrilldowns[nodeId]) {
+          state.pagedAttentionExpandedNode = state.pagedAttentionExpandedNode === nodeId ? null : nodeId;
+          state.pagedAttentionFocus = pagedAttentionDrilldowns[nodeId].focus;
+          pagedAttentionGraphController?.destroy?.();
+          pagedAttentionGraphController = null;
+          renderPagedAttentionComputationGraph();
+          return;
+        }
+        const focus = pagedAttentionGraphFocus[nodeId] || childFocusMap.get(nodeId);
+        if (!focus) return;
+        state.pagedAttentionFocus = focus;
+        $$('#dslEditor [data-paged-attention-focus]').forEach(row => row.classList.toggle('is-paged-attention-line-active', row.dataset.pagedAttentionFocus === focus));
+        const meta = pagedAttentionFocusMeta[focus];
+        if (status && meta) status.textContent = `${meta.label} · 源码第 ${meta.lines} 行 · ${meta.detail}`;
+      },
+    });
+    if (expandedId) {
+      const detailCluster = stage.querySelector(`[data-cluster-id="${expandedId}-detail"]`);
+      detailCluster?.addEventListener('click', (event) => {
+        if (event.target.closest('.pto-model-graphviz-node')) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        state.pagedAttentionExpandedNode = null;
+        pagedAttentionGraphController?.destroy?.();
+        pagedAttentionGraphController = null;
+        renderPagedAttentionComputationGraph();
+      }, true);
+      if (status) status.textContent = `${pagedAttentionFocusMeta[expandedSpec.focus].label} 已展开 · 点击 − 收起 · 当前显示${state.pagedAttentionOverlay === 'precision' ? '精度' : state.pagedAttentionOverlay === 'shape' ? 'Shape' : '硬件'}信息`;
+    }
   }
   const rmsNormProfiles = {
     input: {
@@ -1052,6 +1450,10 @@ def mm(
     }
     if (state.activeFile === QWEN_DECODE_FILE) {
       renderQwenDecodeInspector();
+      return;
+    }
+    if (isPagedAttentionFile(state.activeFile)) {
+      renderPagedAttentionInspector();
       return;
     }
     if (state.activeFile === RMSNORM_FILE) {
@@ -1708,6 +2110,12 @@ def mm(
           state.qwenDecodeTab = 'overview';
           state.qwenDecodeFocus = 'scope1';
         }
+        if (isPagedAttentionFile(filePath)) {
+          state.pagedAttentionTab = 'overview';
+          state.pagedAttentionFocus = 'paging';
+          state.pagedAttentionOverlay = 'precision';
+          state.pagedAttentionExpandedNode = null;
+        }
         state.hardwareFlowLine = 0;
         state.hardwareFlowPinned = false;
         renderSelectedSource(state.activeFile);
@@ -1790,6 +2198,33 @@ def mm(
       renderQwenDecodeInspector();
     }
     if (event.target.closest('[data-qwen-decode-action="test"]')) toast('已生成测试清单：编译结构 · Attention 数据链 · Cache 增量 · BF16 数值 · 昇腾实跑');
+    const pagedAttentionTab = event.target.closest('[data-paged-attention-tab]');
+    if (pagedAttentionTab) {
+      state.pagedAttentionTab = pagedAttentionTab.dataset.pagedAttentionTab;
+      renderPagedAttentionInspector();
+    }
+    const pagedAttentionGoTab = event.target.closest('[data-pa-go-tab]');
+    if (pagedAttentionGoTab) {
+      state.pagedAttentionTab = pagedAttentionGoTab.dataset.paGoTab;
+      renderPagedAttentionInspector();
+    }
+    const pagedAttentionOverlay = event.target.closest('[data-pa-overlay]');
+    if (pagedAttentionOverlay) {
+      state.pagedAttentionOverlay = pagedAttentionOverlay.dataset.paOverlay;
+      renderPagedAttentionInspector();
+    }
+    const pagedAttentionFocus = event.target.closest('[data-paged-attention-focus]');
+    if (pagedAttentionFocus && !pagedAttentionFocus.closest('#dslEditor')) {
+      state.pagedAttentionFocus = pagedAttentionFocus.dataset.pagedAttentionFocus;
+      renderPagedAttentionInspector({ scrollToFocus: true });
+    }
+    const pagedAttentionLine = event.target.closest('#dslEditor [data-paged-attention-line]');
+    if (pagedAttentionLine && isPagedAttentionFile(state.activeFile)) {
+      state.pagedAttentionFocus = pagedAttentionLine.dataset.pagedAttentionFocus;
+      state.pagedAttentionTab = 'schedule';
+      renderPagedAttentionInspector();
+    }
+    if (event.target.closest('[data-paged-attention-action="tests"]')) toast('已生成测试清单：动态 Shape 组合 · Q Head 尾 Tile · KV 末块 · 空/短 Context · BF16 Online Softmax');
     if (event.target.closest('[data-next]')) goTo(state.step + 1);
     if (event.target.closest('[data-prev]')) goTo(state.step - 1);
 
