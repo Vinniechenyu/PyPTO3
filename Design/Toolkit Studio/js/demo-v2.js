@@ -9,7 +9,7 @@
   ];
   const passes = ['Semantic Lowering', 'Layout Planning', 'Parallel Mapping', 'Memory Scheduling', 'ISA Emission'];
   const guards = ['Op legality', 'Dependencies', 'Manual scope', 'Liveness', 'Paged layout', 'Index width', 'ISA capacity', 'FP32 carry'];
-  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape', passesGraphMode: 'single', rmsNormFunction: 'input', rmsNormTab: 'overview', rmsNormFlowStep: 'load', attentionTab: 'overview', attentionFocus: 'position', qwenDecodeTab: 'overview', qwenDecodeFocus: 'scope1', pagedAttentionTab: 'graph', pagedAttentionFocus: 'paging', pagedAttentionOverlay: 'data', pagedAttentionExpandedNode: null, pagedAttentionEntry: 'orch', pagedAttentionTask: 'qk', pagedAttentionDep: 'sij', pagedAttentionPipeKernel: 'qk', sourceCache: {} };
+  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape', passesGraphMode: 'single', rmsNormFunction: 'input', rmsNormTab: 'overview', rmsNormFlowStep: 'load', attentionTab: 'overview', attentionFocus: 'position', qwenDecodeTab: 'overview', qwenDecodeFocus: 'scope1', pagedAttentionTab: 'graph', pagedAttentionFocus: 'paging', pagedAttentionOverlay: 'data', pagedAttentionExpandedNode: null, pagedAttentionEntry: 'orch', pagedAttentionTask: 'qk', pagedAttentionDep: 'sij', pagedAttentionPipeKernel: 'qk', pagedAttentionLine: null, sourceCache: {} };
   const EXPLORER_STEP = 1;
   const WORKFLOW_STEPS = [0, 2, 3, 4];
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -331,7 +331,7 @@ def mm(
         row.title = `${{ signature: 'JIT 入口契约', scope1: 'Scope 1 · RMSNorm + QKV', scope2: 'Scope 2 · RoPE + KV Cache', scope3: 'Scope 3 · Output + MLP', smoke: '编译 Smoke Test' }[focus]} · 点击同步右侧分析`;
       }
       if (isPagedAttentionFile(state.activeFile) && lineNumber >= 35) {
-        const focus = lineNumber < 49 ? 'dynamic' : lineNumber < 93 ? 'builder' : lineNumber < 109 ? 'qk' : lineNumber < 136 ? 'softmax' : lineNumber < 151 ? 'pv' : lineNumber < 237 ? 'online' : lineNumber < 289 ? 'orchestration' : lineNumber < 368 ? 'paging' : lineNumber < 457 ? 'golden' : 'runtime';
+        const focus = pagedAttentionFocusForLine(lineNumber);
         row.dataset.pagedAttentionLine = String(lineNumber);
         row.dataset.pagedAttentionFocus = focus;
         row.tabIndex = 0;
@@ -352,6 +352,7 @@ def mm(
     }
     if (isPagedAttentionFile(state.activeFile)) {
       $$('#dslEditor [data-paged-attention-focus]').forEach(row => row.classList.toggle('is-paged-attention-line-active', row.dataset.pagedAttentionFocus === state.pagedAttentionFocus));
+      if (state.pagedAttentionLine) markPagedAttentionTargetLine(state.pagedAttentionLine);
     }
     $('[data-editor-tab="source"]').textContent = state.activeFile;
     editor.setAttribute('aria-label', `${state.activeFile} 全量源码`);
@@ -999,6 +1000,56 @@ def mm(
     return `<em class="kf-ev ${meta.cls}" title="${meta.label}">${text || meta.short}</em>`;
   };
 
+  // 源码行 → 关注区间（renderFullSource 与卡片定位共用同一份映射）
+  function pagedAttentionFocusForLine(lineNumber) {
+    return lineNumber < 49 ? 'dynamic'
+      : lineNumber < 93 ? 'builder'
+      : lineNumber < 109 ? 'qk'
+      : lineNumber < 136 ? 'softmax'
+      : lineNumber < 151 ? 'pv'
+      : lineNumber < 237 ? 'online'
+      : lineNumber < 289 ? 'orchestration'
+      : lineNumber < 368 ? 'paging'
+      : lineNumber < 457 ? 'golden'
+      : 'runtime';
+  }
+
+  // 只在源码面板内部滚动，不带动整页
+  function scrollEditorRowIntoView(row) {
+    let box = row.parentElement;
+    while (box && box !== document.body && box.scrollHeight <= box.clientHeight + 1) box = box.parentElement;
+    if (!box || box === document.body || box === document.documentElement) {
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+    const settle = () => {
+      const rowRect = row.getBoundingClientRect();
+      const boxRect = box.getBoundingClientRect();
+      const delta = (rowRect.top + rowRect.height / 2) - (boxRect.top + boxRect.height / 2);
+      if (Math.abs(delta) < 2) return;
+      box.scrollTo({ top: Math.max(0, box.scrollTop + delta), behavior: 'auto' });
+    };
+    settle();
+    // 计算图等异步渲染会改变容器高度，下一帧再校正一次落点
+    requestAnimationFrame(settle);
+  }
+
+  function markPagedAttentionTargetLine(line) {
+    const row = $(`#dslEditor [data-paged-attention-line="${line}"]`);
+    $$('#dslEditor .is-paged-attention-line-target').forEach((el) => el.classList.remove('is-paged-attention-line-target'));
+    if (row) row.classList.add('is-paged-attention-line-target');
+    return row;
+  }
+
+  // 卡片 → 源码：精确定位到该声明 / 该 Kernel 的定义行
+  function revealPagedAttentionLine(line) {
+    const target = Number(line);
+    if (!target || !isPagedAttentionFile(state.activeFile)) return;
+    state.pagedAttentionLine = target;
+    const row = markPagedAttentionTargetLine(target);
+    if (row) scrollEditorRowIntoView(row);
+  }
+
   // §5.1 JIT 入口与函数层级
   // 数组顺序 = 声明的包含关系「外 → 内」：Host 调用 Builder，Builder 返回 Program，Program 内定义 Orchestration
   const pagedAttentionEntries = [
@@ -1046,7 +1097,7 @@ def mm(
     },
     {
       id: 'jit', tone: 'jit', title: '编译侧 · 任务图', hint: '1 个 Orchestration 根 + 5 个 InCore 叶',
-      container: { name: 'DynamicPagedAttentionProgram', line: 237, focus: 'builder', badge: '@pl.program', tone: 'container', note: 'Program 容器 · Builder 的返回值' },
+      container: { name: 'DynamicPagedAttentionProgram', line: 237, focus: 'orchestration', badge: '@pl.program', tone: 'container', note: 'Program 容器 · Builder 的返回值' },
       root: { name: 'paged_attention', line: 249, focus: 'orchestration', badge: 'Orchestration', tone: 'orch', note: 'batch → q_tile → kv_block 三层 pl.range' },
       leaves: [
         { name: 'dyn_kernel_init_inplace', line: 76, focus: 'builder', badge: 'AIV', tone: 'aiv', note: '绑定动态 Shape，无实际计算' },
@@ -1306,7 +1357,8 @@ def mm(
 
   function pagedAttentionMapNode(node, extraClass) {
     const active = node.focus === state.pagedAttentionFocus ? ' is-active' : '';
-    return `<button type="button" class="kf-pa2-node is-${node.tone}${active}${extraClass ? ' ' + extraClass : ''}" data-paged-attention-focus="${node.focus}" title="第 ${node.line} 行">
+    const target = state.pagedAttentionLine === node.line ? ' is-line-target' : '';
+    return `<button type="button" class="kf-pa2-node is-${node.tone}${active}${target}${extraClass ? ' ' + extraClass : ''}" data-paged-attention-focus="${node.focus}" data-pa2-line="${node.line}" title="跳到第 ${node.line} 行">
       <span class="kf-pa2-node-top"><b>${node.name}</b><em>${node.badge}</em></span>
       <span class="kf-pa2-node-foot"><small>${node.note}</small><i>${node.line}</i></span>
     </button>`;
@@ -1330,10 +1382,9 @@ def mm(
         ${layer.nodes ? layer.nodes.map((node) => pagedAttentionMapNode(node)).join('') : ''}
       </div>`;
     return `
-      <section class="kf-inspector-section kf-pa2-entry"><header><h2 class="kf-inspector-title">JIT 入口与函数层级</h2><span>§5.1 · 编译地图</span></header>
+      <section class="kf-inspector-section kf-pa2-entry"><header><h2 class="kf-inspector-title">JIT 入口与函数层级</h2></header>
         <div class="kf-pa2-nest">
-          <span class="kf-pa2-nest-cap">声明嵌套 · 外层 → 内层<em>· 每一层都定义在上一层里面，不是四个平级视图</em></span>
-          <div class="kf-pa2-entry-switch is-nest" role="group" aria-label="声明嵌套层级">${pagedAttentionEntries.map((entry) => `<button type="button" class="${entry.id === active.id ? 'is-active' : ''} is-${entry.kind}" style="--d:${entry.depth}" data-pa2-entry="${entry.id}" title="${entry.rel}"><b>${entry.chip}</b><small>${entry.line}</small><span>${entry.rel}</span></button>`).join('')}</div>
+          <div class="kf-pa2-entry-switch is-nest" role="group" aria-label="声明嵌套层级">${pagedAttentionEntries.map((entry) => `<button type="button" class="${entry.id === active.id ? 'is-active' : ''} is-${entry.kind}" style="--d:${entry.depth}" data-pa2-entry="${entry.id}" data-pa2-line="${entry.line}" title="${entry.rel}"><b>${entry.chip}</b><small>${entry.line}</small><span>${entry.rel}</span></button>`).join('')}</div>
         </div>
         <div class="kf-pa2-entry-detail"><div class="kf-pa2-entry-id"><b>${active.name}</b><code>${active.decl}</code></div><div><span>调度含义</span><b>${active.role}</b></div><p>${active.note}</p><footer><code>第 ${active.line} 行</code>${ev(active.evidence)}</footer></div>
         ${pagedAttentionCallChainBar()}
@@ -1361,7 +1412,7 @@ def mm(
     const task = pagedAttentionTasks[state.pagedAttentionTask] || pagedAttentionTasks.qk;
     const order = ['init', 'qk', 'softmax', 'pv', 'online'];
     return `
-      <section class="kf-inspector-section kf-pa2-tasks"><header><h2 class="kf-inspector-title">任务节点执行含义</h2><span>§5.2 · 5 个 InCore Call</span></header>
+      <section class="kf-inspector-section kf-pa2-tasks"><header><h2 class="kf-inspector-title">任务节点执行含义</h2><span>5 个 InCore Call</span></header>
         <div class="kf-pa2-task-rail" role="group" aria-label="任务列表">${order.map((key, index) => `<button type="button" class="${key === state.pagedAttentionTask ? 'is-active' : ''}" data-pa2-task="${key}"><i>${index}</i><span><b>${pagedAttentionTasks[key].label}</b><small>${pagedAttentionTasks[key].hardware.split(' ')[0]}</small></span></button>`).join('')}</div>
         <div class="kf-pa2-task-card">
           <header><div><b>${task.label}</b><code>${task.fn}</code></div><span>${task.fnType}</span></header>
@@ -1384,7 +1435,7 @@ def mm(
     const dep = pagedAttentionDeps[state.pagedAttentionDep] || pagedAttentionDeps.sij;
     const depType = (value) => value.startsWith('RAW') ? 'is-raw' : value.startsWith('WAW') ? 'is-waw' : value.startsWith('WAR') ? 'is-war' : 'is-none';
     return `
-      <section class="kf-inspector-section kf-pa2-deps"><header><h2 class="kf-inspector-title">依赖与数据流</h2><span>§5.3 · 点击查看依赖原因</span></header>
+      <section class="kf-inspector-section kf-pa2-deps"><header><h2 class="kf-inspector-title">依赖与数据流</h2></header>
         <div class="kf-pa2-dep-list">${Object.entries(pagedAttentionDeps).map(([key, item]) => `<button type="button" class="${key === state.pagedAttentionDep ? 'is-active' : ''}" data-pa2-dep="${key}"><span class="kf-pa2-dep-tensor">${item.label}</span><em class="${depType(item.type)}">${item.type}</em></button>`).join('')}</div>
         <div class="kf-pa2-dep-card">
           <div class="kf-pa2-dep-flow"><b>${dep.producer}</b><i><span>${dep.label}</span><small>${dep.type}</small></i><b>${dep.consumer}</b></div>
@@ -1398,7 +1449,7 @@ def mm(
   function pagedAttentionScopeSection() {
     const scope = pagedAttentionScopeFacts;
     return `
-      <section class="kf-inspector-section kf-pa2-scope"><header><h2 class="kf-inspector-title">Scope 与依赖治理</h2><span>§5.4 · 全程 ${scope.mode}</span></header>
+      <section class="kf-inspector-section kf-pa2-scope"><header><h2 class="kf-inspector-title">Scope 与依赖治理</h2><span>全程 ${scope.mode}</span></header>
         <div class="kf-pa2-scope-banner" data-mode="${scope.mode}"><b>${scope.mode} Scope</b><span>Tensor 生产 / 消费关系自动推导任务顺序，无需显式 TaskId</span>${ev('source')}</div>
         <div class="kf-pa2-scope-facts">${scope.facts.map(([name, value]) => `<div><span>${name}</span><b>${value}</b></div>`).join('')}</div>
         <div class="kf-pa2-scope-risks">${scope.risks.map((risk) => `<article class="is-${risk.level}"><header><b>${risk.title}</b>${ev(risk.level)}</header><p>${risk.body}</p></article>`).join('')}</div>
@@ -1407,14 +1458,14 @@ def mm(
 
   function pagedAttentionHardwareSection() {
     return `
-      <section class="kf-inspector-section kf-pa2-hardware"><header><h2 class="kf-inspector-title">硬件执行映射</h2><span>§5.5 · 静态映射</span></header>
+      <section class="kf-inspector-section kf-pa2-hardware"><header><h2 class="kf-inspector-title">硬件执行映射</h2></header>
         <div class="kf-pa2-hw-table"><div class="head"><span>函数</span><b>核 / 单元</b><em>数据路径</em></div>${pagedAttentionHardwareMap.map((row) => `<div><span>${row.name}<small>${row.type}</small></span><b>${row.core}</b><em>${row.path}</em></div>`).join('')}</div>
         <div class="kf-pa2-hw-absent"><header><span>未采用的调度能力</span>${ev('source')}</header>${pagedAttentionHardwareAbsent.map(([name, value]) => `<div><b>${name}</b><span>${value}</span></div>`).join('')}</div>
       </section>`;
   }
 
   function pagedAttentionEvidenceLegend() {
-    return `<div class="kf-pa2-evidence-legend"><span>证据分层</span>${Object.entries(EVIDENCE_LEVELS).map(([key, meta]) => `<i class="${meta.cls}">${meta.label}</i>`).join('')}<small>本页 Coding 阶段结论只使用源码事实与静态推断；编译、Runtime 与硬件三层需要编译或运行后才会填充。</small></div>`;
+    return `<div class="kf-pa2-evidence-legend"><span>证据分层</span>${Object.entries(EVIDENCE_LEVELS).map(([key, meta]) => `<i class="${meta.cls}">${meta.label}</i>`).join('')}</div>`;
   }
 
   function pagedAttentionExecutionGraph() {
@@ -1430,7 +1481,7 @@ def mm(
       ${pagedAttentionEvidenceLegend()}
       <section class="kf-pa-summary-strip"><div><span>根入口</span><b>paged_attention</b></div><div><span>任务节点</span><b>5 × InCore Call</b></div><div><span>依赖治理</span><b>AUTO Scope</b></div></section>
       ${pagedAttentionEntrySection()}
-      <section class="kf-inspector-section kf-pa-computation"><header class="kf-pa-graph-head"><div><h2 class="kf-inspector-title">任务计算图</h2><span>§5.2 · 图层叠加，不拆页签</span></div></header>
+      <section class="kf-inspector-section kf-pa-computation"><header class="kf-pa-graph-head"><div><h2 class="kf-inspector-title">任务计算图</h2></div></header>
         <div class="kf-pa2-layer-switch" role="group" aria-label="计算图信息图层">${[['data','数据'],['dep','依赖'],['hardware','硬件'],['precision','精度'],['runtime','运行状态']].map(([key,label]) => `<button type="button" class="${key === state.pagedAttentionOverlay ? 'is-active' : ''}${key === 'runtime' ? ' is-locked' : ''}" data-pa-overlay="${key}">${label}</button>`).join('')}</div>
         <div class="kf-pa-overlay-legend" data-overlay="${state.pagedAttentionOverlay}"><b>${layerMeta.label}图层</b><span>${layerMeta.legend}</span></div>
         ${locked ? '<div class="kf-pa2-locked"><i>○</i><div><b>运行状态图层尚无数据</b><p>TaskId、Ready / Running / Blocked / Complete、未满足依赖数与时间戳属于 Runtime 实测证据。Coding 阶段先建立静态任务图，编译并运行后同一批节点会切换为动态状态图。</p></div></div>' : ''}
@@ -1448,7 +1499,7 @@ def mm(
     const pipe = pagedAttentionTilePipelines[state.pagedAttentionPipeKernel] || pagedAttentionTilePipelines.qk;
     const kindLabel = { copyin: 'CopyIn', view: 'View', move: 'Move', compute: 'Compute', copyout: 'CopyOut' };
     return `
-      <section class="kf-inspector-section kf-pa2-tile"><header><h2 class="kf-inspector-title">核内 Tile 流水</h2><span>§5.6 · 选中 InCore 下钻</span></header>
+      <section class="kf-inspector-section kf-pa2-tile"><header><h2 class="kf-inspector-title">核内 Tile 流水</h2></header>
         <div class="kf-pa2-tile-switch" role="group" aria-label="InCore Kernel 选择">${Object.entries(pagedAttentionTilePipelines).map(([key, item]) => `<button type="button" class="${key === state.pagedAttentionPipeKernel ? 'is-active' : ''}" data-pa2-pipe="${key}"><b>${item.label.replace('dyn_kernel_', '')}</b><small>${item.core}</small></button>`).join('')}</div>
         <div class="kf-pa2-tile-head"><b>${pipe.label}</b><span>${pipe.core}</span><code>第 ${pipe.lines} 行</code></div>
         <ol class="kf-pa2-tile-steps">${pipe.steps.map((step) => `<li class="is-${step.kind}"><em>${kindLabel[step.kind]}</em><div><code>${step.op}</code><span>${step.from} → ${step.to}</span>${step.note ? `<small>${step.note}</small>` : ''}</div></li>`).join('')}</ol>
@@ -1469,7 +1520,7 @@ def mm(
   function pagedAttentionAgentSection() {
     const finding = pagedAttentionAgentFinding;
     return `
-      <section class="kf-inspector-section kf-pa2-agent"><header><h2 class="kf-inspector-title">Agent 结论</h2><span>§12 · 结构化输出</span></header>
+      <section class="kf-inspector-section kf-pa2-agent"><header><h2 class="kf-inspector-title">Agent 结论</h2></header>
         <div class="kf-pa2-agent-head"><span>${finding.severity}</span><b>${finding.title}</b></div>
         <dl class="kf-pa2-agent-body">${finding.sections.map((item) => `<div><dt>${item.key}${ev(item.level)}</dt><dd>${item.body}</dd></div>`).join('')}</dl>
       </section>`;
@@ -2659,6 +2710,7 @@ def mm(
           state.pagedAttentionTask = 'qk';
           state.pagedAttentionDep = 'sij';
           state.pagedAttentionPipeKernel = 'qk';
+          state.pagedAttentionLine = null;
         }
         state.hardwareFlowLine = 0;
         state.hardwareFlowPinned = false;
@@ -2760,7 +2812,13 @@ def mm(
     const pagedAttentionEntry = event.target.closest('[data-pa2-entry]');
     if (pagedAttentionEntry) {
       state.pagedAttentionEntry = pagedAttentionEntry.dataset.pa2Entry;
+      const line = Number(pagedAttentionEntry.dataset.pa2Line);
+      if (line) {
+        state.pagedAttentionLine = line;
+        syncPagedAttentionSelection(pagedAttentionFocusForLine(line));
+      }
       renderPagedAttentionInspector();
+      revealPagedAttentionLine(line);
     }
     const pagedAttentionTaskPick = event.target.closest('[data-pa2-task]');
     if (pagedAttentionTaskPick) {
@@ -2788,13 +2846,18 @@ def mm(
     }
     const pagedAttentionFocus = event.target.closest('[data-paged-attention-focus]');
     if (pagedAttentionFocus && !pagedAttentionFocus.closest('#dslEditor')) {
+      const line = Number(pagedAttentionFocus.dataset.pa2Line);
       syncPagedAttentionSelection(pagedAttentionFocus.dataset.pagedAttentionFocus);
-      renderPagedAttentionInspector({ scrollToFocus: true });
+      if (line) state.pagedAttentionLine = line;
+      renderPagedAttentionInspector({ scrollToFocus: !line });
+      if (line) revealPagedAttentionLine(line);
     }
     const pagedAttentionLine = event.target.closest('#dslEditor [data-paged-attention-line]');
     if (pagedAttentionLine && isPagedAttentionFile(state.activeFile)) {
       syncPagedAttentionSelection(pagedAttentionLine.dataset.pagedAttentionFocus);
+      state.pagedAttentionLine = Number(pagedAttentionLine.dataset.pagedAttentionLine);
       if (state.pagedAttentionTab !== 'graph') state.pagedAttentionTab = 'graph';
+      markPagedAttentionTargetLine(state.pagedAttentionLine);
       renderPagedAttentionInspector();
     }
     if (event.target.closest('[data-paged-attention-action="tests"]')) toast('已生成测试清单：动态 Shape 组合 · Q Head 尾 Tile · KV 末块 · 空/短 Context · BF16 Online Softmax');

@@ -81,8 +81,6 @@
 
 /* 嵌套式入口切换：四项是「外层→内层」的包含关系，不是四个平级页签 */
 .kf-pa2-nest { margin-top: 9px; }
-.kf-pa2-nest-cap { display: block; margin-bottom: 5px; color: var(--primary); font: 650 9px var(--font-mono); letter-spacing: 0.04em; }
-.kf-pa2-nest-cap em { margin-left: 6px; color: var(--foreground-muted); font: 9px var(--font-mono); font-style: normal; letter-spacing: 0; }
 
 .kf-pa2-entry-switch.is-nest { gap: 4px; margin-top: 0; }
 .kf-pa2-entry-switch.is-nest button {
@@ -288,6 +286,27 @@
 .kf-pa2-spec dt { color: var(--foreground-muted); font-size: 9px; }
 .kf-pa2-spec dd { margin: 0; color: var(--primary); font: var(--kf-font-micro) var(--font-mono); }
 .kf-pa2-spec > small { display: block; margin-top: 7px; color: var(--foreground-muted); font-size: 9px; line-height: 1.5; }
+
+/* ── 卡片 ↔ 源码精确行呼应 ───────────────────────────────────────────────── */
+#dslEditor [data-paged-attention-line].is-paged-attention-line-target {
+  background: color-mix(in srgb, var(--primary) 24%, transparent);
+  box-shadow: inset 3px 0 var(--primary), 0 0 0 1px color-mix(in srgb, var(--primary) 40%, transparent);
+  animation: kf-pa2-line-flash 900ms ease-out 1;
+}
+#dslEditor [data-paged-attention-line].is-paged-attention-line-target > i {
+  color: var(--primary); font-weight: 700;
+}
+@keyframes kf-pa2-line-flash {
+  0% { background: color-mix(in srgb, var(--primary) 52%, transparent); }
+  100% { background: color-mix(in srgb, var(--primary) 24%, transparent); }
+}
+/* 已定位的卡片给一个「→ 源码」回指标记 */
+.kf-pa2-node.is-line-target .kf-pa2-node-foot i,
+.kf-pa2-entry-switch.is-nest button.is-active small {
+  color: var(--primary); font-weight: 700; opacity: 1;
+}
+.kf-pa2-node.is-line-target .kf-pa2-node-foot i::after,
+.kf-pa2-entry-switch.is-nest button.is-active small::after { content: ' ⤴'; }
 
 /* ── §9.1 图层开关 ───────────────────────────────────────────────────────── */
 .kf-pa2-layer-switch {
