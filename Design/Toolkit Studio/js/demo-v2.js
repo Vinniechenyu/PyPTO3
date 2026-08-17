@@ -1000,26 +1000,31 @@ def mm(
   };
 
   // §5.1 JIT 入口与函数层级
+  // 数组顺序 = 声明的包含关系「外 → 内」：Host 调用 Builder，Builder 返回 Program，Program 内定义 Orchestration
   const pagedAttentionEntries = [
     {
-      id: 'orch', name: 'paged_attention', chip: 'Orchestration', decl: '@pl.function(type=Orchestration)', line: 249,
-      role: '芯片级 Orchestration 入口', kind: 'root', focus: 'orchestration', evidence: 'source',
-      note: '当前任务图的唯一根入口：从 Tensor.dim 解析动态维度、经 block_table 做分页寻址，并驱动 Batch / Q Tile / KV Block 三层循环。',
-    },
-    {
-      id: 'program', name: 'DynamicPagedAttentionProgram', chip: 'Program', decl: '@pl.program', line: 237,
-      role: 'Program 容器 · Builder 返回值', kind: 'container', focus: 'builder', evidence: 'source',
-      note: '在 Builder 闭包内定义并返回。Builder 每次以不同 (q_tile, head_dim, block_size) 调用都会产生一个独立的 Program 类。',
+      id: 'host', name: 'golden() · build_tensors() · main()', chip: 'Host 侧', decl: '普通 Python 函数', line: 368,
+      role: 'Torch 参考与运行入口 · 不参与编译', kind: 'host', focus: 'golden', evidence: 'source', depth: 0,
+      rel: '最外层调用者 · 调用 Builder 取得 Program，再 run() 提交',
+      note: 'golden 用 torch 复现同一算法作为 Oracle；main 组装 Tensor 后通过 run() 提交。三者都不生成 Task。',
     },
     {
       id: 'builder', name: 'build_dynamic_paged_attention_program', chip: 'Builder', decl: '普通 Python 函数', line: 49,
-      role: 'Host Builder · 非 JIT 入口', kind: 'host', focus: 'builder', evidence: 'source',
+      role: 'Host Builder · 非 JIT 入口', kind: 'host', focus: 'builder', evidence: 'source', depth: 1,
+      rel: '被 Host 调用 · 函数体内定义并 return 下一层的 Program',
       note: '把 q_tile / head_dim / block_size 固化为闭包常量 _Q_TILE / _HEAD_DIM / _BLOCK_SIZE，供 5 个 InCore 的 pl.load 使用；Tensor 标注仍保持 pl.dynamic。',
     },
     {
-      id: 'host', name: 'golden() · build_tensors() · main()', chip: 'Host 侧', decl: '普通 Python 函数', line: 368,
-      role: 'Torch 参考与运行入口 · 不参与编译', kind: 'host', focus: 'golden', evidence: 'source',
-      note: 'golden 用 torch 复现同一算法作为 Oracle；main 组装 Tensor 后通过 run() 提交。三者都不生成 Task。',
+      id: 'program', name: 'DynamicPagedAttentionProgram', chip: 'Program', decl: '@pl.program', line: 237,
+      role: 'Program 容器 · Builder 返回值', kind: 'container', focus: 'builder', evidence: 'source', depth: 2,
+      rel: '定义在 Builder 闭包内 · 类体内定义下一层的 Orchestration',
+      note: '在 Builder 闭包内定义并返回。Builder 每次以不同 (q_tile, head_dim, block_size) 调用都会产生一个独立的 Program 类。',
+    },
+    {
+      id: 'orch', name: 'paged_attention', chip: 'Orchestration', decl: '@pl.function(type=Orchestration)', line: 249,
+      role: '芯片级 Orchestration 入口', kind: 'root', focus: 'orchestration', evidence: 'source', depth: 3,
+      rel: '最内层 · 定义在 Program 类体内 · 任务图从这里开始',
+      note: '当前任务图的唯一根入口：从 Tensor.dim 解析动态维度、经 block_table 做分页寻址，并驱动 Batch / Q Tile / KV Block 三层循环。',
     },
   ];
 
@@ -1313,7 +1318,8 @@ def mm(
   }
 
   function pagedAttentionEntrySection() {
-    const active = pagedAttentionEntries.find((entry) => entry.id === state.pagedAttentionEntry) || pagedAttentionEntries[0];
+    const active = pagedAttentionEntries.find((entry) => entry.id === state.pagedAttentionEntry)
+      || pagedAttentionEntries.find((entry) => entry.id === 'orch');
     const jit = pagedAttentionLayerMap.find((layer) => layer.id === 'jit');
     const lane = (layer) => `
       <div class="kf-pa2-lane is-${layer.tone}">
@@ -1325,7 +1331,10 @@ def mm(
       </div>`;
     return `
       <section class="kf-inspector-section kf-pa2-entry"><header><h2 class="kf-inspector-title">JIT 入口与函数层级</h2><span>§5.1 · 编译地图</span></header>
-        <div class="kf-pa2-entry-switch is-seg" role="group" aria-label="文件内的入口与声明">${pagedAttentionEntries.map((entry) => `<button type="button" class="${entry.id === active.id ? 'is-active' : ''} is-${entry.kind}" data-pa2-entry="${entry.id}"><b>${entry.chip}</b><small>${entry.line}</small></button>`).join('')}</div>
+        <div class="kf-pa2-nest">
+          <span class="kf-pa2-nest-cap">声明嵌套 · 外层 → 内层<em>· 每一层都定义在上一层里面，不是四个平级视图</em></span>
+          <div class="kf-pa2-entry-switch is-nest" role="group" aria-label="声明嵌套层级">${pagedAttentionEntries.map((entry) => `<button type="button" class="${entry.id === active.id ? 'is-active' : ''} is-${entry.kind}" style="--d:${entry.depth}" data-pa2-entry="${entry.id}" title="${entry.rel}"><b>${entry.chip}</b><small>${entry.line}</small><span>${entry.rel}</span></button>`).join('')}</div>
+        </div>
         <div class="kf-pa2-entry-detail"><div class="kf-pa2-entry-id"><b>${active.name}</b><code>${active.decl}</code></div><div><span>调度含义</span><b>${active.role}</b></div><p>${active.note}</p><footer><code>第 ${active.line} 行</code>${ev(active.evidence)}</footer></div>
         ${pagedAttentionCallChainBar()}
         <div class="kf-pa2-map" role="tree" aria-label="编译分层地图">

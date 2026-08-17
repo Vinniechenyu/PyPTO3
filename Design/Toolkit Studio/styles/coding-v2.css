@@ -79,17 +79,38 @@
 .kf-pa2-entry-switch b { color: var(--foreground-primary); font: 600 var(--kf-font-xs) var(--font-mono); overflow-wrap: anywhere; }
 .kf-pa2-entry-switch small { color: var(--foreground-muted); font: 9px var(--font-mono); }
 
-/* 分段式入口切换：4 个短标签一行排开，长名字移到详情卡 */
-.kf-pa2-entry-switch.is-seg { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; }
-.kf-pa2-entry-switch.is-seg button {
-  gap: 1px; padding: 5px 4px; text-align: center; justify-items: center;
-  border-left-width: 1px; border-top: 2px solid var(--border-default);
+/* 嵌套式入口切换：四项是「外层→内层」的包含关系，不是四个平级页签 */
+.kf-pa2-nest { margin-top: 9px; }
+.kf-pa2-nest-cap { display: block; margin-bottom: 5px; color: var(--primary); font: 650 9px var(--font-mono); letter-spacing: 0.04em; }
+.kf-pa2-nest-cap em { margin-left: 6px; color: var(--foreground-muted); font: 9px var(--font-mono); font-style: normal; letter-spacing: 0; }
+
+.kf-pa2-entry-switch.is-nest { gap: 4px; margin-top: 0; }
+.kf-pa2-entry-switch.is-nest button {
+  position: relative;
+  grid-template-columns: auto auto; grid-auto-flow: column; justify-content: start;
+  align-items: baseline; gap: 1px 6px;
+  margin-left: calc(var(--d) * 12px);
+  padding: 5px 8px; border-left-width: 2px;
 }
-.kf-pa2-entry-switch.is-seg button.is-active { border-top-color: var(--primary); }
-.kf-pa2-entry-switch.is-seg button.is-root { border-top-color: color-mix(in srgb, var(--success) 70%, transparent); }
-.kf-pa2-entry-switch.is-seg button.is-host { border-top-style: dashed; }
-.kf-pa2-entry-switch.is-seg b { font-size: 9px; letter-spacing: 0; }
-.kf-pa2-entry-switch.is-seg small { opacity: .8; }
+/* └ 形连线：从上一层的左轨拐进本层 */
+.kf-pa2-entry-switch.is-nest button::before {
+  content: ''; position: absolute; left: -8px; top: -8px; width: 1px; height: calc(50% + 8px);
+  background: color-mix(in srgb, var(--primary) 38%, var(--border-default));
+}
+.kf-pa2-entry-switch.is-nest button::after {
+  content: ''; position: absolute; left: -8px; top: 50%; width: 7px; height: 1px;
+  background: color-mix(in srgb, var(--primary) 38%, var(--border-default));
+}
+.kf-pa2-entry-switch.is-nest button:first-child::before,
+.kf-pa2-entry-switch.is-nest button:first-child::after { display: none; }
+.kf-pa2-entry-switch.is-nest b { font-size: 9px; }
+.kf-pa2-entry-switch.is-nest small { opacity: .75; }
+.kf-pa2-entry-switch.is-nest span {
+  grid-column: 1 / -1; grid-row: 2; color: var(--foreground-muted);
+  font: 9px var(--font-mono); line-height: 1.4; overflow-wrap: anywhere;
+}
+.kf-pa2-entry-switch.is-nest button:not(.is-active) span { display: none; }
+.kf-pa2-entry-switch.is-nest button.is-active { grid-auto-flow: row; grid-template-columns: auto auto minmax(0, 1fr); }
 
 .kf-pa2-entry-detail {
   margin-top: 8px; padding: 9px 10px;
