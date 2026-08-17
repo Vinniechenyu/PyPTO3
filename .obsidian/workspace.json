@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Product_Planning/算子作业场景_Agent_辅助内容与可视化规划.md",
+                "file": "Product_Planning/PTO_调度与执行_开发者作业辅助内容规划.md",
                 "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "算子作业场景_Agent_辅助内容与可视化规划"
+              "title": "PTO_调度与执行_开发者作业辅助内容规划"
             }
           }
         ]
@@ -80,7 +80,7 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300
+    "width": 320.16668701171875
   },
   "right": {
     "id": "e01c6a579cd8f699",
@@ -187,10 +187,17 @@
   },
   "active": "0c4452cf167e25a6",
   "lastOpenFiles": [
+    "Product_Planning/PyPTO3.0_体验设计项目材料包/PyPTO3.0_体验设计汇报.pptx.inspect.ndjson",
+    "Product_Planning/PyPTO3.0_体验设计项目材料包/PyPTO3.0_体验设计汇报.pptx",
+    "Product_Planning/PyPTO3.0_体验设计项目材料包/README.md",
+    "Product_Planning/PyPTO3.0_体验设计项目材料包/体验设计方案.md",
+    "Product_Planning/PyPTO3.0_体验设计项目材料包/材料索引与证据地图.md",
+    "Product_Planning/算子作业场景_Agent_辅助内容与可视化规划.md",
+    "Product_Planning/PyPTO3.0_体验设计项目材料包",
+    "Product_Planning/PTO_调度与执行_开发者作业辅助内容规划.md",
     "Product_Planning/算子开发_Agent_能力规划与_Coding_Agent_原型.md",
     "Product_Planning/大模型推理优化全旅程.md",
     "Product_Planning/大模型推理调优工具-功能规划.md",
-    "Product_Planning/算子作业场景_Agent_辅助内容与可视化规划.md",
     "Product_Planning/PyPTO_Studio_推理场景_产品设计.md",
     "Design/compile-failure-diagnosis/index.html",
     "Design/compile-failure-diagnosis",
@@ -200,8 +207,6 @@
     "Design/memory-inspector/Memory_V2.html.tmp.29144.d58052b0e370",
     "Design/memory-inspector/Memory_V2.html.tmp.29144.a4c87af97b53",
     "Design/memory-inspector/Memory_V2.html.tmp.29144.cfe7c9741e21",
-    "Design/memory-inspector/Memory_V2.html.tmp.29144.998b1fca4935",
-    "Design/memory-inspector/Memory_V2.html.tmp.29144.b0a98dc24cd4",
     "Product_Planning/PyPTO3.0_Toolkit_产品功能规划.md",
     "Product_Planning/模型推理相关访谈洞察.md",
     "Competitive_Analysis/PyPTO_开发者体验竞品分析_大纲.md",
@@ -218,13 +223,8 @@
     "vendor/pto-design-system/references/DESIGN.md",
     "vendor/pto-design-system/patterns/model-parallel-rank-deck/THREEJS_RANK_PACKING_SPEC.md",
     "vendor/pto-design-system/patterns/tensor-volume-canvas/tensor-volume-canvas-使用说明.md",
-    "vendor/pto-design-system/patterns/swimlane-task/README.md",
     "vendor/pto-design-system/patterns/model-graphviz/graphviz/img/jsoneditor-icons.svg",
     "vendor/pto-design-system/patterns/model-graphviz/assets/img/jsoneditor-icons.svg",
-    "vendor/pto-design-system/patterns/model-graphviz/assets/openpangu_ultramoe_718b_model_architecture_validation.md",
-    "vendor/pto-design-system/patterns/model-graphviz/assets/openpangu_2_0_flash_model_architecture_validation.md",
-    "vendor/pto-design-system/patterns/model-architecture-3d-deck/CSS3D_RANK_PACKING_SPEC.md",
-    "vendor/pto-design-system/patterns/matrix-canvas/matrix-canvas-使用说明.md",
     "vendor/pto-design-system/assets/fx.svg",
     "vendor/pto-design-system.backup-20260806-115127/patterns/model-graphviz/graphviz/img/jsoneditor-icons.svg",
     "vendor/pto-design-system.backup-20260806-115127/patterns/model-graphviz/assets/img/jsoneditor-icons.svg",
