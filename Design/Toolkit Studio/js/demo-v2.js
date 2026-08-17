@@ -9,7 +9,7 @@
   ];
   const passes = ['Semantic Lowering', 'Layout Planning', 'Parallel Mapping', 'Memory Scheduling', 'ISA Emission'];
   const guards = ['Op legality', 'Dependencies', 'Manual scope', 'Liveness', 'Paged layout', 'Index width', 'ISA capacity', 'FP32 carry'];
-  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape', passesGraphMode: 'single', rmsNormFunction: 'input', rmsNormTab: 'overview', rmsNormFlowStep: 'load', attentionTab: 'overview', attentionFocus: 'position', qwenDecodeTab: 'overview', qwenDecodeFocus: 'scope1', pagedAttentionTab: 'graph', pagedAttentionFocus: 'paging', pagedAttentionOverlay: 'data', pagedAttentionExpandedNode: null, pagedAttentionEntry: 'orch', pagedAttentionTask: 'qk', pagedAttentionDep: 'sij', pagedAttentionPipeKernel: 'qk', pagedAttentionLine: null, sourceCache: {} };
+  const state = { step: 0, workflowStep: 0, activityView: 'explorer', editorTab: 'source', activeFile: 'decode_layer.py', hardwareFlowLine: 0, hardwareFlowPinned: false, productMode: 'ide', selectedRecipe: 'decode_layer', fixed: false, compiled: false, verified: false, soloFollow: true, soloRunning: false, soloPaused: false, soloComplete: false, soloStep: -1, soloTool: 'context', currentRun: 'run_8f2c', runActionTab: 'cmd', selectedEvidence: 'tensor', intentTab: 'shape', passesGraphMode: 'single', rmsNormFunction: 'input', rmsNormTab: 'overview', rmsNormFlowStep: 'load', attentionTab: 'overview', attentionFocus: 'position', qwenDecodeTab: 'overview', qwenDecodeFocus: 'scope1', pagedAttentionTab: 'graph', pagedAttentionFocus: 'paging', pagedAttentionOverlay: 'data', pagedAttentionExpandedNode: null, pagedAttentionNode: 'orch', pagedAttentionTask: 'qk', pagedAttentionDep: 'sij', pagedAttentionPipeKernel: 'qk', pagedAttentionLine: null, sourceCache: {} };
   const EXPLORER_STEP = 1;
   const WORKFLOW_STEPS = [0, 2, 3, 4];
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -1051,65 +1051,134 @@ def mm(
   }
 
   // §5.1 JIT 入口与函数层级
-  // 数组顺序 = 声明的包含关系「外 → 内」：Host 调用 Builder，Builder 返回 Program，Program 内定义 Orchestration
-  const pagedAttentionEntries = [
-    {
-      id: 'host', name: 'golden() · build_tensors() · main()', chip: 'Host 侧', decl: '普通 Python 函数', line: 368,
-      role: 'Torch 参考与运行入口 · 不参与编译', kind: 'host', focus: 'golden', evidence: 'source', depth: 0,
-      rel: '最外层调用者 · 调用 Builder 取得 Program，再 run() 提交',
-      note: 'golden 用 torch 复现同一算法作为 Oracle；main 组装 Tensor 后通过 run() 提交。三者都不生成 Task。',
-    },
-    {
-      id: 'builder', name: 'build_dynamic_paged_attention_program', chip: 'Builder', decl: '普通 Python 函数', line: 49,
-      role: 'Host Builder · 非 JIT 入口', kind: 'host', focus: 'builder', evidence: 'source', depth: 1,
-      rel: '被 Host 调用 · 函数体内定义并 return 下一层的 Program',
-      note: '把 q_tile / head_dim / block_size 固化为闭包常量 _Q_TILE / _HEAD_DIM / _BLOCK_SIZE，供 5 个 InCore 的 pl.load 使用；Tensor 标注仍保持 pl.dynamic。',
-    },
-    {
-      id: 'program', name: 'DynamicPagedAttentionProgram', chip: 'Program', decl: '@pl.program', line: 237,
-      role: 'Program 容器 · Builder 返回值', kind: 'container', focus: 'builder', evidence: 'source', depth: 2,
-      rel: '定义在 Builder 闭包内 · 类体内定义下一层的 Orchestration',
-      note: '在 Builder 闭包内定义并返回。Builder 每次以不同 (q_tile, head_dim, block_size) 调用都会产生一个独立的 Program 类。',
-    },
-    {
-      id: 'orch', name: 'paged_attention', chip: 'Orchestration', decl: '@pl.function(type=Orchestration)', line: 249,
-      role: '芯片级 Orchestration 入口', kind: 'root', focus: 'orchestration', evidence: 'source', depth: 3,
-      rel: '最内层 · 定义在 Program 类体内 · 任务图从这里开始',
-      note: '当前任务图的唯一根入口：从 Tensor.dim 解析动态维度、经 block_table 做分页寻址，并驱动 Batch / Q Tile / KV Block 三层循环。',
-    },
-  ];
-
-  // 分层「编译地图」：Host 侧 → 特化侧 → 编译侧，JIT 边界显式画出
+  // 唯一的结构视图 + 唯一的选择器：Host 侧 → 特化侧 → 编译侧，JIT 边界显式画出。
+  // 每个节点自带详情（decl / role / detail），选中后由下方详情卡展开。
   const pagedAttentionLayerMap = [
     {
       id: 'host', tone: 'host', title: 'Host 侧', hint: '普通 Python · 逐行执行 · 不产生 Task',
       nodes: [
-        { name: 'main()', line: 487, focus: 'runtime', badge: 'Runner', tone: 'py', note: '组装 Tensor 后调用 run(program, tensors)' },
-        { name: 'build_tensors()', line: 457, focus: 'runtime', badge: 'Tensor', tone: 'py', note: '真实 Shape 在这里才确定' },
-        { name: 'golden(tensors)', line: 368, focus: 'golden', badge: 'Oracle', tone: 'py', note: 'torch 复现同一算法，作为精度基准' },
+        {
+          id: 'main', name: 'main()', line: 487, focus: 'runtime', badge: 'Runner', tone: 'py',
+          note: '下面三步都由它按顺序调用',
+          decl: 'def main()', role: 'Host Runner · 最外层调用者', evidence: 'source',
+          detail: '按 ① 取 Program → ② 造 Tensor → ③ run() 提交 → ④ golden 比对 的顺序执行。选 platform="a2a3"（Ascend910B）、strategy=Default，自身不生成任何 Task。',
+        },
+        {
+          id: 'tensors', name: 'build_tensors()', line: 457, focus: 'runtime', badge: 'Tensor', tone: 'py',
+          step: '②', callLine: 518, note: '真实 Shape 在这里才确定',
+          decl: 'def build_tensors(params)', role: 'Tensor 构造 · 动态维在此定形', evidence: 'source',
+          detail: 'query / key_cache / value_cache / block_table / out 五个 Tensor 的具体维度在这里才确定，运行时正是按它们解析 BATCH_DYN 等 pl.dynamic 符号。在 main() 第 518 行调用。',
+        },
+        {
+          id: 'golden', name: 'golden(tensors)', line: 368, focus: 'golden', badge: 'Oracle', tone: 'py',
+          step: '④', callLine: 546, note: 'run() 之后才比对，torch 复现同一算法',
+          decl: 'def golden(tensors, params)', role: 'Torch 参考实现 · 精度 Oracle', evidence: 'source',
+          detail: '用 torch 复现同一套 paged attention + online softmax，作为 rtol / atol = 2e-2 比对的基准。在 main() 第 546 行、run() 之后调用。它与编译路径完全独立，只能验证最终结果，覆盖不到中间 Tile 的边界情况。',
+        },
       ],
     },
     {
       id: 'spec', tone: 'spec', title: '特化侧', hint: '实参固化为闭包常量 · 决定编译缓存键',
       nodes: [
-        { name: 'build_dynamic_paged_attention_program(…)', line: 49, focus: 'builder', badge: 'Builder', tone: 'builder', note: 'q_tile / head_dim / block_size → _Q_TILE / _HEAD_DIM / _BLOCK_SIZE' },
+        {
+          id: 'builder', name: 'build_dynamic_paged_attention_program(…)', line: 49, focus: 'builder', badge: 'Builder', tone: 'builder',
+          note: 'q_tile / head_dim / block_size → _Q_TILE / _HEAD_DIM / _BLOCK_SIZE',
+          decl: '普通 Python 函数（非 JIT）', role: 'Host Builder · 编译特化入口', evidence: 'source',
+          detail: '把 q_tile / head_dim / block_size 固化为闭包常量 _Q_TILE / _HEAD_DIM / _BLOCK_SIZE（第 67–69 行），供 5 个 InCore 的 pl.load / pl.slice 当字面量使用；Tensor 标注仍保持 pl.dynamic。每次以不同实参调用都会得到一个独立的 Program 与独立的编译缓存键。',
+        },
       ],
     },
     {
       id: 'jit', tone: 'jit', title: '编译侧 · 任务图', hint: '1 个 Orchestration 根 + 5 个 InCore 叶',
-      container: { name: 'DynamicPagedAttentionProgram', line: 237, focus: 'orchestration', badge: '@pl.program', tone: 'container', note: 'Program 容器 · Builder 的返回值' },
-      root: { name: 'paged_attention', line: 249, focus: 'orchestration', badge: 'Orchestration', tone: 'orch', note: 'batch → q_tile → kv_block 三层 pl.range' },
+      container: {
+        id: 'program', name: 'DynamicPagedAttentionProgram', line: 237, focus: 'orchestration', badge: '@pl.program', tone: 'container',
+        note: 'Program 容器 · Builder 的返回值',
+        decl: '@pl.program', role: 'Program 容器 · 编译单元边界', evidence: 'source',
+        detail: '定义在 Builder 闭包内部并作为返回值。它是编译单元的边界：run() 接收的就是这个类，JIT 缓存也以它为单位。',
+      },
+      root: {
+        id: 'orch', name: 'paged_attention', line: 249, focus: 'orchestration', badge: 'Orchestration', tone: 'orch',
+        note: 'batch → q_tile → kv_block 三层 pl.range',
+        decl: '@pl.function(type=pl.FunctionType.Orchestration)', role: '芯片级 Orchestration 入口 · 任务图唯一根', evidence: 'source',
+        detail: '从 Tensor.dim 解析动态维度（第 270–277 行），用 ceil-div 算 Q Tile 循环次数（第 281 行），经 block_table 做分页寻址（第 303–307 行），并驱动 batch → q_tile → kv_block 三层 pl.range。所有 Task 都从这里发出。',
+      },
       leaves: [
-        { name: 'dyn_kernel_init_inplace', line: 76, focus: 'builder', badge: 'AIV', tone: 'aiv', note: '绑定动态 Shape，无实际计算' },
-        { name: 'dyn_kernel_qk_matmul', line: 93, focus: 'qk', badge: 'AIC', tone: 'aic', note: 'sij = qi @ kjᵀ' },
-        { name: 'dyn_kernel_softmax_prepare', line: 109, focus: 'softmax', badge: 'AIV', tone: 'aiv', note: 'mi / li / pij 在线统计' },
-        { name: 'dyn_kernel_pv_matmul', line: 136, focus: 'pv', badge: 'AIC', tone: 'aic', note: 'oi_tmp = pij @ vj' },
-        { name: 'dyn_kernel_online_update', line: 151, focus: 'online', badge: 'AIV', tone: 'aiv', note: 'InOut 累积状态，形成 loop-carried 依赖' },
+        {
+          id: 'init', name: 'dyn_kernel_init_inplace', line: 76, focus: 'builder', badge: 'AIV', tone: 'aiv',
+          note: '绑定动态 Shape，无实际计算',
+          decl: '@pl.function(type=pl.FunctionType.InCore)', role: 'AIV / Vector · 无实际计算', evidence: 'infer',
+          detail: 'pl.create_tensor 已完成零初始化，这个 Kernel 只在调用点（第 296 行）把具体 Shape 绑定到 pl.dynamic 标注上，把 oi / li / mi 三个累积缓冲的类型定下来。',
+        },
+        {
+          id: 'qk', name: 'dyn_kernel_qk_matmul', line: 93, focus: 'qk', badge: 'AIC', tone: 'aic',
+          note: 'sij = qi @ kjᵀ',
+          decl: '@pl.function(type=pl.FunctionType.InCore)', role: 'AIC / Cube · sij = qi @ kjᵀ', evidence: 'source',
+          detail: 'GM → L1(Mat) → L0A / L0B → L0C → GM。kj 经 pl.tile.transpose_view 做零拷贝转置后进 Right。调用点第 316 行，输出 sij [q_tile, block_size] FP32。',
+        },
+        {
+          id: 'softmax', name: 'dyn_kernel_softmax_prepare', line: 109, focus: 'softmax', badge: 'AIV', tone: 'aiv',
+          note: 'mi / li / pij 在线统计',
+          decl: '@pl.function(type=pl.FunctionType.InCore)', role: 'AIV / Vector · online softmax 统计', evidence: 'source',
+          detail: '按 valid_len（第 305 行）裁掉 KV 末块的无效列，行内求 max / exp / sum，产出 pij 与 mi / li 增量。调用点第 326 行。',
+        },
+        {
+          id: 'pv', name: 'dyn_kernel_pv_matmul', line: 136, focus: 'pv', badge: 'AIC', tone: 'aic',
+          note: 'oi_tmp = pij @ vj',
+          decl: '@pl.function(type=pl.FunctionType.InCore)', role: 'AIC / Cube · oi_tmp = pij @ vj', evidence: 'source',
+          detail: '第二个 Cube 段，M = q_tile、N = head_dim、K = block_size。调用点第 336 行，结果写入 oi_tmp 供下一步累积。',
+        },
+        {
+          id: 'online', name: 'dyn_kernel_online_update', line: 151, focus: 'online', badge: 'AIV', tone: 'aiv',
+          note: 'InOut 累积状态，形成 loop-carried 依赖',
+          decl: '@pl.function(type=pl.FunctionType.InCore)', role: 'AIV / Vector · InOut 累积状态', evidence: 'source',
+          detail: '把 oi_tmp 与 mi / li 增量并入累积器，参数标注为 pl.InOut，因此在 kv_block 循环上形成 loop-carried RAW + WAW 依赖 —— 这是整个 kernel 无法做搬运 / 计算重叠的根因。调用点第 351 行。',
+        },
       ],
     },
   ];
 
-  // §10.1 当前对象的调用链，回答「我在哪一层」
+  // 跨泳道的两次调用。步骤号 ①③ 在此，②④ 挂在 Host 泳道内不跨层的节点上，每个号只出现一次。
+  const pagedAttentionFlows = {
+    hostToSpec: {
+      step: '①', label: 'build_…program(q_tile=16, …)', line: 512, focus: 'runtime',
+      hint: 'main() 第 512 行 · 关键字调用 Builder 取得 Program · 点击跳转',
+    },
+    specToJit: {
+      step: '③', label: 'run(program, …, RunConfig)', line: 526, focus: 'runtime',
+      hint: 'main() 第 526 行 · 提交执行，跨过 JIT 边界 · 点击跳转',
+    },
+  };
+
+  // 扁平索引：节点 id → 节点，供详情卡与联动查表
+  const pagedAttentionNodeIndex = pagedAttentionLayerMap.reduce((acc, layer) => {
+    [layer.container, layer.root, ...(layer.leaves || []), ...(layer.nodes || [])]
+      .filter(Boolean)
+      .forEach((node) => { acc[node.id] = node; });
+    return acc;
+  }, {});
+
+  // 关注区间 → 代表节点，使别处（任务卡 / 依赖卡 / 源码行）改变选择时地图与详情卡同步
+  const pagedAttentionFocusToNode = {
+    dynamic: 'builder', builder: 'builder', qk: 'qk', softmax: 'softmax', pv: 'pv', online: 'online',
+    orchestration: 'orch', paging: 'orch', golden: 'golden', runtime: 'main',
+  };
+
+  // §10.1 调用链，回答「我在哪一层」。节点级优先，精确到每个声明。
+  const pagedAttentionNodeChain = {
+    main: ['main()', 'run(program, tensors)', '→ 交给编译器'],
+    tensors: ['main()', 'build_tensors(params)', '决定动态维实参'],
+    golden: ['main()', 'golden(tensors)', 'torch · 不编译'],
+    builder: ['main()', 'build_…program(16, 128, 128)', 'return Program'],
+    program: ['build_…program()', '@pl.program', 'DynamicPagedAttentionProgram'],
+    orch: ['run()', 'DynamicPagedAttentionProgram', 'paged_attention'],
+    init: ['paged_attention', 'b_idx → q_idx', 'dyn_kernel_init_inplace'],
+    qk: ['paged_attention', 'b_idx → q_idx → bn', 'dyn_kernel_qk_matmul'],
+    softmax: ['paged_attention', 'b_idx → q_idx → bn', 'dyn_kernel_softmax_prepare'],
+    pv: ['paged_attention', 'b_idx → q_idx → bn', 'dyn_kernel_pv_matmul'],
+    online: ['paged_attention', 'b_idx → q_idx → bn', 'dyn_kernel_online_update'],
+  };
+
+  // 区间级兜底：源码里没有对应声明节点的关注区间（paging / dynamic 等）
   const pagedAttentionCallChain = {
     runtime: ['main()', 'run(program, tensors)', '→ 交给编译器'],
     golden: ['main()', 'golden(tensors)', 'torch · 不编译'],
@@ -1123,7 +1192,39 @@ def mm(
     online: ['paged_attention', 'b_idx → q_idx → bn', 'dyn_kernel_online_update'],
   };
 
-  // 特化机制：哪些改动换 Program，哪些改动复用同一份代码
+  // 本次编译条：读整个 section 的前提。
+  // 「特化」一词只落在真正构成 JIT 特化键的那一组上（对齐 pypto/jit/specializer.py 与规划文档 §6.3）。
+  // 前两组的配色与下方固 / 动两张卡一致。
+  const pagedAttentionCurrentSpec = [
+    {
+      id: 'const', label: '特化键',
+      hint: '闭包常量 · 构成 JIT 特化键，改动换一个 Program 与新的编译缓存',
+      items: [
+        { label: 'q_tile', value: '16' },
+        { label: 'head_dim', value: '128' },
+        { label: 'block_size', value: '128' },
+      ],
+    },
+    {
+      id: 'dyn', label: '动态维',
+      hint: 'pl.dynamic 维 · 运行时按 Tensor.dim 解析，不参与特化，不触发重编译',
+      items: [
+        { label: 'batch', value: '64' },
+        { label: 'heads', value: '16' },
+        { label: 'ctx', value: '8192' },
+      ],
+    },
+    {
+      id: 'target', label: '目标',
+      hint: 'run() 参数 · 改动会换编译产物，但不走特化机制',
+      items: [
+        { label: 'platform', value: 'a2a3 · 910B' },
+        { label: 'strategy', value: 'Default' },
+      ],
+    },
+  ];
+
+  // 改动影响：哪些改动换 Program，哪些改动复用同一份代码
   const pagedAttentionSpecialization = [
     {
       kind: 'const', mark: '固', title: '闭包常量 · 编译期固化', effect: '改动 → 新 Program + 新缓存键 + 重新编译',
@@ -1356,23 +1457,35 @@ def mm(
   };
 
   function pagedAttentionMapNode(node, extraClass) {
-    const active = node.focus === state.pagedAttentionFocus ? ' is-active' : '';
+    const active = node.id === state.pagedAttentionNode ? ' is-active' : '';
+    const inFocus = !active && node.focus === state.pagedAttentionFocus ? ' is-in-focus' : '';
     const target = state.pagedAttentionLine === node.line ? ' is-line-target' : '';
-    return `<button type="button" class="kf-pa2-node is-${node.tone}${active}${target}${extraClass ? ' ' + extraClass : ''}" data-paged-attention-focus="${node.focus}" data-pa2-line="${node.line}" title="跳到第 ${node.line} 行">
-      <span class="kf-pa2-node-top"><b>${node.name}</b><em>${node.badge}</em></span>
+    const step = node.step ? `<span class="kf-pa2-node-step" title="在 main() 第 ${node.callLine} 行调用">${node.step}</span>` : '';
+    return `<button type="button" class="kf-pa2-node is-${node.tone}${active}${inFocus}${target}${extraClass ? ' ' + extraClass : ''}" data-paged-attention-focus="${node.focus}" data-pa2-node="${node.id}" data-pa2-line="${node.line}" title="跳到第 ${node.line} 行">
+      <span class="kf-pa2-node-top">${step}<b>${node.name}</b><em>${node.badge}</em></span>
       <span class="kf-pa2-node-foot"><small>${node.note}</small><i>${node.line}</i></span>
     </button>`;
   }
 
+  // 泳道之间的调用箭头：真实调用点，可点击跳转，与节点一致的行为
+  function pagedAttentionFlowArrow(flow) {
+    const target = state.pagedAttentionLine === flow.line ? ' is-line-target' : '';
+    return `<button type="button" class="kf-pa2-flow${target}" data-paged-attention-focus="${flow.focus}" data-pa2-line="${flow.line}" title="${flow.hint}">
+      <span><i>${flow.step}</i><code>${flow.label}</code><em>${flow.line}</em></span>
+    </button>`;
+  }
+
   function pagedAttentionCallChainBar() {
-    const chain = pagedAttentionCallChain[state.pagedAttentionFocus] || pagedAttentionCallChain.orchestration;
+    const node = pagedAttentionNodeIndex[state.pagedAttentionNode];
+    // 节点与当前关注区间一致时用节点链；否则（如源码点到 paging 区间）退回区间链
+    const chain = (node && node.focus === state.pagedAttentionFocus && pagedAttentionNodeChain[node.id])
+      || pagedAttentionCallChain[state.pagedAttentionFocus]
+      || pagedAttentionCallChain.orchestration;
     return `<div class="kf-pa2-chain" aria-label="当前对象调用链"><span>调用链</span>${chain.map((hop) => `<code>${hop}</code>`).join('<i>›</i>')}</div>`;
   }
 
   function pagedAttentionEntrySection() {
-    const active = pagedAttentionEntries.find((entry) => entry.id === state.pagedAttentionEntry)
-      || pagedAttentionEntries.find((entry) => entry.id === 'orch');
-    const jit = pagedAttentionLayerMap.find((layer) => layer.id === 'jit');
+    const active = pagedAttentionNodeIndex[state.pagedAttentionNode] || pagedAttentionNodeIndex.orch;
     const lane = (layer) => `
       <div class="kf-pa2-lane is-${layer.tone}">
         <header><b>${layer.title}</b><small>${layer.hint}</small></header>
@@ -1383,28 +1496,27 @@ def mm(
       </div>`;
     return `
       <section class="kf-inspector-section kf-pa2-entry"><header><h2 class="kf-inspector-title">JIT 入口与函数层级</h2></header>
-        <div class="kf-pa2-nest">
-          <div class="kf-pa2-entry-switch is-nest" role="group" aria-label="声明嵌套层级">${pagedAttentionEntries.map((entry) => `<button type="button" class="${entry.id === active.id ? 'is-active' : ''} is-${entry.kind}" style="--d:${entry.depth}" data-pa2-entry="${entry.id}" data-pa2-line="${entry.line}" title="${entry.rel}"><b>${entry.chip}</b><small>${entry.line}</small><span>${entry.rel}</span></button>`).join('')}</div>
+        <div class="kf-pa2-current" aria-label="本次编译的实参与配置">
+          <header><span>本次编译</span>${ev('source')}</header>
+          ${pagedAttentionCurrentSpec.map((group) => `<div class="kf-pa2-current-row is-${group.id}"><i title="${group.hint}">${group.label}</i>${group.items.map((item) => `<b title="${group.hint}"><em>${item.label}</em>${item.value}</b>`).join('')}</div>`).join('')}
         </div>
-        <div class="kf-pa2-entry-detail"><div class="kf-pa2-entry-id"><b>${active.name}</b><code>${active.decl}</code></div><div><span>调度含义</span><b>${active.role}</b></div><p>${active.note}</p><footer><code>第 ${active.line} 行</code>${ev(active.evidence)}</footer></div>
-        ${pagedAttentionCallChainBar()}
         <div class="kf-pa2-map" role="tree" aria-label="编译分层地图">
           ${lane(pagedAttentionLayerMap.find((layer) => layer.id === 'host'))}
-          <div class="kf-pa2-flow"><span>build_…program(16, 128, 128)</span></div>
+          ${pagedAttentionFlowArrow(pagedAttentionFlows.hostToSpec)}
           ${lane(pagedAttentionLayerMap.find((layer) => layer.id === 'spec'))}
-          <div class="kf-pa2-flow"><span>返回 Program 类 · run() 提交</span></div>
+          ${pagedAttentionFlowArrow(pagedAttentionFlows.specToJit)}
           <div class="kf-pa2-boundary"><span>JIT 边界</span><small>以下由编译器接管 · 才开始产生 Task</small></div>
-          ${lane(jit)}
+          ${lane(pagedAttentionLayerMap.find((layer) => layer.id === 'jit'))}
         </div>
-        <details class="kf-pa2-multi-entry"><summary><i>!</i><b>本文件只有 1 个 Orchestration 入口</b>${ev('source')}</summary><p>任务图以 <code>paged_attention</code> 为唯一根。但 Builder 每次以不同 <code>(q_tile, head_dim, block_size)</code> 调用都会得到一个<b>独立的 Program、独立的 JIT 特化与编译缓存</b>；这些实例之间不会自动建立 Tensor 依赖，也不按源码顺序连续执行。</p></details>
-        <div class="kf-pa2-spec"><header><span>特化机制 · 什么会触发重编译</span>${ev('source')}</header>
+        <div class="kf-pa2-entry-detail"><div class="kf-pa2-entry-id"><b>${active.name}</b><code>${active.decl}</code></div><div><span>调度含义</span><b>${active.role}</b></div><p>${active.detail}</p><footer><code>第 ${active.line} 行</code>${ev(active.evidence)}</footer></div>
+        ${pagedAttentionCallChainBar()}
+        <div class="kf-pa2-spec"><header><span>改动影响 · 什么会触发重编译</span>${ev('source')}</header>
           <div class="kf-pa2-spec-split">${pagedAttentionSpecialization.map((group) => `
             <div class="is-${group.kind}"><header><i>${group.mark}</i><b>${group.title}</b></header>
               <div class="kf-pa2-spec-items">${group.items.map((item) => `<code>${item}</code>`).join('')}</div>
               <strong>${group.effect}</strong><small>${group.note}</small></div>`).join('')}
-          </div>
-          <dl><div><dt>batch / heads</dt><dd>64 / 16</dd></div><div><dt>context_len</dt><dd>8192</dd></div><div><dt>platform</dt><dd>a2a3 · 910B</dd></div><div><dt>strategy</dt><dd>Default</dd></div></dl>
-          <small>以上为 <code>main()</code> 第 487–520 行的当前实参组合。</small></div>
+          </div></div>
+        <details class="kf-pa2-multi-entry"><summary><i>!</i><b>本文件只有 1 个 Orchestration 入口</b>${ev('source')}</summary><p>任务图以 <code>paged_attention</code> 为唯一根。但 Builder 每次以不同 <code>(q_tile, head_dim, block_size)</code> 调用都会得到一个<b>独立的 Program、独立的 JIT 特化与编译缓存</b>；这些实例之间不会自动建立 Tensor 依赖，也不按源码顺序连续执行。</p></details>
       </section>`;
   }
 
@@ -1854,6 +1966,8 @@ def mm(
     if (pagedAttentionTilePipelines[focus]) state.pagedAttentionPipeKernel = focus;
     const dep = pagedAttentionFocusToDep[focus];
     if (dep) state.pagedAttentionDep = dep;
+    const node = pagedAttentionFocusToNode[focus];
+    if (node) state.pagedAttentionNode = node;
   }
   const rmsNormProfiles = {
     input: {
@@ -2704,7 +2818,7 @@ def mm(
         if (isPagedAttentionFile(filePath)) {
           state.pagedAttentionTab = 'graph';
           state.pagedAttentionOverlay = 'data';
-          state.pagedAttentionEntry = 'orch';
+          state.pagedAttentionNode = 'orch';
           state.pagedAttentionExpandedNode = null;
           state.pagedAttentionFocus = 'orchestration';
           state.pagedAttentionTask = 'qk';
@@ -2809,17 +2923,6 @@ def mm(
       state.pagedAttentionOverlay = pagedAttentionOverlay.dataset.paOverlay;
       renderPagedAttentionInspector();
     }
-    const pagedAttentionEntry = event.target.closest('[data-pa2-entry]');
-    if (pagedAttentionEntry) {
-      state.pagedAttentionEntry = pagedAttentionEntry.dataset.pa2Entry;
-      const line = Number(pagedAttentionEntry.dataset.pa2Line);
-      if (line) {
-        state.pagedAttentionLine = line;
-        syncPagedAttentionSelection(pagedAttentionFocusForLine(line));
-      }
-      renderPagedAttentionInspector();
-      revealPagedAttentionLine(line);
-    }
     const pagedAttentionTaskPick = event.target.closest('[data-pa2-task]');
     if (pagedAttentionTaskPick) {
       state.pagedAttentionTask = pagedAttentionTaskPick.dataset.pa2Task;
@@ -2847,7 +2950,10 @@ def mm(
     const pagedAttentionFocus = event.target.closest('[data-paged-attention-focus]');
     if (pagedAttentionFocus && !pagedAttentionFocus.closest('#dslEditor')) {
       const line = Number(pagedAttentionFocus.dataset.pa2Line);
+      const nodeId = pagedAttentionFocus.dataset.pa2Node;
       syncPagedAttentionSelection(pagedAttentionFocus.dataset.pagedAttentionFocus);
+      // 地图节点是精确选择，覆盖 focus 推出的代表节点
+      if (nodeId) state.pagedAttentionNode = nodeId;
       if (line) state.pagedAttentionLine = line;
       renderPagedAttentionInspector({ scrollToFocus: !line });
       if (line) revealPagedAttentionLine(line);
