@@ -79,31 +79,6 @@
 .kf-pa2-entry-detail footer { display: flex; align-items: center; gap: 4px; margin-top: 7px; }
 .kf-pa2-entry-detail code { color: var(--foreground-muted); font: 9px var(--font-mono); }
 
-.kf-pa2-multi-entry {
-  margin-top: 9px; padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--warning) 32%, var(--border-subtle));
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--warning) 7%, transparent);
-}
-.kf-pa2-multi-entry > summary {
-  display: flex; align-items: center; gap: 7px; cursor: pointer; list-style: none;
-}
-.kf-pa2-multi-entry > summary::-webkit-details-marker { display: none; }
-.kf-pa2-multi-entry > summary::after {
-  content: '展开'; margin-left: auto; flex: 0 0 auto;
-  color: var(--foreground-muted); font: 9px var(--font-mono);
-}
-.kf-pa2-multi-entry[open] > summary::after { content: '收起'; }
-.kf-pa2-multi-entry[open] > p { margin-top: 6px; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--warning) 22%, transparent); }
-.kf-pa2-multi-entry summary > i {
-  display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
-  color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, transparent);
-  font: 650 10px var(--font-mono); font-style: normal;
-}
-.kf-pa2-multi-entry b { color: var(--foreground-primary); font-size: var(--kf-font-xs); }
-.kf-pa2-multi-entry p { margin: 4px 0 0; color: var(--foreground-secondary); font-size: var(--kf-font-micro); line-height: 1.55; }
-.kf-pa2-multi-entry code { padding: 0 3px; border-radius: 3px; background: var(--surface-3); font: 9px var(--font-mono); }
-
 /* 调用链：当前对象所处层级 */
 .kf-pa2-chain {
   display: flex; flex-wrap: wrap; align-items: center; gap: 3px 4px;
@@ -316,6 +291,28 @@
 }
 #dslEditor [data-paged-attention-line].is-paged-attention-line-target > i {
   color: var(--primary); font-weight: 700;
+}
+#dslEditor .kf-pa-source-row { grid-template-columns: 50px minmax(0, 1fr) auto; align-items: center; }
+#dslEditor .kf-pa-source-tag {
+  justify-self: end; margin-left: 18px; padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--primary) 38%, var(--border-subtle)); border-radius: 999px;
+  color: var(--primary); background: color-mix(in srgb, var(--primary) 9%, transparent);
+  font: 650 9px/1.4 var(--font-mono); white-space: nowrap; pointer-events: none;
+  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+#dslEditor .kf-pa-source-tag.is-dynamic,
+#dslEditor .kf-pa-source-tag.is-builder,
+#dslEditor .kf-pa-source-tag.is-orchestration,
+#dslEditor .kf-pa-source-tag.is-paging { color: var(--primary); }
+#dslEditor .kf-pa-source-tag.is-qk,
+#dslEditor .kf-pa-source-tag.is-pv { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 42%, var(--border-subtle)); background: color-mix(in srgb, var(--warning) 8%, transparent); }
+#dslEditor .kf-pa-source-tag.is-softmax,
+#dslEditor .kf-pa-source-tag.is-online { color: var(--success); border-color: color-mix(in srgb, var(--success) 42%, var(--border-subtle)); background: color-mix(in srgb, var(--success) 8%, transparent); }
+#dslEditor .kf-pa-source-tag.is-golden,
+#dslEditor .kf-pa-source-tag.is-runtime { color: var(--foreground-muted); border-color: var(--border-subtle); background: var(--surface-2); }
+#dslEditor .kf-pa-source-row.is-paged-attention-line-active .kf-pa-source-tag,
+#dslEditor .kf-pa-source-row.is-paged-attention-line-target .kf-pa-source-tag {
+  color: var(--foreground-primary); border-color: var(--primary); background: color-mix(in srgb, var(--primary) 18%, transparent);
 }
 @keyframes kf-pa2-line-flash {
   0% { background: color-mix(in srgb, var(--primary) 52%, transparent); }

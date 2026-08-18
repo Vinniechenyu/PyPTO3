@@ -1189,271 +1189,288 @@ Copying full KV state back to host after every step defeats serving
 performance. The design should aim for worker-resident KV pages and only sync
 metadata to the host scheduler. Host-visible KV materialization should be a
 debug/fallback path."
-"20","[Feature] TurboQuant NPU Kernel Integration","open","2026-06-02T07:05:36Z","2026-06-16T02:45:43Z",,"https://github.com/hw-native-sys/pypto-serving/issues/20","# TurboQuant KV Cache Compression — Design Document
+"20","[Feature] TurboQuant NPU Kernel Integration","open","2026-06-02T07:05:36Z","2026-07-24T03:26:17Z",,"https://github.com/hw-native-sys/pypto-serving/issues/20","# TurboQuant KV-Cache Compression
 
-## Overview
+TurboQuant (TQ) is an online KV-cache quantization path for Qwen3-14B on
+Ascend NPU (910B/C, 950). It uses **PolarQuant** — random rotation followed
+by optimal scalar (Lloyd-Max) quantization — to compress the K and V caches
+from BF16 (~16 bits/value) to **4 bits/value** while the model runs. The
+method is adapted from [TurboQuant (ICLR 2026)](https://arxiv.org/abs/2504.19874).
 
-TurboQuant is a 4-bit KV cache compression method for Qwen3-14B inference on
-Ascend NPU (910B/C, 950). It uses **PolarQuant** (random rotation + optimal
-scalar quantization) to compress K/V caches from BF16 (~16 bits/value) down to
-4 bits/value. The reference implementation is adapted from the ICLR 2026 paper
-[TurboQuant](https://arxiv.org/abs/2504.19874).
+TQ is an **opt-in branch alongside the default FP (BF16) path**. It is
+enabled with `--tq`; without the flag, serving is byte-for-byte identical to
+the non-TQ path. TQ decode returns raw logits, so device sampling and
+embedding are disabled in TQ mode and the engine samples on the host.
 
-**Key insight**: 4-bit PolarQuant with 16 Lloyd-Max centroids outperforms 3-bit
-PolarQuant + 1-bit QJL error correction at the same bit rate. QJL is excluded
-from this implementation.
+**Key choice:** pure 4-bit PolarQuant is used. The paper's 1-bit QJL
+residual correction (Algorithm 2) is excluded — at the same 4-bit rate,
+4-bit PolarQuant alone beats 3-bit PolarQuant + 1-bit QJL, and QJL's
+amplified variance turns into attention noise after softmax.
+
+## Usage
+
+Offline generation (`examples/model/qwen3_14b/npu_generate.py`):
+
+```bash
+python examples/model/qwen3_14b/npu_generate.py \
+  --model-dir /path/to/Qwen3-14B \
+  --platform a2a3 \
+  --tq \
+  --max-seq-len 512 \
+  --max-new-tokens 128
+```
+
+Serving:
+
+```bash
+pypto-serving \
+  --model /path/to/Qwen3-14B \
+  --backend npu \
+  --platform a2a3 \
+  --tq \
+  --max-model-len 512 \
+  --port 8899
+```
+
+Drop `--tq` to run the unchanged FP path.
 
 ## Architecture
 
-### Files
-
-| File | Lines | Role |
-|------|-------|------|
-| `turboquant_kv.py` | 337 | Lloyd-Max codebook, shared KV quantize/dequant primitives |
-| `qwen3_14b_prefill_tq.py` | 1362 | Full prefill forward with inline TQ compression |
-| `qwen3_14b_decode_tq.py` | 1322 | Full decode forward with TQ dequant attention |
-| `npu_executor.py` | - | Compile-time: rotation matrix generation, codebook creation |
-| `cpu_executor.py` | - | Reference CPU executor with TQ support |
-| `python/core/turboquant/` | - | CPU-side compressor, rotation matrix, codebook helpers |
-
-### Runtime Pipeline
+The FP path is untouched. Every TQ addition is gated behind
+`RuntimeConfig.kv_quant_config` (`KvQuantConfig`) and `tq_mode`:
 
 ```
-Input tokens
-    │
-    ├── Prefill (prompt): prefill_fwd_tq
-    │     └── For each transformer layer:
-    │           ├── RMSNorm → Q/K/V projection → per-head RMSNorm
-    │           ├── K/V: RoPE → L2 norm → rotate → Lloyd-Max quantize → store UINT8 + FP32 scale
-    │           ├── Q:   per-head RMSNorm → RoPE
-    │           ├── Attention: dequant K/V from cache → QK matmul → softmax → SV matmul
-    │           └── Output proj + residual + RMSNorm + SwiGLU MLP + residual
-    │
-    ├── Decode (autoregressive): decode_fwd_tq
-    │     └── For each token, for each transformer layer:
-    │           ├── RMSNorm → Q/K/V projection → per-head RMSNorm
-    │           ├── K/V: RoPE → L2 norm → rotate → quantize → append to cache
-    │           ├── Q:   per-head RMSNorm → RoPE (one head at a time)
-    │           ├── Attention: dequant all K/V from cache → QK matmul → softmax → SV matmul
-    │           └── Output proj + residual + RMSNorm + SwiGLU MLP + residual
-    │
-    └── RMSNorm head → LM head → logits → sample next token
+--tq  →  RuntimeConfig.kv_quant_config (KvQuantConfig | None)
+      →  model_runner:   enabled ? allocate UINT8 + FP32-scale pools
+                                  : BF16 pools              (unchanged)
+      →  npu_executor:   tq_mode ? _compile_tq_kernels (26-param kernels)
+                                : existing FP compile     (unchanged)
+      →  npu_runner:     TQ-aware _kv_bytes_per_page + 26-element arg tuples
 ```
 
-## PolarQuant Algorithm
+Serving-repo files:
+
+| File | Role |
+| --- | --- |
+| `config/types.py` | `KvQuantConfig` frozen dataclass; `RuntimeConfig.kv_quant_config`. |
+| `model/common/runner/model_runner.py` | TQ KV-cache allocation (nibble-packed UINT8 + FP32 scales). |
+| `model/qwen/npu_executor.py` | `tq_mode`; `supports_device_* = not tq_mode`; `_compile_tq_kernels` (rotation matrix + codebook, 26-param compile, shape validation). |
+| `model/qwen/npu_runner.py` | TQ kernel-arg tuples; `_kv_bytes_per_page`; rot/codebook static uploads. |
+| `model/qwen/qwen3_l3_dispatch.py` | `prefill_fwd_tq` / `decode_fwd_tq` bindings + host wrappers. |
+| `cli/main.py`, `examples/model/qwen3_14b/npu_generate.py` | `--tq` / `--tq-mode` flag. |
+
+The quantization kernels are vendored from pypto-lib under
+`pypto-lib/models/qwen3/14b/` and loaded at compile time:
+
+| File | Role |
+| --- | --- |
+| `turboquant_kv.py` | Lloyd-Max codebook; shared quantize/dequant primitives. |
+| `qwen3_14b_prefill_tq_draft.py` | Full prefill forward with inline TQ compression. |
+| `qwen3_14b_decode_tq_draft.py` | Decode forward with TQ dequant attention. |
+
+Per-layer pipeline (prefill and decode share the same shape):
+
+```
+RMSNorm → Q/K/V proj → per-head Q/K RMSNorm
+K/V: RoPE (K only) → L2 norm + normalize → rotate (R) → Lloyd-Max quantize
+                                                   → store UINT8 idx + FP32 scale
+Q:   per-head RMSNorm → RoPE
+Attention: dequant K/V from cache (gather codebook × scale, unrotate) →
+           QK matmul → softmax → SV matmul
+out_proj + residual → RMSNorm → SwiGLU MLP + residual
+```
+
+## Algorithm
+
+### Core idea
+
+Multiplying a vector by a random Haar-orthogonal matrix `R` spreads its energy
+evenly: once `x̂` is unit-norm, each coordinate of `y = x̂ @ R` is
+(asymptotically) i.i.d. `N(0, 1/d)`. Independent, identically distributed
+coordinates are exactly the case a 1-D scalar quantizer handles optimally —
+and for a Gaussian source the optimal scalar quantizer is the Lloyd-Max
+codebook. So PolarQuant reduces vector quantization to: pull off the L2 norm,
+rotate, and independently scalar-quantize every coordinate with one shared
+Gaussian-optimal codebook.
+
+Two consequences drive the design:
+
+- The norm `γ = ‖x‖` is stored in FP32, so quantization error only perturbs the
+  *direction* of the vector, never its magnitude. Attention scores `QKᵀ` are
+  inner products, so low angular error preserves them.
+- Because every coordinate shares one distribution, a single fixed 16-level
+  codebook serves all dimensions, heads, and layers — no per-channel fitting.
+
+V is consumed by a `softmax · V` weighted sum, where low mean-squared
+reconstruction error is the right target; the same MSE-optimal PolarQuant
+reconstruction serves it. This implementation applies pure 4-bit PolarQuant to
+both K and V.
 
 ### Quantize
 
 ```
-Given: K/V vector x ∈ R^d (post-RoPE for K, raw for V)
-
-1. L2 norm:        γ = sqrt(‖x‖² + ε)
-2. Normalize:      x̂ = x / γ                    
-3. Rotate:         y = x̂_bf16 @ R               (R: Haar orthogonal, BF16)
-4. Lloyd-Max:      idx[j] = Σ 1(y[j] ≥ b_i)     (15 boundary comparisons → 0–15)
-5. Store:          (indices as UINT8, γ as FP32 scale)
+x ∈ R^d                      (post-RoPE for K, raw for V)
+γ = sqrt(‖x‖² + ε)           L2 norm
+x̂ = x / γ                    normalize
+y = x̂ @ R                    random rotation (Haar orthogonal, BF16)
+idx[j] = Σ 𝟙(y[j] ≥ b_i)    15 boundary comparisons → index ∈ [0, 15]
+store (idx as nibble-packed UINT8, γ as FP32 scale)
 ```
 
 ### Dequantize
 
 ```
-Given: UINT8 indices, FP32 scale γ, rotation matrix R
-
-1. Gather:         ŷ = codebook[indices]          (FP32 centroids in rotated domain)
-2. Renormalize:    ŷ = ŷ / ‖ŷ‖                    (correct quantization norm drift)
-3. Rescale:        ŷ = ŷ · γ                      (restore original magnitude)
-4. Unrotate:       x̂ = ŷ_bf16 @ R^T               (back to original space, BF16)
+ŷ = codebook[idx]            FP32 centroids in rotated domain
+ŷ = ŷ / ‖ŷ‖                  renormalize (correct quantization norm drift)
+ŷ = ŷ · γ                    restore magnitude
+x̂ = ŷ @ R^T                  inverse rotation back to original space
 ```
 
-### Lloyd-Max Codebook
+### Lloyd-Max codebook
 
-- Distribution: N(0, 1/√d) — coordinates after rotation are i.i.d. Gaussian
-- Solved analytically via Gaussian conditional expectation (iterative)
-- 4-bit → 16 levels: [-0.2416, -0.1829, ..., 0.1829, 0.2416]
-- 15 boundary thresholds: midpoints between adjacent centroids
-- Computed once at module load in `turboquant_kv.solve_lloyd_max()`
+After rotation, coordinates are i.i.d. `N(0, 1/d)`. Optimal 4-bit centroids
+(16 levels) are solved analytically via Gaussian conditional expectation at
+module load (`turboquant_kv.solve_lloyd_max()`); the 15 quantization
+boundaries are the midpoints between adjacent centroids.
 
-### Rotation Matrix
+### Rotation matrix
 
-- Per-layer dense orthogonal matrix (128×128, BF16)
-- Generated via QR decomposition: `Q = qr(randn(128,128))`
-- Normalized: `Q = Q * sign(diag(R))` for consistent sign between CPU and NPU
-- Seed scheme: `seed = 42 + layer_idx * 1000` (deterministic, per-layer)
-- Stored as `[num_layers * head_dim, head_dim]` stacked BF16 tensor
+- Per-layer dense orthogonal matrix (128×128, BF16), stacked as
+  `[num_layers * head_dim, head_dim]`.
+- Built via QR of a Gaussian matrix with consistent column signs:
+  `Q = qr(randn)[0] * sign(diag(R))`.
+- Seed `42 + layer * 1000` per layer (deterministic; must match between the
+  CPU reference and the NPU).
 
-## Prefill Attention (with TQ)
+### Scope of this implementation
 
-```
-prefill_fwd_tq
-  │
-  ├── Expand codebook: [1, 16] → [CMP_CHUNK, 16] for dequant gather
-  │
-  └── For each layer:
-        prefill_layer_tq
-          │
-          ├── Scope 1: RMSNorm → Q/K/V proj → per-head Q/K RMSNorm
-          │
-          ├── Scope 2a: turboquant_kv_prefill()
-          │     For each KV head (8 heads, batched by 8):
-          │       A: K RoPE + L2 norm + normalize → k_norm_buf (BF16)
-          │       B: k_norm_bf16 @ R → k_rot → 15× boundary cmp → UINT8 indices
-          │       C: V L2 norm + normalize → v_norm_buf (BF16)
-          │       D: v_norm_bf16 @ R → v_rot → 15× boundary cmp → UINT8 indices
-          │     → quant_k_temp (UINT8), k_scales_buf (FP32), V equivalents
-          │
-          ├── Scope 2b: Cache write + Q RoPE + Causal Attention
-          │     For each token:
-          │       - Scatter quantized K/V indices + scales to paged cache
-          │       - Q RoPE + pad into all_q_padded (BF16, 16 rows per KV head group)
-          │       - For each Q group (8 groups total):
-          │           q_padded @ k_dequant^T → raw_scores
-          │           softmax → attn_weights
-          │           attn_weights @ v_dequant → ctx
-          │           Online softmax accumulation across sequence blocks
-          │       - ctx = oi / li → attention output
-          │
-          └── Scope 3: out_proj + residual + post RMSNorm + SwiGLU MLP
+The full TurboQuant paper offers more than is used here:
+
+- **QJL residual (Algorithm 2):** (b−1)-bit PolarQuant plus 1-bit QJL for
+  unbiased inner products. Excluded — see the top of this doc.
+- **Fast rotation:** `D₁ H D₂` (random ±1 diagonals + Walsh-Hadamard),
+  `O(d log d)` instead of `O(d²)`. Not used; a per-layer dense QR matrix is
+  applied instead (cheap relative to the attention it feeds).
+- **Mixed bit-rates:** outlier channels at higher bits (e.g. 2.5/3.5-bit).
+  Not used; a flat 4-bit rate is applied to all coordinates.
+
+## Cache layout
+
+Per token, per KV head, one row for K and one for V:
+
+| Field | Dtype | Bytes |
+| --- | --- | --- |
+| Nibble-packed indices (`head_dim // 2`) | UINT8 | 64 |
+| L2 scale | FP32 | 4 |
+| **Total per row** | | **68** |
+
+Versus 256 bytes for a BF16 row (`head_dim × 2`), this is **~3.76×** per-row
+compression. Allocation in `model_runner.init_kv_cache`:
+
+```python
+quant_shape = (cache_rows, config.head_dim // 2)   # UINT8, nibble-packed
+scale_shape = (cache_rows, 1)                       # FP32
+# quant_k/v_pages (UINT8) + k/v_scales_pages (FP32): four tensors
 ```
 
-## Decode Attention (with TQ)
+where `cache_rows = num_layers * num_pages * num_kv_heads * page_size`. Bytes
+per page (all layers, K + V) is
+`rows_per_page * 2 * (head_dim // 2 + 4)` (`npu_runner._kv_bytes_per_page`).
+TQ requires `page_size = 128`, enforced by `_validate_supported_shape`.
 
-```
-decode_fwd_tq
-  │
-  ├── Expand codebook: [1, 16] → [CMP_CHUNK, 16]
-  │
-  └── For each layer:
-        decode_layer_tq
-          │
-          ├── Scope 1: RMSNorm → Q/K/V proj → per-head Q/K RMSNorm
-          │
-          ├── Scope 2a: turboquant_kv_prefill() — quantize new token's K/V
-          │     (same as prefill, padded to TOK_TILE=16 rows)
-          │
-          ├── Scope 2b: Cache scatter + Q RoPE (one head at a time)
-          │     CRITICAL: Q_HEAD_BATCH=5 heads per KV head group
-          │     Each Q head processed individually as [1, HEAD_DIM]
-          │     (avoids pypto compiler bug with [5, HEAD_DIM] batch slice)
-          │
-          ├── Scope 2c: Attention with dequantized K/V
-          │     For each Q group (8 groups) and each sequence block:
-          │       qk_dequant:    gather(codebook, UINT8 indices) → BF16
-          │       qk_renorm:     rsqrt + scale → BF16
-          │       qk_unrotate:   matmul(rot_slice^T, out=FP32) → cast BF16
-          │       qk_matmul:     q_padded @ k_dequant^T → raw_scores
-          │       softmax:       exp(scores / √d) → BF16
-          │       sv_dequant:    V dequant (BF16, same as K)
-          │       sv_unrotate:   V unrotate (BF16 matmul)
-          │       sv_matmul:     attn @ v_dequant → oi
-          │       Online softmax accumulation
-          │       ctx = oi / li
-          │
-          └── Scope 3: out_proj + residual + post RMSNorm + SwiGLU MLP
-```
-
-## Dequant Pipeline (Decode Attention)
-
-The entire attention dequant path uses **BF16** precision to match the prefill:
-
-```
-quant_k_cache[UINT8] 
-  → cast FP16 → cast INT32 
-  → gather(codebook) → FP32 centroids
-  → cast BF16 → temp_bf16_cache
-
-temp_bf16_cache
-  → rsqrt renorm → row_expand_mul(scale) → BF16
-
-temp_bf16_cache  
-  → matmul(R^T) → FP32 unrotated → cast BF16 → temp_bf16_cache
-
-temp_bf16_cache
-  → copy to k_bf16_buf → QK matmul (BF16 @ BF16^T)
-```
-
-## Key Constants
+## Constants
 
 | Constant | Value | Meaning |
-|----------|-------|---------|
-| N_LEVELS | 16 | 4-bit quantization levels |
-| HEAD_DIM | 128 | Attention head dimension |
-| NUM_KV_HEADS | 8 | Number of KV heads (GQA) |
-| NUM_HEADS | 40 | Number of Q heads |
-| Q_HEAD_BATCH | 5 | Q heads per attention group |
-| Q_HEAD_PAD | 16 | Padded Q rows (cube alignment) |
-| BLOCK_SIZE | 128 | KV cache page size |
-| CMP_CHUNK | 32 | Dequant gather sub-tile |
-| TOK_TILE | 16 | Prefill token block size |
-| SEQ_TILE | 128 | Sequence tile for prefill attention |
+| --- | --- | --- |
+| `N_LEVELS` | 16 | 4-bit quantization levels |
+| `HEAD_DIM` | 128 | Attention head dimension |
+| `NUM_KV_HEADS` | 8 | KV heads (GQA) |
+| `NUM_HEADS` | 40 | Query heads |
+| `BLOCK_SIZE` / `page_size` | 128 | KV cache page size |
+| `TOK_TILE` | 16 | Prefill token block |
+| `SEQ_TILE` | 128 | Prefill attention sequence tile |
+| `CMP_TILE` | 64 | Fused dequant tile (A2A3 memory limit) |
+| `CMP_CHUNK` | 32 | Dequant gather sub-tile (32-byte aligned) |
+| `SB_BATCH` | 128 | Sequence-block batch for parallel attention |
+| `Q_HEAD_BATCH` | 5 | Decode Q heads per attention group |
+| `Q_HEAD_PAD` | 16 | Padded Q rows (cube alignment) |
 
-## Cache Layout
+## Attention dequant path
+
+Both prefill and decode dequantize K/V inline in BF16 to match the FP path:
 
 ```
-Quantized KV Cache (per layer):
-  quant_k_cache:  [num_layers * total_blocks * NUM_KV_HEADS * BLOCK_SIZE, HEAD_DIM] UINT8
-  quant_v_cache:  [same] UINT8
-  quant_k_scales: [same rows, 1] FP32
-  quant_v_scales: [same rows, 1] FP32
-
-Per cache row: one token's K or V for one KV head
-  - 128 bytes of UINT8 indices (4-bit per coordinate, stored as 1 byte)
-  - 4 bytes of FP32 L2 scale
-  - Total: 132 bytes vs 256 bytes for BF16 → 1.94× compression
+UINT8 idx → FP16 → INT32 → gather(codebook) → FP32 centroids
+         → cast BF16 → rsqrt renorm → row_expand_mul(scale) → BF16
+         → matmul(R^T) → FP32 → cast BF16       (unrotate)
+         → copy to BF16 GM buffer → QK matmul (BF16 @ BF16^T)
 ```
 
-## Bug Fixes Applied
+K is unrotated via `ctx @ R^T` after attention; Q is **not** pre-rotated
+(the Q pre-rotation block is disabled), matching the pure-PolarQuant strategy.
 
-### 1. Rotation Matrix Seed Consistency
-- **Symptom**: NPU and CPU produced different quantized K/V, leading to different model output.
-- **Root cause**: NPU used `torch.manual_seed(42)` with sequential generation; CPU used `seed=42+layer*1000` with per-layer independent generation.
-- **Fix**: Use `torch.Generator().manual_seed(42 + l * 1000)` for both, plus `Q * sign(diag(R))` normalization matching CPU convention.
+## Known issues & fixes
 
-### 2. Decode Q RoPE — Per-Head Processing
-- **Symptom**: In decode attention, Q heads 0-1 produced garbage scores (~-1000 vs expected ~0-10), while heads 2-4 were correct.
-- **Root cause**: pypto compiler bug: `pl.slice(q_block, [5, 64], ...)` on a `[5, 128]` tile from `pl.reshape(slice, [5, 128])` corrupts the first two rows.
-- **Fix**: Process each Q head individually as `[1, HEAD_DIM]` instead of batching 5 heads as `[5, HEAD_DIM]`. This matches the prefill's approach.
+**Rotation matrix seed mismatch (NPU vs CPU).** The NPU used
+`torch.manual_seed(42)` sequentially; the CPU reference used
+`42 + layer * 1000` per layer with independent generators and normalized
+`Q * sign(diag(R))`. Layer 0 matched, the rest diverged. Fixed by matching
+the CPU exactly on both sides; after the fix prefill `quant_k` matches 99.3%
+across all 40 layers and the rotation matrices are identical (max diff 0).
 
-## Numerical Precision
+**Ascend BF16 matmul layout mismatch.** `matmul(q_padded, k_dequant^T)`
+returned garbage even though Q and K each matched CPU individually. The cube
+engine miscomputes when one input is a GM-slice BF16 tile and the other is a
+register-format `cast(FP32→BF16)` tile. Fixed by copying the dequantized K
+to a BF16 GM buffer in a separate scope, then slicing from it — both inputs
+are now GM-slice BF16, matching the FP prefill pattern. Score self-consistency
+went from cos ≈ 0 to ≈ 1.0.
 
-- K/V quantization-dequantization round-trip: cos ≥ 0.9999 (observed at all 40 layers in prefill)
-- Decode BF16 attention vs CPU FP32: layer 0 hidden cos ≈ 0.999
-- Prefill BF16 attention vs CPU FP32: all 40 layers hidden cos ≥ 0.9999
+**Decode Q RoPE batch-slice corruption.** Slicing a `[5, 128]` Q tile into a
+`[5, 64]` half corrupts rows 0–1 (a pypto compiler bug), giving heads 0–1
+scores of ~−1000 while heads 2–4 were correct. Fixed by processing each Q
+head individually as `[1, HEAD_DIM]`, matching prefill. After the fix all Q
+heads reach cos ≈ 1.0.
 
-## Reference
+Two pypto kernel pitfalls to keep in mind: `pl.write` must capture its return
+value or the write is dead-code-eliminated, and `pl.assemble` of a `[T, 1]`
+ColMajor tensor only fills row 0 — flatten and write per-row.
 
 ## Validation
 
-### Offline Comparison (NPU TQ vs CPU TQ)
+Accuracy validation against the FP / CPU reference is still in progress;
+results will be filled in once testing completes.
 
-Both run the same prompt ""Huawei is"" with greedy decoding (temperature=0).
+Output quality (greedy):
 
-| Step | Metric | Result |
-|------|--------|--------|
-| Prefill | quant_k exact match | 99.3% (all 40 layers, per-layer ≥97.6%) |
-| Prefill | hidden cos (residual stream) | ≥0.9999 (all 40 layers) |
-| Decode3 (1st token) | quant_k exact match | 99.8% (layer 0) |
-| Decode3 (1st token) | hidden cos | 0.999 (layer 0) |
+> **FP:** ""a Chinese multinational technology company that designs and sells
+> consumer electronics, telecommunications equipment, and services. It is one
+> of the world's largest and most valuable technology companies. Huawei was
+> founded in 1987 by Ren Zhengfei…""
+>
+> **TQ:** ""a Chinese multinational technology company headquartered in
+> Shenzhen, Guangdong, China. It is the world's second-largest smartphone
+> manufacturer by unit sales and the second-largest provider of
+> telecommunications equipment…""
 
-### Performance Comparison (Ascend NPU 910B/C, device 15)
+Both are factually correct and coherent; the wording difference is normal
+sampling variation between independent runs.
 
-Prompt: ""Huawei is"", max-new-tokens=128, max-seq-len=512.
+## Performance
 
-| Metric | FP (BF16, no compression) | TQ (4-bit) | Speedup |
-|--------|---------------------------|------------|---------|
-| Prefill | 5467 ms | 5240 ms | 1.04× |
-| Decode speed | 3.15 tok/s | 5.56 tok/s | **1.76×** |
-| Decode latency | 317.7 ms/tok | 180.0 ms/tok | **1.76×** |
-| Overall throughput | 2.72 tok/s | 4.29 tok/s | **1.58×** |
+End-to-end TQ performance is currently **far below the FP path — under 1/3 of
+FP throughput** — so TQ makes serving *slower* today, not faster. The expected
+bandwidth win from the smaller KV cache has not shown up because the
+quantize/dequant work added on every attention step dominates. This is a known
+gap **pending operator-side (kernel) optimization** (fusing the
+rotate/gather/unrotate dequant into the attention kernels), not a correctness
+or algorithm problem: TQ is functionally correct but not yet
+performance-competitive.
 
-Speedup comes from 4× smaller KV cache reducing memory bandwidth in attention.
+## Reference
 
-### Output Quality
-
-**FP output**: ""a Chinese multinational technology company that designs and sells consumer electronics, telecommunications equipment, and services. It is one of the world's largest and most valuable technology companies. Huawei was founded in 1987 by Ren Zhengfei...""
-
-**TQ output**: ""a Chinese multinational technology company headquartered in Shenzhen, Guangdong, China. It is the world's second-largest smartphone manufacturer by unit sales and the world's second-largest provider of telecommunications equipment...""
-
-Both outputs are factually correct and coherent. The difference in wording is normal sampling variation between independent runs.
+- Paper: ""TurboQuant: Online Vector Quantization with Near-optimal
+  Distortion"", ICLR 2026 — <https://arxiv.org/abs/2504.19874>.
 "
 "25","[Feature] Replace L2 kernel runtime and old L3 generate path with unified L3 worker dispatch","closed","2026-06-05T03:27:22Z","2026-06-05T03:58:52Z","2026-06-05T03:58:52Z","https://github.com/hw-native-sys/pypto-serving/issues/25","### Summary
 
@@ -4096,7 +4113,7 @@ Cross-repository validation:
 - When model differences are limited to ABI, graph, weights, or runtime argument layout, serving does not need new kernel ABI details.
 - Serving needs a new executor mapping only when device orchestration or runner behavior differs.
 - For heterogeneous `config.json` files, the `ModelConfig` boundary remains a clear open issue; future model extension readiness does not mean this schema has been finalized."
-"74","[Feature] Extend Qwen3 device sampling to support top-k","open","2026-07-13T09:17:51Z","2026-07-13T09:17:51Z",,"https://github.com/hw-native-sys/pypto-serving/issues/74","### Summary
+"74","[Feature] Extend Qwen3 device sampling to support top-k","closed","2026-07-13T09:17:51Z","2026-07-31T03:36:32Z","2026-07-31T03:36:32Z","https://github.com/hw-native-sys/pypto-serving/issues/74","### Summary
 
 Extend the Qwen3 device-side sampling path to support top-k sampling.
 
@@ -4237,7 +4254,7 @@ This extends the base DeepSeekV4 Flash serving integration tracked by #62.
 
 The initial target is greedy decoding with one MTP draft token and the existing DeepSeekV4 TP=8 packed-kernel execution path.
 "
-"90","[Feature] Add skills for performance benchmarking and precision evaluation","open","2026-07-15T02:15:21Z","2026-07-15T02:15:21Z",,"https://github.com/hw-native-sys/pypto-serving/issues/90","### Summary
+"90","[Feature] Add skills for performance benchmarking and precision evaluation","closed","2026-07-15T02:15:21Z","2026-07-21T07:56:10Z","2026-07-21T07:56:10Z","https://github.com/hw-native-sys/pypto-serving/issues/90","### Summary
 
 # LLM Evaluation Agent Skills
 
@@ -4387,4 +4404,1311 @@ the ring far below 2 GB.
 - pypto-lib: `4ee8cf4` (#765, Qwen3 CANN FAI static batch-16)
 - pypto: `ccbf2870`
 - simpler runtime: worktree feat branch (1e24e1f6)
+"
+"95","[Bug] DeepSeek V4 8-card serving 性能验证与瓶颈分析","open","2026-07-16T09:05:22Z","2026-07-23T13:55:55Z",,"https://github.com/hw-native-sys/pypto-serving/issues/95","# DeepSeek V4 8-card Serving 性能验证与瓶颈分析
+
+## 一、验证概述
+
+本文记录 DeepSeek V4 Flash W8A8 在 8 卡 Ascend NPU 上的 serving 性能基线，并拆分 prefill、decode、runtime bind/H2D、Device 执行、D2H、LM head 和 sampling 等阶段耗时。
+
+本报告使用当前尚未包含权重和 Cache 驻留优化的基线版本，不包含未合入 PR 的优化后性能数据。
+
+验证范围：
+
+- DeepSeek V4 Flash W8A8
+- TP=8，DP=1
+- MTP disabled
+- Prompt：`Huawei is`，共 4 tokens
+- 生成 20 tokens
+- 完整 serving 推理
+- Runtime STRACE
+- 不使用泳道图作为耗时统计依据
+
+相关 issue：
+
+- #44：逐 token decode 输入 tensor 的 Device buffer 池化
+- #62：DeepSeek V4 Flash serving 接入
+
+本 issue 的重点是当前完整推理路径的性能分布，以及权重、Cache 和运行时资源生命周期优化。
+
+## 二、测试环境
+
+| 项目 | 配置 |
+| --- | --- |
+| Serving commit | `750a65918a2ffef8c15935b4b127637f27ca073c` |
+| pypto-lib commit | `306519dcac1aa0d9edf273299cc0648c4835ec46` |
+| Model | `/data/models/dsv4-flash-w8a8` |
+| Quantization | W8A8 |
+| Platform | `a2a3` |
+| Devices | `8,9,10,11,12,13,14,15` |
+| TP / DP | TP=8 / DP=1 |
+| PTOAS | `0.48` |
+| MTP | Disabled |
+| Prompt | `Huawei is` |
+| Prompt tokens | 4 |
+| Generated tokens | 20 |
+| Task | `task_20260715_194739_142047818271` |
+| Result | Exit 0，生成文本符合预期 |
+
+## 三、性能验证
+
+### 3.1 指标定义
+
+本次统计包含以下层级：
+
+1. **Serving wall**
+
+   从 scheduler 发起一个模型 step，到 sampling 完成的 Host wall。
+
+2. **Packed dispatch outer wall**
+
+   L3 父进程提交 8 个 rank、等待所有 rank 返回的整体 wall time。
+
+3. **Runtime Host wall**
+
+   每个 rank 的 `simpler_run` wall time。
+
+4. **Bind/H2D**
+
+   Runtime 为 callable 参数分配 Device 内存并执行 H2D 的耗时，包括模型权重、Cache 和调用参数。
+
+5. **Device wall**
+
+   Device graph/orchestrator/scheduler 的临界路径 wall time。三个窗口高度重叠，不能相加。
+
+6. **Validate/D2H**
+
+   Runtime 检查输出、执行必要的 D2H 并回收本次调用资源的耗时。
+
+7. **Host LM head / sampling**
+
+   Packed model 返回 hidden state 后，在 Host 侧进行的 LM head 和 sampling。
+
+### 3.2 Prefill 性能
+
+| 阶段 | 耗时 |
+| --- | ---: |
+| Serving prefill total | 444297.694 ms |
+| Batch planning | 0.022 ms |
+| Tensorize inputs | 0.920 ms |
+| Embedding lookup | 2.301 ms |
+| Model runner | 444281.024 ms |
+| Shared-buffer first allocation | 368028.127 ms |
+| Prepare model inputs | 49.649 ms |
+| Stage kernel inputs | 83.342 ms |
+| Packed prefill dispatch outer wall | 75810.681 ms |
+| Output checks | 0.165 ms |
+| Host LM head | 307.303 ms |
+| Sampling | 13.346 ms |
+
+Prefill 的主要耗时不是 kernel 本身，而是首次申请和初始化共享 Host buffer：
+
+- Shared-buffer first allocation：368.028 s，占 prefill 总耗时约 82.83%。
+- Packed prefill dispatch：75.811 s，占约 17.06%。
+- LM head、sampling、embedding 等阶段占比较小。
+
+这部分属于明显的冷启动成本，建议将固定 shape buffer 的申请和初始化前移到模型加载阶段。
+
+### 3.3 Steady Decode 性能
+
+以下统计包含 18 个正常 decode token，不包含开启额外 profiling 的第一个 decode token。
+
+| 阶段 | Mean | P50 | P90 | Min | Max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Serving decode total | 7488.817 ms | 7445.914 ms | 8018.532 ms | 6596.584 ms | 9067.067 ms |
+| Batch planning | 0.035 ms | 0.034 ms | 0.043 ms | 0.026 ms | 0.050 ms |
+| Tensorize inputs | 0.126 ms | 0.118 ms | 0.171 ms | 0.073 ms | 0.290 ms |
+| Embedding lookup | 1.337 ms | 0.326 ms | 3.837 ms | 0.202 ms | 4.391 ms |
+| Model runner | 7461.152 ms | 7407.855 ms | 8001.793 ms | 6582.390 ms | 9051.831 ms |
+| Prepare/stage inputs | 37.320 ms | 26.703 ms | 88.988 ms | 19.283 ms | 91.347 ms |
+| Stage packed-kernel args | 6.068 ms | 4.208 ms | 19.991 ms | 3.285 ms | 21.136 ms |
+| Packed decode dispatch outer wall | 7184.023 ms | 7106.150 ms | 7796.148 ms | 6288.459 ms | 8777.045 ms |
+| Output checks | 0.105 ms | 0.105 ms | 0.121 ms | 0.085 ms | 0.137 ms |
+| Host LM head | 233.045 ms | 195.019 ms | 386.988 ms | 147.294 ms | 559.913 ms |
+| Sampling | 26.139 ms | 13.562 ms | 71.406 ms | 9.614 ms | 90.752 ms |
+
+Packed decode dispatch 平均为 7184.023 ms，占 serving decode 总耗时约 95.93%，是当前最主要的 serving 瓶颈。
+
+Packed dispatch 之后的 Host LM head 和 sampling 合计平均约 259.184 ms，占约 3.46%。
+
+### 3.4 Runtime STRACE
+
+共统计 19 个 decode token × 8 个 rank，即 152 次 rank runtime 调用。
+
+| Runtime 阶段 | 每个 rank 调用平均耗时 | Host wall 占比 |
+| --- | ---: | ---: |
+| `simpler_run` Host wall | 6906.775 ms | 100% |
+| Bind total | 5231.321 ms | 75.74% |
+| Bind args：Device allocation/H2D | 5231.202 ms | 75.74% |
+| Bind prebuilt | 0.013 ms | <0.01% |
+| Device wall | 1365.794 ms | 19.78% |
+| Output validation/D2H | 278.013 ms | 4.03% |
+| 其他 Host 开销 | 约 31.647 ms | 0.46% |
+
+Device 内部阶段：
+
+| Device 阶段 | 平均耗时 |
+| --- | ---: |
+| Device graph window | 1365.762 ms |
+| Device orchestrator window | 1365.659 ms |
+| Device scheduler window | 1365.734 ms |
+| Device preamble | 0.024 ms |
+| Device config validation | 0.005 ms |
+| Device arena wiring | 0.003 ms |
+| Device SM reset | 0.004 ms |
+| Device post-orchestration | 0.007 ms |
+
+Device graph、orchestrator 和 scheduler 是同一执行区间的不同观察窗口，三者高度重叠，不能相加。当前 Device 有效临界路径约为 1.366 s。
+
+每个 token 最慢 rank 的平均数据：
+
+| 指标 | 耗时 |
+| --- | ---: |
+| Slowest-rank Host wall | 6978.185 ms |
+| Slowest-rank bind | 6466.179 ms |
+| 独立选择的最大 Device wall | 2534.020 ms |
+
+最大 Host wall、bind 和 Device wall 可能来自不同 rank，因此这些最大值也不能直接相加。
+
+### 3.5 性能瓶颈
+
+#### 1. 权重和 Cache 每个 decode step 重复 bind/H2D
+
+Bind/H2D 平均耗时 5231.202 ms，占单 rank runtime Host wall 的 75.74%。
+
+当前每个 decode token 都重新处理固定模型参数和长生命周期 Cache。对于 decode 来说，模型权重不变，KV Cache、compressor Cache 等状态也应该由 Device 上的长期 tensor 原地更新，不应每个 step 重新申请和搬运。
+
+在其他阶段耗时保持不变的理想情况下，如果 steady decode 消除这部分重复 bind/H2D，单 rank runtime wall 的理论下限可由 6906.775 ms 降到约 1675.573 ms。该数值只是根据基线拆分计算的优化空间，并非优化后实测结果。
+
+#### 2. Device 执行仍有较大优化空间
+
+消除 bind/H2D 后，Device wall 将成为主要瓶颈，目前平均为 1365.794 ms。
+
+Device 侧应进一步检查：
+
+- MoE dispatch/wait 中的跨 rank 同步；
+- rank 间负载不均衡；
+- 通信 domain 和通信资源是否逐 step 创建、销毁；
+- scheduler/orchestrator 是否存在不必要的同步；
+- main decode kernel 的实际有效执行时间与 Device wall 之间的差异。
+
+#### 3. Packed outer wall 存在额外父进程开销
+
+Packed decode dispatch outer wall 为 7184.023 ms，而每个 token 的 slowest-rank Host wall 平均为 6978.185 ms，两者相差约 205.838 ms。
+
+因为 L3 outer wall 和子进程 rank timing 的起止点、并发提交方式不同，这个差值不能简单归到某一个 kernel，但说明父进程仍存在约 200 ms 量级的资源管理、IPC、rank 提交或等待开销。
+
+#### 4. Host LM head 和 sampling
+
+Host LM head 平均 233.045 ms，sampling 平均 26.139 ms，合计约 259.184 ms。
+
+在 runtime bind/H2D 优化后，这部分会成为明显的 serving 瓶颈。建议评估：
+
+- LM head Device 化；
+- sampling Device 化；
+- hidden、logits 和 sampled token 保持 Device resident；
+- sampled token 直接进入下一轮 embedding，避免 Device → Host → Device 往返。
+
+#### 5. Prefill 冷启动申请
+
+Prefill 首次共享 buffer 申请耗时 368028.127 ms。
+
+建议将固定 shape 的 Host shared buffer、Device 权重、Cache、通信 domain 和 runtime arena 在模型启动阶段一次性初始化。请求执行阶段只更新实际输入数据和动态 metadata。
+
+### 3.6 优化建议与验证目标
+
+| 优先级 | 优化项 | 当前对应耗时 | 建议 |
+| --- | --- | ---: | --- |
+| P0 | 主模型权重 Device resident | Bind/H2D 5231.202 ms/rank | 模型加载时上传一次，decode 不再重复 H2D |
+| P0 | KV/compressor Cache Device resident | 包含在 Bind/H2D 中 | 请求生命周期内保持 Device tensor，kernel 原地更新 |
+| P0 | MTP 权重和 Cache resident | MTP 场景会产生同类开销 | 与主模型使用一致的生命周期管理 |
+| P1 | 通信 domain/buffer 复用 | Outer 与 slowest rank 相差约 205.838 ms | Worker/runtime 生命周期内复用，避免逐 step 创建和释放 |
+| P1 | Device LM head/sampling | 259.184 ms/token | 保持 hidden/logits/token 全流程 Device resident |
+| P1 | MoE 通信和 rank 均衡 | Device wall 1365.794 ms | 优化 dispatch/wait 和跨 rank 同步 |
+| P2 | Prefill buffer 启动时预分配 | 368028.127 ms cold-start | 将固定 buffer 初始化移出请求路径 |
+| P2 | Decode 输入 tensor 池化 | 与 #44 互补 | 复用 hidden、seq_lens、block_table、slot_mapping 的 Device buffer |
+
+建议后续在相同设备、相同 prompt 和相同 20-token 场景下验证：
+
+- Steady decode 的固定权重和 Cache bind/H2D 接近 0；
+- 不以增加每 token D2H 或 Host copy 为代价；
+- Cache 原地更新与原始流程输出一致；
+- 分别报告 main decode、MTP decode、runtime 和 serving wall；
+- Packed outer wall 应逐步接近最慢 rank 的真实 Device 临界路径；
+- 优化后数据单独记录，不覆盖本文的合入前基线。
+"
+"123","[Bug] DeepSeek V4 chunked prefill does not honor the fixed 128-token kernel limit","open","2026-07-29T03:33:39Z","2026-08-01T09:35:00Z",,"https://github.com/hw-native-sys/pypto-serving/issues/123","### Diagnosis
+
+**pypto-serving / DeepSeek V4 integration**
+
+The generic scheduler does not know the model-specific per-request prefill capacity. It can dispatch more than 128 active tokens to the DeepSeek V4 fixed B1S128 prefill kernel.
+
+Even when `--long-prefill-token-threshold 128` is used as a manual workaround, the MTP prefill context and final-chunk padding paths are not fully chunk-safe.
+
+### Description
+
+On `main` (`pypto-serving e57e14f`, `pypto-lib 7e7d4cc`):
+
+1. Chunked prefill limits a request using only `long_prefill_token_threshold` and the global token budget.
+2. The documented DeepSeek V4 command uses:
+   - `--max-num-batched-tokens 512`
+   - `--long-prefill-token-threshold 2048`
+3. DeepSeek V4 uses a fixed `DEEPSEEK_V4_PREFILL_SEQ = 128`.
+4. A 129-token prompt is therefore scheduled as one 129-token prefill chunk and rejected by `_prefill_kernel_positions()` before kernel dispatch:
+
+```text
+num_new = min(129, 2048, 512) = 129
+ValueError: kernel_tokens must cover all active positions
+```
+
+The main-model path already carries continuation metadata (`num_computed_tokens`, absolute positions, and persistent paged-cache mappings), but two additional issues remain when the chunk size is manually limited to 128:
+
+- `_capture_mtp_prefill_context()` replaces the per-request MTP context on every chunk. `_initialize_mtp_draft()` therefore sees only the final chunk. For a 129-token prompt split as `128 + 1`, the preceding tokens needed by the MTP sliding-attention window are absent from the captured context.
+- `_prefill_kernel_positions()` constructs all 128 static positions from `chunk_start`, including inactive padding rows. A short final chunk near a non-128-aligned `max_model_len` can be rejected even though every active token position is valid.
+
+There is currently a DeepSeek metadata test using a continued chunk, but no serving-level equivalence test covering multi-chunk DeepSeek prefill.
+
+Expected behavior:
+
+- DeepSeek prompts up to `max_model_len` are automatically split into chunks no larger than the model kernel capacity.
+- Chunked and non-chunked/reference execution produce equivalent output.
+- MTP remains correct when the final chunk is partial.
+- Inactive padding positions do not invalidate an otherwise valid final chunk.
+
+Actual behavior:
+
+- A prompt longer than 128 tokens fails with the documented configuration.
+- Forcing 128-token chunks avoids that immediate exception but leaves MTP context loss and tail-padding edge cases.
+
+### Command or Request
+
+Start the server using the documented DeepSeek configuration:
+
+```bash
+pypto-serving \
+  --model /data/models/dsv4-flash-w8a8 \
+  --served-model-name dsv4-flash-w8a8 \
+  --backend npu \
+  --platform a2a3 \
+  --devices 8,9,10,11,12,13,14,15 \
+  --dp 8 \
+  --ep 8 \
+  --tp 1 \
+  --block-size 128 \
+  --max-model-len 512 \
+  --max-num-seqs 32 \
+  --max-num-batched-tokens 512 \
+  --long-prefill-token-threshold 2048 \
+  --enable-mtp \
+  --no-enable-prefix-caching \
+  --port 8225
+```
+
+Then send a completion request whose prompt tokenizes to 129 tokens:
+
+```bash
+curl --noproxy ""*"" -s http://127.0.0.1:8225/v1/completions \
+  -H ""Content-Type: application/json"" \
+  -d '{""model"":""dsv4-flash-w8a8"",""prompt"":""<129-token prompt>"",""max_tokens"":1,""temperature"":0.0}'
+```
+
+### Environment
+
+| Component | Version |
+|---|---|
+| pypto-serving | `e57e14f` |
+| pypto-lib | `7e7d4cc` |
+| pypto | `2a282cc9` local checkout |
+| simpler | `972374b3` local checkout |
+| ptoas | Unknown |
+| CANN | Unknown |
+| torch / torch-npu | `2.9.0` / Unknown |
+
+### Host Platform
+
+Linux (aarch64)
+
+### Device / Platform
+
+Ascend `a2a3`, 8-device DP=8 / EP=8 configuration
+
+### Model
+
+DeepSeek V4 Flash W8A8 (`/data/models/dsv4-flash-w8a8`)
+
+### Logs
+
+```text
+ValueError: kernel_tokens must cover all active positions
+```
+
+This is a deterministic host-side validation failure identified from the current code path. A complete device reproduction was not run in the reporting checkout.
+
+### Additional Context
+
+Relevant code paths:
+
+- `pypto_serving/serving/sched/scheduler.py`
+- `pypto_serving/model/deepseek/npu_runner.py`
+  - `_prefill_kernel_tokens()`
+  - `_prefill_kernel_positions()`
+  - `_capture_mtp_prefill_context()`
+  - `_initialize_mtp_draft()`
+- `pypto_serving/model/deepseek/npu_executor.py`
+- `pypto_serving/serving/server/serving_worker.py`
+- `tests/test_deepseek_v4.py`
+
+Suggested fix and acceptance criteria:
+
+1. Expose a model/executor capability such as `max_prefill_tokens_per_request`; set it to 128 for DeepSeek V4.
+2. Clamp both waiting and running prefill requests to the effective model limit.
+3. Make MTP initialization chunk-aware, either by incrementally prefilling MTP or retaining the required rolling context across chunks.
+4. Use valid positions for inactive static padding rows near `max_model_len`.
+5. Add serving tests for prompt lengths 129, 255, 256, and 257, both with and without MTP.
+6. Add coverage for mixed-length batches and non-128-aligned `max_model_len`.
+
+Related but not duplicate: #7 tracks chunked-prefill completeness at a high level."
+"131","[Bug] DeepSeek V4 MTP generation becomes corrupted after 89 output tokens","closed","2026-07-30T09:27:55Z","2026-08-14T08:37:34Z","2026-08-14T08:37:34Z","https://github.com/hw-native-sys/pypto-serving/issues/131","### Diagnosis
+
+pypto-serving / DeepSeek V4 MTP decode path — long deterministic generation becomes corrupted after an initially correct prefix. The exact lower-layer cause (MTP state advancement, cache progression, or model output handling) has not yet been isolated.
+
+### Description
+
+DeepSeek V4 8-device serving returns HTTP 200 and reports all 130 requested completion tokens, but the output becomes corrupted during long generation.
+
+Reproduction:
+
+1. Start DeepSeek V4 W8A8 serving on eight Ascend NPUs.
+2. Enable MTP and disable prefix caching.
+3. Send prompt `Huawei is` with deterministic sampling and `max_tokens=130`.
+4. Observe that completion tokens 1–89 form a coherent Huawei introduction.
+5. Completion tokens 90–130 degrade into repetitive, JSON-like token fragments such as `""Get"", ""of"", ""and""`.
+
+Expected behavior:
+
+The deterministic completion should remain coherent until EOS or the requested 130-token limit.
+
+Actual behavior:
+
+The API reports `completion_tokens: 130`, but the final 41 tokens are corrupted. The configured `max_model_len=260` is not exceeded: prompt plus completion is only 134 tokens.
+
+The existing DeepSeek accuracy guard generates only 10 tokens, so it does not cover this long-generation failure.
+
+### Command or Request
+
+```bash
+bash .agents/skills/profile-dsv4-serving-strace/scripts/run_profile.sh \
+  --model-dir /data/models/dsv4-flash-w8a8 \
+  --devices 8,9,10,11,12,13,14,15 \
+  --max-tokens 130
+```
+
+Equivalent request payload:
+
+```json
+{
+  ""model"": ""dsv4-flash-w8a8"",
+  ""prompt"": ""Huawei is"",
+  ""max_tokens"": 130,
+  ""temperature"": 0.0,
+  ""top_p"": 1.0
+}
+```
+
+Relevant serving configuration:
+
+```text
+backend=npu
+platform=a2a3
+dp=8
+ep=8
+block_size=128
+max_model_len=260
+max_num_seqs=1
+max_num_batched_tokens=512
+enable_mtp=true
+enable_prefix_caching=false
+```
+
+### Environment
+
+| Component | Version |
+|---|---|
+| pypto-serving | `815be47a9aa536ece7dc55baf92491074050f088` |
+| pypto-lib | `a46139ad9b3b2387571efcd128d9ac08d0be18ed` |
+| pypto | `a8ef572f45d144c6a57b98f1e6f619b34fa7f8dc` |
+| simpler runtime | `9922afdb08cc6f203eaf39328661e2f2648d333d` |
+| ptoas | `v0.48` |
+| CANN | `9.0.0` / `26.0.rc1` |
+| torch / torch-npu | `2.10.0+cpu` / `2.10.0` |
+
+### Host Platform
+
+Linux (aarch64)
+
+### Device / Platform
+
+Eight Ascend NPUs, platform `a2a3`, devices `8–15`
+
+### Model
+
+DeepSeek V4 Flash W8A8, `/data/models/dsv4-flash-w8a8`
+
+### Logs
+
+```text
+Completion response:
+usage={""prompt_tokens"":4,""completion_tokens"":130,""total_tokens"":134}
+finish_reason=""length""
+
+Correct prefix (first 89 completion tokens):
+ a leading global information and communications technology (ICT) solutions
+ provider. Through our dedication to customer-centric innovation and strong
+ partnerships, we have established end-to-end capabilities and strengths across
+ telecom networks, devices and cloud computing. Huawei's products and solutions
+ have been deployed in over 170 countries and regions, serving more than one
+ third of the world's population. Founded in 1987, Huawei is a private company
+ wholly owned by its employees. For more
+
+Corrupted suffix (final 41 completion tokens):
+"", ""Get"", ""of"", ""and"", ""and"", ""  infrastructure"", ""and"",
+ ""and"",
+ "" and"",
+ "" and"",
+"" and"",
+"" and "" \"""",
+"" ""
+
+request finished: prompt=4 out=130 reason=FINISHED_LENGTH
+e2e=17.08s (7.6 tok/s)
+
+DeepSeekV4 MTP acceptance:
+accepted=53 proposed=76 rate=69.74%
+```
+
+### Additional Context
+
+- Reproduced by real-NPU task `task_20260729_010712_172935728300`.
+- The coherent/corrupted boundary was calculated directly with the checkpoint's `tokenizer.json`: 89 coherent tokens followed by 41 corrupted tokens.
+- MTP-disabled behavior has not yet been compared, so the precise ownership is still unconfirmed.
+- After the successful HTTP response, shutdown separately reported:
+
+  `TimeoutError: child process(es) [2375578] did not exit within the close budget`
+
+  followed by one leaked shared-memory warning. This appears to be a separate cleanup issue and is not the generation-corruption symptom reported here.
+"
+"138","[Bug] DeepSeek kernel discovery fails with flattened pypto-lib model directory","closed","2026-08-05T03:38:47Z","2026-08-05T06:42:32Z","2026-08-05T06:42:32Z","https://github.com/hw-native-sys/pypto-serving/issues/138","## Background
+
+`pypto-lib` flattened its model directories in
+hw-native-sys/pypto-lib#886. DeepSeek V4 kernels now live under
+`models/deepseek_v4_flash_mtp`.
+
+The `serving-deepseek` job in pypto-lib PR #895 checks out
+`pypto-serving` at `c262864bff5ee8ff58d285ef6a44526e7ebfe67c`,
+then replaces its pypto-lib submodule with the PR checkout. Worker startup
+fails before kernel import or compilation because pypto-serving still searches
+for `models/deepseek/v4-flash`.
+
+Reproduced in:
+https://github.com/hw-native-sys/pypto-lib/actions/runs/30969925307/job/92191964012
+
+### Diagnosis
+
+**pypto-serving** — its DeepSeek executor hard-codes the pre-flattening
+pypto-lib directory layout.
+
+Setting `PYPTO_ROOT` does not avoid the problem because the resolver still
+appends the old `models/deepseek/v4-flash` path to that root.
+
+### Description
+
+At `c262864`, `_find_pypto_lib_deepseek_v4_dir()` searches:
+
+```text
+<PYPTO_ROOT>/models/deepseek/v4-flash
+<checkout>/pypto-lib/models/deepseek/v4-flash
+```
+
+The corresponding directory in current pypto-lib is:
+
+```text
+models/deepseek_v4_flash_mtp
+```
+
+The resolver should support the flattened directory in both the `PYPTO_ROOT`
+and adjacent-checkout paths. The module-file suffix check and the parent used
+to derive the pypto-lib root must also account for the removed directory
+level.
+
+### Command or Request
+
+With the standard pypto-serving dependencies installed:
+
+```bash
+git clone https://github.com/hw-native-sys/pypto-serving.git
+git -C pypto-serving checkout c262864bff5ee8ff58d285ef6a44526e7ebfe67c
+
+git clone https://github.com/hw-native-sys/pypto-lib.git \
+  pypto-serving/pypto-lib
+git -C pypto-serving/pypto-lib checkout \
+  b607072196b559d7a877459f07863aae3409836e
+
+cd pypto-serving
+PYPTO_ROOT=""$PWD/pypto-lib"" python -c ""from pypto_serving.model.deepseek.npu_executor import _find_pypto_lib_deepseek_v4_dir; print(_find_pypto_lib_deepseek_v4_dir())""
+```
+
+### Environment
+
+| Component | Version |
+|---|---|
+| pypto-serving | `c262864` |
+| pypto-lib | `94e9143` (PR #895 merge; base `b607072`) |
+| pypto | `8a6fc5e` |
+| simpler | `dccb837` |
+| ptoas | `v0.54` |
+| pto-isa | `83d01313` |
+| CANN | `9.0.0` |
+| torch | `2.6.0` |
+
+### Host Platform
+
+Linux (aarch64)
+
+### Device / Platform
+
+A2A3, eight-device DeepSeek serving CI job. The failure occurs before any
+device kernel is imported or executed.
+
+### Model
+
+DeepSeek V4 Flash MTP
+
+### Logs
+
+```text
+FileNotFoundError: Cannot locate DeepSeekV4 kernels. Run from a checkout
+with pypto-lib available or set PYPTO_ROOT to a pypto-lib checkout.
+```
+
+The later KV-cache, FastAPI startup, and server health-check failures are
+secondary consequences of this worker initialization error.
+
+### Additional Context
+
+A compatible implementation already exists in pypto-serving PR #136:
+https://github.com/hw-native-sys/pypto-serving/pull/136
+
+Related architectural tracking:
+
+- https://github.com/hw-native-sys/pypto-serving/issues/65
+- https://github.com/hw-native-sys/pypto-lib/issues/752
+"
+"148","[Feature] Add an asynchronous PyPTO dispatch and completion contract for serving","closed","2026-08-08T02:15:43Z","2026-08-17T01:52:15Z","2026-08-17T01:52:15Z","https://github.com/hw-native-sys/pypto-serving/issues/148","### Summary
+
+Add a PyPTO asynchronous execution contract that lets serving submit the next
+prepared decode without blocking on completion of the current invocation, and
+lets a separate completion lane reclaim outputs in FIFO order.
+
+### Area
+
+Executor or runtime
+
+### Motivation / Use Case
+
+Serving now overlaps scheduler work, decode preparation, and host-side output
+reclaim with device execution. However, `DistributedWorker.run()` remains a
+blocking PyPTO call. The device lane cannot enqueue additional prepared work
+while that call is in progress, so PyPTO is the remaining serialization point.
+
+A non-blocking runtime contract is needed to keep the device submission lane
+continuously fed while completion handling, token publication, EOS processing,
+and scheduler updates run independently.
+
+### Proposed API / Behavior
+
+Provide an API with semantics equivalent to:
+
+```python
+handle = worker.submit(callable_spec, *args)
+completed = handle.done()
+result = handle.wait()  # or await handle
+```
+
+Required behavior:
+
+- `submit()` returns after the invocation and its dependencies are safely
+  enqueued, without waiting for device completion.
+- The handle owns or pins argument bindings and reusable runtime resources
+  until completion.
+- Handles expose completion, runtime failure, and profiling information.
+- FIFO ordering is defined per worker/stream, while multiple invocations may be
+  in flight subject to bounded backpressure.
+- Submission and completion waiting are safe from separate host threads.
+- Host-visible output copies are associated with the handle and become readable
+  only after completion.
+- The synchronous `run()` API remains available as `submit(...).wait()` or an
+  equivalent compatibility path.
+
+Serving would adapt by replacing its blocking launch with `submit()`, retaining
+handles in dispatch order, and letting the output lane wait/reclaim completed
+handles while the device lane submits later prepared decode work.
+
+### Alternatives Considered
+
+- Serving-only prepare/reclaim threads: implemented and useful, but they cannot
+  overlap the blocking PyPTO dispatch itself.
+- Additional serving process/thread wrappers around synchronous `run()`: they
+  move the blocking call but do not provide runtime-level in-flight ownership,
+  ordering, completion, or backpressure semantics.
+- L3 buffer pooling from #44: complementary; it reduces binding overhead but
+  does not make execution submission asynchronous.
+
+### Additional Context
+
+The current serving implementation already splits decode into prepare, arm,
+launch, and reclaim phases and retains a synchronous fallback for runtimes that
+do not advertise the asynchronous capability. The next integration step is to
+map launch to the PyPTO handle API and move completion waiting into the output
+lane.
+"
+"153","[Bug] Worker.close() still leaves child processes after sticky shutdown fix on a2a3","open","2026-08-12T09:52:46Z","2026-08-12T09:52:46Z",,"https://github.com/hw-native-sys/pypto-serving/issues/153","### Diagnosis
+
+Simpler child teardown/reap — `Worker.close()` still leaves child processes beyond the 10-second close budget even though the installed version contains the sticky `_OFF_SHUTDOWN` fix from #1663.
+
+This is therefore not the original SHUTDOWN-clobber mechanism tracked in #1562.
+
+### Description
+
+The issue reproduced twice during successful eight-card DeepSeek V4 MTP generation on a2a3.
+
+In both cases:
+
+- The HTTP/offline request completed successfully.
+- Exactly 20 output tokens were generated.
+- MTP completion and profiling finished.
+- Shutdown then reported exactly two surviving Simpler child processes.
+- Python's `resource_tracker` subsequently reported two leaked shared-memory objects.
+
+Observed runs:
+
+| Task | Devices | Surviving children |
+|---|---|---|
+| `task_20260812_011011_19195415170` | `1,3,5,7,9,11,13,15` | `2640883, 2655062` |
+| `task_20260812_021620_79277523625` | `0,2,4,6,8,10,12,14` | `1043175, 1046035` |
+
+The second run used host STRACE with device STRACE disabled. Its request completed in 2.63 seconds with 20 tokens and MTP acceptance 10/11 before teardown failed.
+
+### Command or Request
+
+```bash
+task-submit \
+  --device 0,2,4,6,8,10,12,14 \
+  --max-time 0 \
+  --timeout 0 \
+  --env PTOAS_ROOT=/data/yangyaodong/.cache/codex/ptoas-0.57-cp310 \
+  --env PTO2_RING_HEAP=3221225472 \
+  --run ""bash .agents/skills/profile-dsv4-serving-strace/scripts/run_profile.sh \
+    --model-dir /data/models/dsv4-flash-w8a8 \
+    --use-compile-cache \
+    --devices 0,2,4,6,8,10,12,14 \
+    --artifact-dir artifacts/dsv4-async-profile-even-final-20260812 \
+    --run-id async-profile-even-final-20260812""
+```
+
+Relevant runtime configuration:
+
+```text
+PYPTO_RUNTIME_LOG=v9
+SIMPLER_DEVICE_STRACE_ENABLE=0
+PTO2_RING_HEAP=3221225472
+PTO2_RING_TASK_WINDOW=131072
+PTO2_RING_DEP_POOL=131072
+SIMPLER_OP_EXECUTE_TIMEOUT_US=400000000
+SIMPLER_STREAM_SYNC_TIMEOUT_MS=440000
+SIMPLER_SCHEDULER_TIMEOUT_MS=320000
+SERVING_WORKER_STEP_TIMEOUT=1800
+```
+
+### Environment
+
+| Component | Version |
+|---|---|
+| pypto-serving | `1a16e2c` plus local async submit/reclaim changes |
+| pypto-lib | `384553ad` |
+| pypto | `ed2aaa18` |
+| simpler | package `0.1.0`; installed source contains sticky `_OFF_SHUTDOWN` |
+| ptoas | `0.57` |
+| CANN | `9.0.0` |
+| torch / torch-npu | `2.10.0` / `2.10.0` |
+
+### Host Platform
+
+Linux aarch64
+
+### Device / Platform
+
+Eight a2a3 NPUs. Reproduced independently on the all-odd and all-even device groups.
+
+### Model
+
+DeepSeek V4 MTP, checkpoint `/data/models/dsv4-flash-w8a8`.
+
+### Expected Behavior
+
+After a completed request, `Worker.close()` should terminate and reap every chip child within the close path without reporting leaked shared memory.
+
+### Actual Behavior
+
+```text
+INFO pypto_serving.serving.engine.async_engine: Engine loop stopped
+02:23:13.956 INFO | Worker exiting
+02:23:26.224 ERROR | Failed to close PyPTO runner for model dsv4-flash-w8a8
+Traceback (most recent call last):
+  ...
+  File "".../simpler/worker.py"", line 9240, in <lambda>
+    _step(lambda: self._reap_child_groups(groups, reap_deadline))
+  File "".../simpler/worker.py"", line 9163, in _reap_child_groups
+    raise errors[0]
+TimeoutError: child process(es) [1043175, 1046035] did not exit within the close budget
+
+resource_tracker.py:224: UserWarning:
+resource_tracker: There appear to be 2 leaked shared_memory objects to clean up at shutdown
+```
+
+The earlier run produced the same signature:
+
+```text
+TimeoutError: child process(es) [2640883, 2655062] did not exit within the close budget
+resource_tracker: There appear to be 2 leaked shared_memory objects to clean up at shutdown
+```
+
+### Additional Context
+
+Related issue: #1562.
+
+That issue was closed after #1663 introduced a one-way sticky shutdown word, preventing an in-flight control transition from overwriting SHUTDOWN. The currently installed source contains `_OFF_SHUTDOWN` and `_SHUTDOWN_REQUESTED`, so this recurrence should rule out that original clobber race.
+
+The remaining likely categories are:
+
+1. child device/CANN teardown occasionally exceeds the fixed 10-second budget;
+2. a child is genuinely wedged after receiving sticky shutdown;
+3. a different close/register or teardown ordering race remains.
+
+It would be useful for `_reap_child_groups` to include each survivor's sticky shutdown state and, if practical, its current teardown phase in the timeout diagnostics.
+
+"
+"155","[Bug] DeepSeek V4 batch-32 requests fail during 64-token prefill","open","2026-08-13T03:02:57Z","2026-08-13T03:02:57Z",,"https://github.com/hw-native-sys/pypto-serving/issues/155","### Diagnosis
+
+pypto-serving / DeepSeek V4 prefill - configuring 32 concurrent requests causes the first 64-token prefill invocation to stall with `TENSOR_WAIT_TIMEOUT`. No request reaches decode.
+
+### Description
+
+DeepSeek V4 serving cannot complete a batch-32 workload with 64 input tokens and 64 output tokens per request.
+
+The issue reproduced three times on eight Ascend NPUs:
+
+1. 32 identical 64-token prompts with packed prefill.
+2. 32 distinct deterministic 64-token prompts with packed prefill.
+3. 32 distinct deterministic 64-token prompts with `--max-num-batched-tokens 64`, forcing one request per prefill invocation.
+
+All three runs failed during the first main prefill dispatch. All 32 HTTP requests returned HTTP 200 with zero prompt and completion tokens:
+
+```json
+{
+  ""usage"": {
+    ""prompt_tokens"": 0,
+    ""completion_tokens"": 0,
+    ""total_tokens"": 0
+  }
+}
+```
+
+No `deepseek_v4_decode_mtp_fused.worker_submit` span was recorded, so the workload never reached decode.
+
+The HTTP API returning 200 with zero usage after the worker failure is also misleading; the worker error should be propagated to the client.
+
+### Command or Request
+
+Server configuration:
+
+```bash
+python .agents/skills/profile-dsv4-serving-strace/scripts/launch_server.py \
+  --model /data/models/dsv4-flash-w8a8 \
+  --served-model-name dsv4-flash-w8a8 \
+  --backend npu \
+  --platform a2a3 \
+  --devices 0,2,4,6,8,10,12,14 \
+  --dp 8 \
+  --ep 8 \
+  --block-size 128 \
+  --max-model-len 128 \
+  --max-num-seqs 32 \
+  --max-num-batched-tokens 512 \
+  --npu-memory-utilization 0.99 \
+  --enable-mtp \
+  --no-enable-prefix-caching \
+  --profile \
+  --profile-level verbose \
+  --use-compile-cache
+```
+
+Submit 32 concurrent `/v1/completions` requests, each containing:
+
+```json
+{
+  ""model"": ""dsv4-flash-w8a8"",
+  ""prompt"": ""<exactly 64 tokens>"",
+  ""max_tokens"": 64,
+  ""temperature"": 0.0,
+  ""top_p"": 1.0
+}
+```
+
+The third reproduction changed `--max-num-batched-tokens` from `512` to `64`. It still failed on the first single-request prefill invocation.
+
+### Environment
+
+| Component | Version |
+|---|---|
+| pypto-serving | `6972da8` |
+| pypto-lib | `384553a` |
+| pypto | `ed2aaa18` |
+| simpler | `0.1.0` |
+| ptoas | `0.55` |
+| CANN | `9.0.0` |
+| torch / torch-npu | `2.10.0 / 2.10.0` |
+
+### Host Platform
+
+Linux aarch64
+
+### Device / Platform
+
+Eight Ascend NPUs, platform `a2a3`; physical devices `0,2,4,6,8,10,12,14`.
+
+### Model
+
+DeepSeek V4 W8A8 checkpoint:
+
+```text
+/data/models/dsv4-flash-w8a8
+```
+
+### Logs
+
+First packed-prefill reproduction:
+
+```text
+deepseek_v4_prefill.worker_run: 21991.685 ms
+orch_error_code=8 sched_error_code=0 runtime_status=-8
+TENSOR_WAIT_TIMEOUT - waiting for tensor data timed out:
+the producing task never completed, or a consumer never released its fanout reference
+
+Worker step failed: DeepSeekV4 packed prefill dispatch failed
+(tokens=(64, 64, 64, 64, 64, 64, 64, 64),
+ ranks=(0, 1, 2, 3, 4, 5, 6, 7))
+```
+
+Distinct-prompt reproduction:
+
+```text
+deepseek_v4_prefill.worker_run: 22518.197 ms
+orch_error_code=8 TENSOR_WAIT_TIMEOUT
+completion tokens: 0/2048
+```
+
+Single-request-prefill reproduction:
+
+```text
+deepseek_v4_prefill.worker_run: 22481.588 ms
+orch_error_code=8 TENSOR_WAIT_TIMEOUT
+Worker step failed: DeepSeekV4 packed prefill dispatch failed
+(tokens=(64,), ranks=(0,))
+```
+
+The host-visible ACL error is `507018 ACL_ERROR_RT_AICPU_EXCEPTION`, but the runtime-classified error is `orch_error_code=8 TENSOR_WAIT_TIMEOUT`.
+
+### Additional Context
+
+- Three L3 compile-cache entries were found and reused.
+- Simpler subsequently invalidated and rebuilt next-level binaries because it could not determine the current Simpler/PTO-ISA revision.
+- Changing prompts from identical to distinct inputs did not change the failure.
+- Reducing the prefill token budget from 512 to 64 did not change the failure.
+- This is not usable profiling data: the approximately 22-second spans are timeout waits, not successful prefill latency.
+- Related but non-duplicate issues: #123 and #91.
+"
+"157","[Refactor] Unify the L3 dispatch arg model behind TaskArgs + L3DispatchMixin","open","2026-08-14T06:22:06Z","2026-08-14T06:22:06Z",,"https://github.com/hw-native-sys/pypto-serving/issues/157","## Motivation
+
+The L3 dispatch argument story was duplicated between the two model runners and only half-modeled:
+
+- **DeepSeek** built dispatch args via a named `values` dict → `_mark_resident_args` (consulting four `_*_RESIDENT_POLICY` dicts) → `ordered_layer_args(values, ORDER)`. The positional contract lived in `_X_TENSOR_ORDER` constants separate from the values, and ""is this arg a resident upload?"" was a two-step: register a host tensor, then a policy dict decides.
+- **Qwen** built dispatch args as hand-written literal positional tuples in the runner — no shared model at all.
+- Both runners independently owned the `_l3_worker` handle, the `_l3_static_tensors` upload cache, and a `_run_l3` / `_run_distributed_program` method.
+- `BufferSet` (an earlier step) unified the *I/O buffers* but stopped there — it didn't model weights, device handles, or scalars, so the rest of the arg pipeline stayed duplicated.
+
+This made the kernel positional contracts hard to trust (the `ordered_layer_args` name-projection was the only safety net), duplicated the dispatch machinery, and left the two runners diverging.
+
+## Design
+
+A worker-free, placement-aware **`TaskArgs`** arg container + a shared **`L3DispatchMixin`**, with per-model **`task_args.py`** builders that become the single source of truth for each kernel's positional contract.
+
+**`TaskArgs`** (`pypto_serving/model/common/runner/task_args.py`)
+- Ordered arg container for one L3 callable. **Order = the registration order** of `add_slot` / `add_arg` — no separate order tuple.
+- Each arg declares its kind at registration (no `mark_resident` / policy dict):
+  - `add_slot(Slot(...))` — `HOST_SHARED` or `DEVICE_RESIDENT` buffer (allocated / staged / cleared here).
+  - `add_arg(name, StaticDeviceTensor(t))` — upload-once weight, cached by `(data_ptr, shape, dtype)`.
+  - `add_arg(name, handle)` — worker-resident `StackedDeviceTensor` / `DeviceTensor` (kv cache, device weights) — passthrough.
+  - `add_arg(name, shared_tensor)` / `(name, scalar)` — passthrough.
+  - `add_arg(name, callable)` — lazy source for post-fork handles, resolved at `build()`.
+- Lifecycle: `allocate_host_shared` (pre-fork, idempotent) → `allocate_device` (post-fork) → `stage` / `clear_outputs` → `build(use_cache=)` returns the *unresolved* tuple; the mixin resolves + frees per-dispatch transients.
+
+**`L3DispatchMixin`** (`pypto_serving/model/common/runner/l3_dispatch.py`)
+- Owns the shared worker handle, the static-upload cache, and a unified `_run_l3(callable, *args)` (prepend `dispatch_args`, `resolve_l3_arg` each arg, `worker.run`, free `uploaded` in `finally`). One `_init_l3_dispatch(stacked=)` call per runner — DeepSeek `stacked=True`, Qwen `stacked=False`. `_shared_l3_worker` stays runner-specific (fork/inherited tensors differ).
+
+**Per-model builders** (`deepseek/task_args.py`, `qwen/task_args.py`) register every arg in kernel-positional order, reading shapes from `runner._compiled.layout` and weights / handles from runner accessors — so the `task_args.py` file is the single source of truth for each kernel's contract (it subsumes the old `_X_TENSOR_ORDER` constants + the `_X_fwd_args` builders).
+
+## Scope
+
+- **DeepSeek**: prefill, decode, MTP prefill, MTP decode, and the fused-MTP compose all build through `TaskArgs`. Arbitrary-depth MTP (landed on `main` mid-refactor) is re-expressed through TaskArgs — the chunked codepath reads/writes TaskArgs slots instead of the legacy `_DeepSeekV4MtpSharedBuffers` / `_decode_input_slots`.
+- **Qwen** (`stacked=False`): all 19 host-shared I/O buffers move off the executor (`_CompiledKernels`) into prefill / decode / topk TaskArgs; the runner adopts `L3DispatchMixin` and drops `_run_distributed_program` / `_coerce_l3_arg`.
+- **Removed**: the `BufferSet` class (its primitives — `Slot` / `Placement` / `ClearPolicy` / `StaticDeviceTensor` / `resolve_l3_arg` / `shared_empty` / `copy_shared` — are kept and reused), `_mark_resident_args`, the four `_*_RESIDENT_POLICY` dicts, `ordered_layer_args` usage in the runners, the duplicated `_run_l3`/`_run_distributed_program` + `_coerce_l3_arg`, and a sweep of production-dead helpers surfaced during the migration.
+- Two latent bugs fixed along the way: a decode prepare-lane device-alloc race (device slots must be allocated at init, not lazily on the depth-2 pipeline's prepare lane), and a slot-shape bug exposed by the 16-row MTP tile (hard-coded `MAX_LOGIT_ROWS=8` → `layout.decode_tokens`).
+
+## Outcome
+
+- ~14 files changed (+2659 / −2326, net +333) across the common runner layer, both model runners, and tests.
+- `pytest tests/unit/ -q` → **202 passed**; ruff + headers clean.
+- CI green on the PR, including the 8-NPU DeepSeek arbitrary-depth accuracy guard and the Qwen3 accuracy guard.
+
+Addressed by #150.
+"
+"159","[Docs] Configure the document directory into online documents","open","2026-08-14T09:06:55Z","2026-08-17T11:02:32Z",,"https://github.com/hw-native-sys/pypto-serving/issues/159","### Documentation Location
+
+docs/*
+
+### What's Wrong or Missing?
+
+Configure the document directory into online documents and publish it on the website https://pypto.ai/
+
+### Suggested Improvement
+
+Add an MkDocs-powered documentation site with CI/CD pipeline, pre-commit validation, and a restructured docs layout.
+
+### Changes
+
+- **MkDocs config** (`mkdocs.yml`) — Material theme, strict validation, custom hook for repo-relative link rewriting
+- **Content** — `index.md`, `get-started/installation.md`, `get-started/quickstart.md`
+- **Restructure** — Moved docs from `docs/dev/` to `docs/user-guide/` and `docs/models/`
+- **Custom hook** (`docs/_hooks/repo_links.py`) — Rewrites out-of-`docs/` links to GitHub blob/tree URLs at build time
+- **CI** (`.github/workflows/docs.yml`) — Builds on every push/PR, deploys to GitHub Pages from `main`
+- **Pre-commit** — `check-docs-nav` and `check-public-docs` hooks
+- **Lint tests** — `check_docs_nav.py` (nav coverage) and `check_public_docs.py` (no skill references, valid link targets)
+- **Supporting** — `docs/requirements.txt`, `site/` in `.gitignore`
+
+### Rationale
+
+Documentation was scattered under `docs/dev/` with no entry point, navigation, or validation. This PR establishes a single-source-of-truth site that is readable on GitHub, navigable as a Material-themed site, deployable via CI, and validated by pre-commit hooks.
+
+### Additional Context
+
+_No response_"
+"160","[Refactor] Collapse the three-thread decode pipeline into a single-thread loop using PyPTO submit/wait","open","2026-08-15T08:35:16Z","2026-08-15T08:35:16Z",,"https://github.com/hw-native-sys/pypto-serving/issues/160","### Summary
+
+Collapse the three-thread decode pipeline in `WorkerProcess` (`_pipelined_busy_loop` / `_device_execution_loop` / `_output_reclaim_loop`) into a **single-thread loop** driven by the PyPTO async dispatch contract (`DistributedWorker.submit()` + `DistributedRunHandle.wait()`, #148), removing inter-thread overhead without losing host-device overlap.
+
+### Area
+
+Serving worker (`pypto_serving/serving/server/serving_worker.py`) + DeepSeek runner dispatch path (`pypto_serving/model/deepseek/npu_runner.py`)
+
+### Motivation / Use Case
+
+The three FIFO lanes exist for exactly one reason: while the device thread is parked inside `worker.run()` — which is `submit(...).result()` (`distributed_runner.py:2536`) — the command thread prepares step N+1 and the output lane reclaims step N−1.
+
+With `submit()` now available, this design pays pure cost:
+
+- **Per-step thread-wakeup dead time.** The device lane returns from `result()`, wakes, pulls from `output_work_queue`, and only then dispatches N+1. That gap is dead device time paid on *every* step. In the single-thread shape, kernel N+1 is *enqueued while N is still executing* — strictly better device utilization.
+- **GIL-bound ""parallelism"".** `prepare_decode` (dict/tensor staging, `_copy_shared`) and `reclaim` (`.tolist()`/`.item()`) are GIL-bound for most of their duration, so the two host lanes largely serialize each other already. What remains is queue hand-offs, semaphore round-trips, and wakeups.
+- **Coherence machinery.** `work_queue`/`output_work_queue` and both hand-offs per step, the `slot_ownership` semaphores, `_DecodeCommandFailure` forwarding, the `_ProfileBarrier` event, and the `_req_cache` release-snapshot dance around re-registration (`serving_worker.py:298-309`) all exist only to keep three threads in lock-step.
+- **A latent race class.** The device lane can late-bind `_resolve_decode_token` for step N+1 while the output lane hasn't finished recording step N's `_last_tokens`; single-threaded ordering makes this structural.
+
+### Proposed Design
+
+One loop, one outstanding previous handle, **submit N+1 before waiting on N**:
+
+```python
+prev_handle = None; prev_ticket = None
+while True:
+    cmd = decode_command(input_queue.get())          # host — kernel i still running
+    prepared = prepare_decode(cmd, buffer_slot=...)   # host — overlaps kernel i
+    apply_lifecycle(cmd)
+    handle = worker.submit(compiled, *prepared.dispatch_args)  # non-blocking enqueue
+    # device now has kernels i and i+1 queued back-to-back
+
+    if prev_handle is not None:
+        prev_handle.wait()                           # kernel i long done in the common case
+        result = reclaim(prev_ticket)                # D2H reads — kernel i+1 executing
+        output_queue.put(encode_result(result))
+    prev_handle, prev_ticket = handle, make_ticket(...)
+```
+
+The ordering rule is the whole trick: the device executes kernels back-to-back with no host-visible gap, and all host work for the iteration (reclaim N, IPC, get+prepare N+2) runs under kernel N+1's execution. The runtime's own depth-2 frame bound (""a third submission waits for the oldest handle"", `distributed_runner.py:2495-2497`) provides backpressure at exactly the current pipeline depth — matching `_DECODE_PIPELINE_SLOTS = 2` and the engine's async `max_in_flight = 2`.
+
+**What dissolves:** both queues and their hand-offs, `slot_ownership` semaphores (slot freedom becomes program order), `_DecodeCommandFailure` forwarding, `_ProfileBarrier` (profile commands handled inline after `prev_handle.wait()`), and the `_req_cache` release-snapshot dance.
+
+### Required Changes
+
+1. **`serving_worker.py`** — add `_single_thread_busy_loop()` alongside the existing loops; select it in `busy_loop()` (`serving_worker.py:216`) when the executor advertises the new async-submit capability; keep `_pipelined_busy_loop()` and `_serial_busy_loop()` as fallbacks.
+2. **`npu_runner.py` dispatch path** — `dispatch_prepared_decode` (`npu_runner.py:2113`) must return without blocking via a new `_submit_l3` variant of `_run_l3` (`npu_runner.py:4780`) that calls `worker.submit()` and returns the handle inside the `_PendingDecodeOutput` ticket; `reclaim_prepared_decode` gains the `handle.wait()` before reading outputs.
+3. **Argument lifetime** — `_run_l3`'s `finally`-block `free_tensor()` on uploaded temporaries (`npu_runner.py:4801-4803`) must move to after `handle.wait()`; freeing before completion violates the handle's argument-lifetime contract (""Mutable arguments must not be reused or modified until the returned handle completes"").
+4. **Profiling** — the kernel-level `profile_span` currently wraps `worker.run()`; under submit/wait it measures enqueue, not execution. Close the span after `wait()` (e.g. record submit-time start, close on completion).
+5. **Executor contract** — new capability flag (e.g. `supports_async_decode_submit`) on `ModelExecutor` (`pypto_serving/model/common/executor/executor.py`), advertised by `DeepSeekV4PyptoExecutor` for the fused K=1 MTP path.
+
+### Known Trade-offs / Open Questions
+
+- **Host stages sum instead of max.** Steady-state throughput bound moves from `max(prepare, dispatch, reclaim)` to `prepare + get + reclaim + IPC`. This is safe when `prepare + reclaim ≪ kernel execution` (the expected case — both are metadata staging plus small D2H reads). Should be validated with `benchmark_parallel.py` before deleting the three-lane path. If host work approaches kernel time, a two-thread variant (main loop + reclaim-only thread) keeps most of the simplification.
+- **Token-dependent late-bind path.** When `prepared_decode_requires_token` is true (`npu_runner.py:1515`), step N+1's dispatch needs step N's sampled token, which materializes only after `wait(N)` — those executors need a wait-first iteration variant (device idles during reclaim) or stay on the fallback path. Moot for fused DeepSeek MTP (returns False).
+- **Gate the switch on the benchmark** before removing the three-lane path entirely.
+
+### Additional Context
+
+- Depends on the async dispatch contract landed via #148.
+- The engine-side half (async scheduling, `PLACEHOLDER_TOKEN` resolution, `max_in_flight = 2`) needs no changes — the worker still produces FIFO `StepResult`s with the same semantics.
+"
+"161","[Bug] DeepSeek V4 greedy MTP decode diverges from AR token output","open","2026-08-15T12:21:24Z","2026-08-15T13:08:43Z",,"https://github.com/hw-native-sys/pypto-serving/issues/161","## Diagnosis
+
+This appears to be in the DeepSeek V4 greedy MTP target-decode path at the
+`pypto-serving` / `pypto-lib` boundary. The host publication path has one
+separate committed-window accounting issue, but fixing that only postpones the
+visible divergence: the S=2 target row 0 logits still differ enough from S=1 AR
+to change the greedy token.
+
+## Description
+
+DeepSeek V4 Flash W8A8 produces a different greedy token sequence when K=1 MTP
+is enabled, even though the prompt, committed token history, sampling settings,
+and cache configuration are otherwise identical.
+
+Expected behavior: greedy speculative decoding is lossless. With
+`temperature=0`, enabling MTP may change execution and the number of accepted
+drafts, but it must not change the target model's committed token sequence.
+
+Actual behavior:
+
+- Synchronous MTP runs are repeatable and return the same sequence, so this is
+  not per-run sampling randomness.
+- Async and sync MTP both reproduce the problem; async scheduling is not the
+  initial numerical cause.
+- The default 16-row MTP tile and a temporary 8-row MTP tile both reproduce it;
+  decode-tile expansion is not the root cause.
+- A local fix that publishes the canonical committed-window suffix instead of
+  `sampled_ids[:accepted_count]` moves the first visible divergence from index
+  21 to index 48, but does not restore target-logit equivalence.
+- At the remaining divergence, the first 48 generated tokens are identical.
+  AR greedily selects token `3831`, while MTP greedily selects token `95` from
+  the same committed prefix.
+
+The issue reproduces on a 255-token authorization-code fixture, but it is not a
+generic chunk-boundary failure. Separate AR-derived continuation checks passed
+all `128+1`, `128+127`, `128+128`, and `128+128+1` next-token comparisons under
+both AR and MTP (24/24 total). MTP divergence also reproduces after a single
+128-token prefill dispatch.
+
+## Command or Request
+
+Use the `authorization_code_255` prompt from
+`tests/fixtures/deepseek_v4_chunked_prefill_accuracy_prompts.json` and run AR,
+then K=1 MTP, serially on the same eight devices.
+
+Relevant serving configuration:
+
+```text
+--model /data/models/dsv4-flash-w8a8
+--backend npu
+--platform a2a3
+--devices 0,2,4,6,8,10,12,14
+--dp 8 --ep 8 --tp 1
+--block-size 128
+--max-model-len 512
+--max-num-seqs 32
+--max-num-batched-tokens 512
+--long-prefill-token-threshold 2048
+--enable-chunked-prefill
+--no-enable-prefix-caching
+```
+
+Generation settings:
+
+```json
+{
+  ""max_new_tokens"": 64,
+  ""temperature"": 0.0,
+  ""top_p"": 1.0,
+  ""top_k"": 0,
+  ""ignore_eos"": true
+}
+```
+
+For the MTP run, additionally use:
+
+```text
+--speculative-config '{""method"":""mtp"",""num_speculative_tokens"":1}'
+```
+
+Compare the returned token IDs exactly, rather than comparing only answer-level
+text.
+
+## Environment
+
+| Component | Version |
+|---|---|
+| pypto-serving | `40ebf9a30b6a17a9f93e95396dffed9554137157` (PR #132 branch) |
+| pypto-lib | `aea5bcba2489d6dc183ed35a5a784d8806e7ba4d` (PR #883 branch) |
+| pypto | `71020585278b68f56c72c40d5570f07dbb20bc8b` |
+| runtime | `3165cc89b6ea6b58a0bc01cbec2d5f72f2029c35` |
+| pto-isa | `83d01313d9bfc247c4b7c8bcf969d1019f0d106f` |
+| ptoas | `0.57` |
+| CANN | `9.0.0` |
+| Host | Linux aarch64 |
+| Device / platform | eight A2/A3 devices: `0,2,4,6,8,10,12,14` |
+| Model | DeepSeek V4 Flash W8A8, `/data/models/dsv4-flash-w8a8` |
+
+## Logs
+
+At the first divergence after correcting host committed-window publication:
+
+```text
+AR row0:
+top_ids    = [3831, 95, 41653, 37236]
+top_values = [32.758774, 32.471817, 29.725901, 27.758673]
+
+MTP target row0:
+top_ids    = [95, 3831, 41653, 37236]
+top_values = [32.133121, 31.175119, 28.329367, 26.542364]
+```
+
+An earlier identical-prefix step also shows a much larger AR/MTP change for a
+non-winning candidate:
+
+```text
+AR:
+top_ids    = [7574, 7155, 9575, 12846]
+top_values = [32.450748, 26.424942, 24.038696, 23.189779]
+
+MTP target row0:
+top_ids    = [7574, 7155, 7408, 12846]
+top_values = [32.571129, 32.510063, 26.669779, 26.376173]
+```
+
+Relevant hardware tasks:
+
+- `task_20260815_044128_115197417619`: async and sync MTP comparison;
+  both initially diverged at index 21.
+- `task_20260815_045502_130087127809`: AR/MTP top-4 logit capture; after the
+  canonical host-window fix, visible divergence moved to index 48.
+- `task_20260815_050449_141305231511`: temporary 8-row MTP tile; divergence
+  still reproduced.
+
+## Additional Context
+
+DeepSeek MTP serving was introduced in PR #89. PR #120 later added arbitrary
+draft depth and expanded/repacked MTP decode layouts. Both accuracy guards use
+the short prompt `Huawei is` and require only this 10-token completion:
+
+```text
+ a leading global information and communications technology (ICT)
+```
+
+That guard passes, but it does not compare AR and MTP token streams and therefore
+does not cover this losslessness requirement. PR #120 explicitly scopes the
+device acceptance path to greedy-only sampling, so stochastic speculative
+sampling is not expected here.
+
+Suggested next checks:
+
+1. Change only the S=2 row1 draft while holding row0 and its committed cache
+   history fixed; row0 logits must remain unchanged.
+2. Compare S=1 AR and S=2 MTP row0 hidden states layer by layer to find the first
+   stage that diverges materially.
+3. Inspect compressed-cache write/read ordering, row-wise causal metadata, raw
+   KV page aliasing, and multi-active-token MoE dispatch/combine.
+4. Add a deterministic CI regression that runs the same prompt under AR and K=1
+   MTP and asserts exact token-ID equality for a sufficiently long decode.
+
+Related work: PR #132 (chunked prefill) and pypto-lib PR #883.
+"
+"163","[Refactor] Unify Qwen + DeepSeek weight loading behind a staged pipeline (spec → shard policy → slab stacker)","open","2026-08-16T06:33:23Z","2026-08-16T06:33:23Z",,"https://github.com/hw-native-sys/pypto-serving/issues/163","## Motivation
+
+Qwen and DeepSeek V4 have two fully disjoint weight-loading paths, and neither generalizes:
+
+- **Qwen** — `HuggingFaceDirectoryLoader` eagerly loads every shard into `RuntimeModel.layers` (`LayerWeights`, `config/types.py:143`), then `Qwen314BPyptoExecutor._compile_model` restages everything into 11 stacked `decode_*` slabs (`qwen/npu_executor.py:435`). Peak host memory ≈ 2× model until per-layer release kicks in.
+- **DeepSeek V4** — `deepseek/weight_loader.py` (1,589 lines) does metadata-only load + lazy store, then one monolithic packer where three concerns are coupled in hand-written code: name mapping (`pack_deepseek_v4_layer_weights:1188`), rank-shard policy (`_replicate_weight`, `_pack_deepseek_v4_routed_experts:1528`, `pack_deepseek_v4_lm_head_weight:437`), and slab stacking (`load_stacked_layer_weights:946` + `_allocate_stacked_layer_weights`/`_stacked_layer_destinations`/`_copy_packed_layer`).
+
+Because pypto-lib fuses all layers into single kernels (`l3_decode_fwd`/`l3_prefill_fwd`), the whole-model stacked slab layout is an immutable **output contract** — a layer's weight has no standalone existence on device. That legitimately forces a global pack stage, but it does *not* force name mapping and shard policy to be hand-coded per model. Today a new model family means another ~1,000-line pack table.
+
+## Design
+
+Split into three stages, with the fused-kernel stacked layout kept byte-for-byte:
+
+1. **Per-family declarative spec** — checkpoint name → kernel name, with per-weight transform rules (dtype, transpose, `reshape_groups`, synthesize/zero-fill) expressed as data.
+2. **Rank-shard policies** — `Replicate` / `ExpertParallel` / `VocabTensorParallel` as reusable evaluators.
+3. **One generic slab stacker** — allocates whole-model slabs from a layout descriptor (layer-0 template), writes each layer into destination slices; no `torch.cat`.
+
+### Module layout
+
+New `pypto_serving/model/common/weights/`:
+
+| Module | Responsibility |
+|---|---|
+| `store.py` | `LazySafetensorsStore` — generic name-addressed shard reader; `load_tensor`/`load_many`/`filename_for` moved verbatim from `DeepSeekV4WeightStore` (`weight_loader.py:685`) |
+| `spec.py` | Declarative schema: `LayerContext`, `LayerWeightRule`, `SyntheticRule`, `StackGroup`, `GlobalWeightRule`, `FamilyWeightSpec` |
+| `shard.py` | `Replicate(ranks)`, `ExpertParallel(n_experts)`, `VocabTensorParallel(ranks, vocab_chunk)` |
+| `packer.py` | `pack_layer(rules, raw, ctx, *, destinations)` — generic per-layer evaluator |
+| `stacker.py` | `allocate_slabs` / `destinations_for` / `copy_packed_layer` / `stack_layers` |
+| `pipeline.py` | Orchestration: load → pack → stack; owns thread policy + per-layer release |
+
+Per-family spec modules (data + config→spec builders): `deepseek/weight_spec.py`, `qwen/weight_spec.py`, plus `qwen/weight_store.py` (`HuggingFaceWeightStore(LazySafetensorsStore)`).
+
+Key schema decisions:
+
+- `StackGroup(id, members, member_layers)` — DeepSeek: `fwd` (43 layers) / `csa` (ratio==4, 21) / `hca` (ratio==128, 20) in first-appearance order, exactly as today; Qwen: one group. **Rule-table order = slab allocation order**, which also preserves the safetensors name→offset map in the sidecar.
+- `FamilyWeightSpec.emit_rank_axis` — DeepSeek emits `[ranks, count*d1, …]` (required by `alloc_stacked_tensor`); Qwen emits rank-less `[count*d1, …]` exactly as today. The packer always produces the rank-less semantic tensor; the destination writer prepends the axis iff the flag is set.
+- `GlobalWeightRule` — embed / lm_head / final_norm with `fallback_source` (tied lm_head), `default=""ones""` (absent q/k_norm), `pad_to_multiple` + `pad_fill` (Qwen embed pads zeros, **lm_head pads by replicating row 0**).
+- Inactive branches zero-fill the destination view (`absent_shape` validated first) — preserves the uniform-signature trick in `_pack_deepseek_v4_optional_attention:1312`.
+- Thread policy stays **per-family**: DeepSeek serial (`workers=1` — the documented ~8 GB-per-layer intermediate regression, `weight_loader.py:962`), Qwen thread pool with `torch.set_num_threads(1)` pinning (`qwen/npu_executor.py:509`).
+- Timing: one new `stage_weights(record)` hook on `ModelRunner`, called by `PyptoExecutor.register_model` between `_create_runner` and `init_kv_cache`. Necessary because **Qwen's `DistributedWorker` forks inside `init_kv_cache` — before `preflight`** — so it cannot adopt DeepSeek's load-at-preflight timing as-is.
+
+## Compatibility contract
+
+- DeepSeek packed output **byte-identical**: same 49-name set, shapes, dtypes, layer-fusion order; sidecar format `pypto-deepseek-v4-stacked-v1` + fingerprint payload unchanged → **existing prepacked sidecars stay valid**. The sidecar read path (`_map_shared_prepacked_tensors`, single-fd flow, mincore residency gate) is frozen verbatim.
+- Qwen staged output **bit-identical** to today's 11 `decode_*` tensors + padded globals.
+- Two known byte-identity traps to reproduce, not ""normalize"":
+  - `_replicate_weight:1163` casts explicitly (`.to(dtype)`) on the direct path but implicitly inside `destination.copy_()` on the destination path;
+  - `_pack_deepseek_v4_routed_experts:1545` has the same dual-path asymmetry.
+- Known trap: casting bf16 → `weight_dtype` (fp32) at load → bf16 at staging is rounding-equivalent to direct bf16, so Qwen's lazy path needs no intermediate cast — but the parity harness must prove it.
+
+## Migration plan (each step gated)
+
+1. **Parity harness first** (no production change): synthetic on-disk checkpoints for both families (DeepSeek: 4 layers, `compress_ratios=(0,4,128,4)`, MTP fixture; Qwen: tied/untied lm_head + qk-norm-absent variants). **Differential**: old and new importable side-by-side, CI compares them directly; plus sidecar write comparison and **bidirectional cross-load** (sidecar from old code must load under new reader and vice versa).
+2. Add `common/weights/` (additive); `DeepSeekV4WeightStore` subclasses the generic store.
+3. Port the DeepSeek pack table into `weight_spec.py`; `pack_deepseek_v4_layer_weights` becomes a thin wrapper (signature/behavior unchanged). Gate: `test_model_components.py:1235` passes unmodified.
+4. Rewire `load_stacked_layer_weights` onto the stacker; sidecar branch untouched. Gate: `:1296` invariants preserved (no `torch.cat`, `[False, True, True]` direct flags, group placement, contiguity); the six sidecar tests unchanged.
+5. MTP through the same spec (`mtp.0` context + declarative extras table).
+6. Migrate Qwen: `HuggingFaceDirectoryLoader` becomes metadata-only (mirrors the DeepSeek loader — `weight_map`/`model_dir` into `RuntimeModel.extra`); lazy per-layer `load_many` + drop-after-slice-copy keeps peak ≈ 1× (down from ~2×). Need to verify nothing depends on eagerly-populated `RuntimeModel.embed_tokens` (base `lookup_embeddings`).
+7. Retire `LayerWeights` / `RuntimeModel.layers` / `_stack_decode_weights` / `_kernel_weight` / `_release_layer_weights` / `_load_safetensors_dir`; `--num-layers-override` (example) becomes a spec-builder knob; move Qwen staging to the `stage_weights` hook (defer `_build_static_kernel_args` accordingly).
+8. Cleanup: port remaining legacy-path tests; update `docs/dev/model/deepseek-v4.md` + a unified-pipeline doc.
+
+## Out of scope
+
+Qwen prepack sidecar (follow-up — the spec shape admits one) · upload mechanics (`alloc_stacked_tensor`/`alloc_tensor`, `_materialize_resident_weights`, inherited-host-tensor flow) · kernel host-arg orders · W8A8 conversion tooling · pypto-lib kernels.
+
+## Coordination
+
+Orthogonal to #157 / open PR #150 (TaskArgs + L3DispatchMixin): that refactor owns the *dispatch arg* pipeline, this one owns the *weight staging* pipeline — but both touch `model/{deepseek,qwen}/npu_runner.py` and the `ModelRunner` interface (each adds a hook/`_init_*` call). Whichever lands second rebases; the `stage_weights` hook and `_init_l3_dispatch` are independent seams.
+
+## Verification
+
+- New `tests/unit/model/common/test_weight_{spec,shard_policies,stacker,pipeline_parity}.py`; full existing DeepSeek unit suite green at every step.
+- Differential parity on synthetic on-disk checkpoints (both families) including sidecar cross-load.
+- Device gates: `tests/test_qwen3_accuracy.py` (needs `PYPTO_QWEN3_MODEL_DIR` + `DEVICE_ID`); DeepSeek 8-card accuracy CI.
+- Grep gates after retirement: no remaining `LayerWeights` references; no `torch.cat` in the stacker path.
 "
