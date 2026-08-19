@@ -600,6 +600,17 @@
     // 新增 Design Demo 时，在此数组追加一项即可出现在启动台。
     const demos = [
       {
+        title: "PyPTO Studio V2",
+        subtitle: "Decode Layer 调试调优回放工作台",
+        category: "开发工具",
+        status: "新版本",
+        version: "07 / V2",
+        description: "与 Toolkit Studio 共用同一个 Qwen3_14b workspace 与 decode_layer.py：四条案例回放（logits 全零 / 406s 设备占用 / fa_fused timeout 污染 / INV-2040 2.3× 归因）走完 7 阶段门禁。IDE 侧按步骤锚定真实 DSL 源码，Agent 侧以「工具调用行 + 结论行」的执行轨迹呈现，每张工具卡标注调起它的 Agent，结论回写为可信基线或「已定位未解决」的移交。",
+        href: "Design/pypto-studio-v2/index.html",
+        preview: "Design/assets/pypto-studio-v2.png",
+        tags: ["Agent Team", "Decode Layer", "Evidence", "Trusted Baseline", "INV-2040"]
+      },
+      {
         title: "Operator Coding Agent",
         subtitle: "Context-aware Implementation Workbench",
         category: "开发工具",
